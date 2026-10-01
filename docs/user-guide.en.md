@@ -92,7 +92,7 @@ dsh-tui
 
 | Key | Action |
 |---|---|
-| `Ctrl+R` (⌘R) | history search; press again or `↓` for next match; `Enter` fills the input |
+| `Ctrl+R` (⌘R) | history search (current project only); press again or `↓` for next match; `Enter` fills the input |
 | `/` (transcript) | full-transcript search; `n` / `N` jump (only in Ctrl+O expanded state) |
 
 ### 2.4 Input editing
@@ -106,7 +106,7 @@ dsh-tui
 | `Ctrl+W` | delete the previous word |
 | `Ctrl+Z` | undo the draft's last word-level edit (caret and images included); draft-only — a submit or a history recall (`Ctrl+R`/`↑`) ends it, and it is unrelated to the `Esc Esc` conversation/message rewind; remappable via `/settings` |
 | `Backspace` / `Delete` | delete previous / next character; **with a selection, delete the whole selection** |
-| `↑` / `↓` | move between lines when multi-line; browse input history when single-line (last 200 entries, kept across restarts) |
+| `↑` / `↓` | move between lines when multi-line; browse input history when single-line (scoped per project, last 200 entries each, kept across restarts; history from before the upgrade shows in every project) |
 | `Ctrl+V` (⌘V) / `Alt+V` | paste: text / file path (images auto `@`-referenced) / clipboard bitmap (`[Image #N]` attachment); use `Alt+V` when the terminal swallows `Ctrl+V` |
 | `Ctrl+G` | edit the input in the `$VISUAL`/`$EDITOR` external editor (`:cq` keeps the draft; prompts you to configure when unset) |
 | `Ctrl+Shift+E` (⌘⇧E) | open the **full-screen draft editor** (or click `⛶` at the end of the input line): line numbers, current line highlighted, `Enter` newline, `Ctrl+Enter` send, `Esc` collapse (draft kept); off at `/settings → 全屏草稿编辑` |
@@ -192,6 +192,7 @@ A "History only" row offers edit and new here; rename and remove apply only to r
 - No IDE installed/connected → skipped automatically, nothing else affected (see [vscode.md](vscode.md)).
 
 **History search (Ctrl+R)**
+Lists only inputs from the current project (the session's working directory), plus unscoped history from before the upgrade.
 `↑/↓` select · press `Ctrl+R` again or `↓` for next · `Enter` fill · `Esc`/`Ctrl+C`/`Ctrl+D` cancel
 
 **Trace scene (Ctrl+T / /trace)**
