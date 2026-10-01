@@ -15,10 +15,12 @@
  * - CJK punctuation and script transitions (Han/Latin/digit) break
  * - `1` + `3.14` is not fused into one step (the ±32 context window)
  * - a direction flip (typing → Backspace) and a caret jump break
+ * - repeated characters keep the actual insertion/deletion caret as the anchor
  * - a deletion run stays ONE step inside the word it began in — including the
  *   word's left edge, the text head, and a re-segmented CJK suffix; crossing
  *   the edge (or the other deletion direction) starts a new step
  * - a bracketed paste is one step, never fused into the typing run
+ * - undoing a whole-block deletion restores its fold range and caret
  * - Enter/submit ends the history; `Esc` clear is undoable
  * - recalling a pending message (Alt+Up) is NOT undoable
  * - an undo stack holding an image keeps its capability alive
@@ -274,6 +276,23 @@ try {
   await settled(() => text() === 'aXb', { timeoutMs: 2000 })
   check('typing after a caret jump starts a new step', await ctrlZTo('ab'))
 
+  await clearAll()
+  await typeInto('aaa')
+  stdin.write('\x1b[H' + 'a') // Home, then insert the same character at index 0
+  await settled(() => text() === 'aaaa', { timeoutMs: 2000 })
+  check('repeated-character insertion after Home does not merge with tail typing',
+    await ctrlZTo('aaa'), JSON.stringify(text()))
+  stdin.write('X')
+  check('undo restores the insertion caret, not the inferred tail position',
+    await settled(() => text() === 'Xaaa', { timeoutMs: 2000 }), JSON.stringify(text()))
+
+  await clearAll()
+  await typeInto('aaaa')
+  stdin.write('\x1b[H\x1b[3~\x1b[3~') // Home, Delete, Delete
+  await settled(() => text() === 'aa', { timeoutMs: 2000 })
+  check('forward Delete inside a repeated-character word is one undo step',
+    await ctrlZTo('aaaa'), JSON.stringify(text()))
+
   // ── 11. a bracketed paste is ONE step ───────────────────
   await clearAll()
   await typeInto('ab')
@@ -412,6 +431,40 @@ try {
   await settled(() => text() === 'abc', { timeoutMs: 2000 })
   check('suspended: Ctrl+Z leaves the draft alone', text() === 'abc', JSON.stringify(text()))
   check('the stack survived: Ctrl+Z works again once active', await ctrlZTo(''))
+
+  // Capture through the real draft handoff rather than inspecting a rendered
+  // label: the restored text, caret and fold range must describe the same draft.
+  for (const direction of ['backspace', 'delete']) {
+    const foldedText = 'one\ntwo\nthree\nfour\nfive\nsix'
+    const draftCache = { current: null }
+    const foldedController = { current: null }
+    const streams = makeStreams()
+    const foldedInstance = await render(mount({ draftCache, controllerRef: foldedController }), {
+      ...streams, exitOnCtrlC: false, patchConsole: false,
+    })
+    const foldedValue = () => foldedController.current?.text()
+    try {
+      await settled(() => foldedController.current !== null, { timeoutMs: 2000 })
+      streams.stdin.write(`\x1b[200~${foldedText}\x1b[201~`)
+      check(`${direction}: paste creates the block draft`,
+        await settled(() => foldedValue() === foldedText, { timeoutMs: 2000 }))
+      // Left jumps from the folded block's tail to its head atomically.
+      streams.stdin.write(direction === 'backspace' ? '\x7f' : '\x1b[D\x1b[3~')
+      check(`${direction}: one key deletes the whole fold block`,
+        await settled(() => foldedValue() === '', { timeoutMs: 2000 }))
+      streams.stdin.write(RAW_CTRL_Z)
+      check(`${direction}: undo restores the whole block text`,
+        await settled(() => foldedValue() === foldedText, { timeoutMs: 2000 }))
+    } finally {
+      foldedInstance.unmount()
+    }
+    const restored = draftCache.current
+    check(`${direction}: undo restores the fold range and original caret`,
+      restored?.value === foldedText &&
+      restored?.cursor === (direction === 'backspace' ? foldedText.length : 0) &&
+      restored?.foldBlock?.start === 0 && restored?.foldBlock?.end === foldedText.length,
+      JSON.stringify(restored))
+  }
 
   if (failed > 0) {
     console.error(`\n${failed} prompt-undo check(s) failed`)

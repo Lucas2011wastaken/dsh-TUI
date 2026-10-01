@@ -144,11 +144,17 @@ type UndoMode =
  * Common prefix/suffix of `prev` and `next` — the single edited span. Undo
  * grouping works on this span rather than on a stdin chunk: one chunk may
  * carry several characters (or several keys), so the unit is one real text
- * mutation however it arrived.
+ * mutation however it arrived. The common prefix must not pass either caret:
+ * repeated characters otherwise make an edit at the head look like a tail edit.
  */
-function diffSpan(prev: string, next: string): { start: number; inserted: string } {
+function diffSpan(
+  prev: string,
+  next: string,
+  cursorBefore: number,
+  cursorAfter: number,
+): { start: number; inserted: string } {
   let start = 0
-  const common = Math.min(prev.length, next.length)
+  const common = Math.min(prev.length, next.length, cursorBefore, cursorAfter)
   while (start < common && prev.charCodeAt(start) === next.charCodeAt(start)) start++
   let prevEnd = prev.length
   let nextEnd = next.length
@@ -1007,9 +1013,10 @@ export function PromptInput({
     prevCursor: number,
     block: DraftUndoEntry['block'],
     next: string,
+    nextCursor: number,
     mode: 'group' | 'step',
   ): void => {
-    const span = diffSpan(prev, next)
+    const span = diffSpan(prev, next, prevCursor, nextCursor)
     // Backspace consumes the character BEFORE the caret; Delete consumes the
     // one AT it. The two directions anchor differently, so their runs must
     // never fold into one another.
@@ -1017,7 +1024,7 @@ export function PromptInput({
     const kind: DraftUndoEntry['kind'] =
       span.inserted.length > 0 ? 'insert' : backward ? 'deleteBackward' : 'deleteForward'
     const removed = prev.length - next.length
-    const caretAfter = span.start + span.inserted.length
+    const caretAfter = nextCursor
     if (mode === 'group') {
       const last = draftUndoRef.current[draftUndoRef.current.length - 1]
       // Continuity: this edit must begin where the last one ended. An insertion
@@ -1514,7 +1521,7 @@ export function PromptInput({
     if (next !== prev) {
       if (undo === 'reset') clearDraftUndo()
       else if (undo !== 'silent') {
-        recordDraftEdit(prev, prevCursor, snapshotBlock === undefined ? block : snapshotBlock, next, undo)
+        recordDraftEdit(prev, prevCursor, snapshotBlock === undefined ? block : snapshotBlock, next, offset, undo)
       }
     }
     // The synchronous mirrors are what batch-dispatched events (one stdin
@@ -2261,7 +2268,7 @@ export function PromptInput({
       if ((key.backspace && cursor === block.end) || (key.delete && cursor === block.start)) {
         const next = value.slice(0, block.start) + value.slice(block.end)
         updateFoldBlock(null)
-        setInput(next, block.start, 'step')
+        setInput(next, block.start, 'step', block)
         setSelectedCommand(0)
         setFileSelected(0)
         return
