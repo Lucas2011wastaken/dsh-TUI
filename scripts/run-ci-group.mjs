@@ -451,6 +451,14 @@ const GROUPS = {
 // 能一路走到最旧并在那里钳住、本次进程提交的条目排在持久化条目之后且
 // 接缝处不重复、重新挂载（重启）后仍能召回。
     ["verify-prompt-history-persist", ['node', 'scripts/verify-prompt-history-persist.mjs']],
+// 草稿撤销回归：Ctrl+Z 是输入框草稿的词级撤销（两种按键编码等价、CJK 走
+// ICU 分词、700ms 空闲切步、粘贴/提交/召回/Esc 清空的栈语义、图片能力保活），
+// 且与 Esc Esc 的会话回溯不是一回事（栈空不触发 rewind）。
+    ["verify-prompt-undo", ['node', 'scripts/verify-prompt-undo.mjs']],
+// SIGCONT 恢复 raw mode 回归：Ctrl+Z 不再自停，外部 stop（kill -STOP / shell
+// suspend）后 shell 把 tty 留在自己的 cooked 模式，SIGCONT 必须把 termios 放回，
+// 否则输入框只画帧、按键被行规吃掉。
+    ["verify-sigcont-rawmode", ['node', 'scripts/verify-sigcont-rawmode.mjs']],
 // 文件补全回归（issue #278）：CMake 构建目录与任意大型兄弟目录不得
 // 独占 100 条全局预算，普通深层源码也不能被固定深度静默截断。
     ["verify-file-completion", ['node', 'scripts/verify-file-completion.mjs']],

@@ -52,7 +52,6 @@ import {
 import {
 	DBP,
 	DFE,
-	DISABLE_MOUSE_TRACKING,
 	EBP,
 	EFE,
 	HIDE_CURSOR,
@@ -68,9 +67,6 @@ import StdinContext from "./StdinContext.js";
 import { TerminalFocusProvider } from "./TerminalFocusContext.js";
 import { TerminalSizeContext } from "./TerminalSizeContext.js";
 import { TerminalWriteProvider } from "../useTerminalNotification.js";
-
-// Platforms that support Unix-style process suspension (SIGSTOP/SIGCONT)
-const SUPPORTS_SUSPEND = process.platform !== "win32";
 
 // After this many milliseconds of stdin silence, the next chunk triggers
 // a terminal mode re-assert (mouse tracking). Catches tmux detach→attach,
@@ -769,10 +765,6 @@ export default class App extends PureComponent<Props, State> {
 		if (input === "\x03" && this.props.exitOnCtrlC) {
 			this.handleExit();
 		}
-
-		// Note: Ctrl+Z (suspend) is now handled in processKeysInBatch using the
-		// parsed key to support both raw (\x1a) and CSI u format from Kitty
-		// keyboard protocol terminals (Ghostty, iTerm2, kitty, WezTerm)
 	};
 	handleExit = (error?: Error): void => {
 		if (this.isRawModeSupported()) {
@@ -785,55 +777,23 @@ export default class App extends PureComponent<Props, State> {
 		// and Clock (interval speed) — no App setState needed.
 		setTerminalFocused(isFocused);
 	};
-	handleSuspend = (): void => {
-		if (!this.isRawModeSupported()) {
+	/**
+	 * Re-assert raw mode after an EXTERNAL stop+continue (SIGCONT). While the
+	 * job is stopped the shell owns the tty and leaves it in its own cooked
+	 * modes; the job is expected to restore its termios when it continues.
+	 * The readable listener survives the stop, so only the termios flag comes
+	 * back — deliberately not through handleSetRawMode, which would
+	 * double-count the raw-mode requests and re-add listeners.
+	 *
+	 * No `stdin.isRaw` guard: Node caches that flag as a plain property on the
+	 * stream, so it still reads `true` after the shell reset termios behind our
+	 * back. `setRawMode(true)` is an idempotent ioctl.
+	 */
+	reassertRawMode = (): void => {
+		if (this.rawModeEnabledCount === 0 || !this.isRawModeSupported()) {
 			return;
 		}
-
-		// Store the exact raw mode count to restore it properly
-		const rawModeCountBeforeSuspend = this.rawModeEnabledCount;
-
-		// Completely disable raw mode before suspending
-		while (this.rawModeEnabledCount > 0) {
-			this.handleSetRawMode(false);
-		}
-
-		// Show cursor, disable focus reporting, and disable mouse tracking
-		// before suspending. DISABLE_MOUSE_TRACKING is a no-op if tracking
-		// wasn't enabled, so it's safe to emit unconditionally — without
-		// it, SGR mouse sequences would appear as garbled text at the
-		// shell prompt while suspended.
-		if (this.props.stdout.isTTY) {
-			this.props.stdout.write(SHOW_CURSOR + DFE + DISABLE_MOUSE_TRACKING);
-		}
-
-		// Notify the application of suspension. The listener manages its notification
-		this.internal_eventEmitter.emit("suspend");
-
-		// Set up resume handler
-		const resumeHandler = () => {
-			// Restore raw mode to exact previous state
-			for (let i = 0; i < rawModeCountBeforeSuspend; i++) {
-				if (this.isRawModeSupported()) {
-					this.handleSetRawMode(true);
-				}
-			}
-
-			// Hide cursor (unless in accessibility mode) and re-enable focus reporting after resuming
-			if (this.props.stdout.isTTY) {
-				if (!isEnvTruthy(process.env.DSH_TUI_ACCESSIBILITY)) {
-					this.props.stdout.write(HIDE_CURSOR);
-				}
-				// Re-enable focus reporting to restore terminal state
-				this.props.stdout.write(EFE);
-			}
-
-			// Notify the application that the terminal resumed
-			this.internal_eventEmitter.emit("resume");
-			process.removeListener("SIGCONT", resumeHandler);
-		};
-		process.on("SIGCONT", resumeHandler);
-		process.kill(process.pid, "SIGSTOP");
+		this.props.stdin.setRawMode(true);
 	};
 }
 
@@ -958,12 +918,6 @@ function processKeysInBatch(
 			setTerminalFocused(true);
 		}
 
-		// Handle Ctrl+Z (suspend) using parsed key to support both raw (\x1a) and
-		// CSI u format (\x1b[122;5u) from Kitty keyboard protocol terminals
-		if (item.name === "z" && item.ctrl && SUPPORTS_SUSPEND) {
-			app.handleSuspend();
-			continue;
-		}
 		// Wheel keys carry the pointer position (SGR/X10 col/row). Route
 		// position-first: if a scroll container sits under the pointer, its
 		// onWheel consumes the event and the legacy global keybinding path

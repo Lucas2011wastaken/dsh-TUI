@@ -381,9 +381,26 @@ export default class Ink {
       return;
     }
 
+    // While paused an external editor owns the tty (`$VISUAL`/`$EDITOR` runs
+    // with inherited stdio in the same process group, and its own Ctrl+Z
+    // suspends the whole group). Re-asserting termios or repainting here would
+    // stomp the editor's modes and screen, so a SIGCONT during the handoff is
+    // left entirely to the child.
+    if (this.isPaused) {
+      return;
+    }
+
+    // A SIGCONT can come from an EXTERNAL stop (kill -STOP, shell `suspend`,
+    // SIGTSTP) now that the app no longer stops itself: while we were stopped
+    // the shell owned the tty and left it in ITS cooked modes. A job is
+    // expected to restore its own termios when it continues — without this the
+    // composer keeps drawing frames while the line discipline echoes every
+    // keystroke and delivers nothing until Enter.
+    this.app?.reassertRawMode();
+
     // Alt screen: after SIGCONT, content is stale (shell may have written
-    // to main screen, switching focus away) and mouse tracking was
-    // disabled by handleSuspend.
+    // to main screen, switching focus away) and the DEC private modes the app
+    // enabled were reset by whoever owned the tty meanwhile.
     if (this.altScreenActive) {
       this.reenterAltScreen();
       return;
@@ -393,9 +410,10 @@ export default class Ink {
     this.frontFrame = emptyFrame(this.frontFrame.viewport.height, this.frontFrame.viewport.width, this.stylePool, this.charPool, this.hyperlinkPool);
     this.backFrame = emptyFrame(this.backFrame.viewport.height, this.backFrame.viewport.width, this.stylePool, this.charPool, this.hyperlinkPool);
     this.log.reset();
-    // Physical cursor position is unknown after the shell took over during
-    // suspend. Clear displayCursor so the next frame's cursor preamble
-    // doesn't emit a relative move from a stale park position.
+    // Physical cursor position is unknown after the shell took over during a
+    // stop (external SIGSTOP / shell `suspend`). Clear displayCursor so the
+    // next frame's cursor preamble doesn't emit a relative move from a stale
+    // park position.
     this.displayCursor = null;
   };
 

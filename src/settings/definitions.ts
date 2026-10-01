@@ -543,4 +543,10 @@ export const SHORTCUT_FIELD_META: Record<ShortcutActionId, { label: string; zh: 
     hintEn: d => `Star the project via the gh CLI (same action as /star and the splash line's click). Default: ${d}.`,
     hintZh: d => `用 gh 给项目点 star（与 /star、开屏标语点击同一个动作）。默认 ${d}。`,
   },
+  undo: {
+    label: 'Draft undo shortcut',
+    zh: '草稿撤销快捷键',
+    hintEn: d => `Undo the prompt draft one word-level step at a time (text, caret and images together). Draft-only: submitting or recalling history ends the undo history, and this is NOT the Esc-Esc rewind nor the Ctrl+R recall. Default: ${d}.`,
+    hintZh: d => `按词撤销输入框草稿（文本、光标、图片一起回退）。只作用于草稿：提交或用历史召回后不可撤销；与 Esc Esc 回溯、Ctrl+R 历史召回不是一回事。默认 ${d}。`,
+  },
 }

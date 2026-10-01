@@ -17,6 +17,7 @@
 | `Ctrl+G` | Edit the current input in an external editor (`$VISUAL` → `$EDITOR`); saving and quitting fills it back, `:cq`/non-zero exit keeps the draft; with neither variable set the TUI asks you to configure one (no `vi` fallback) |
 | `Ctrl+Shift+E` | Expand the fullscreen draft editor (or click the `⛶` affordance at the end of the input row): line numbers + current-line highlight + live line/char stats<br>`Enter` inserts a newline, `Ctrl+Enter` or the Send button sends, `Esc` or the Collapse button keeps the draft and returns<br>wheel-scrolls freely; click/drag/double-click selection work as in the inline prompt; remappable via `/settings` |
 | `Esc` | Ladder: close help → close the image preview → close the command menu → close the file menu (only the current `@` token)<br>→ **with a selection in the prompt input: only clear it (text untouched)** → interrupt the turn and redeliver pending messages → clear non-empty input → double-tap on empty input = rewind<br>in fullscreen, an active mouse selection is cleared first (not copied) |
+| `Ctrl+Z` | Undo the prompt draft's last word-level edit (text, caret and images together). Draft-only: a submit, a history recall (`Ctrl+R`/`↑`) or a session switch ends the history; it is NOT the message/conversation rewind behind `Esc Esc`. Remappable via `/settings` |
 | `Esc` / `Ctrl+C` / `Enter` while an image preview is open | Close the preview and restore the surface underneath; other keys are not passed through |
 | `Left` / `Right` in the image modal | Previous / next image, no wrapping; caret peeks keep arrows with the prompt |
 | `←` (empty input) | Background this session and open the session-management screen (same as `/bg`) |
@@ -78,7 +79,7 @@ subagent dashboard, show-all, and todo fold are remappable in `/settings` → `d
 | `Ctrl+A` / `Ctrl+E` | `Ctrl+A` opens the subagent dashboard (`Mod+A` in the editor still moves to line start); `Ctrl+E` moves to line end and also expands or folds hidden older rows in long transcripts |
 | `Ctrl+U` | Delete before the caret |
 | `Ctrl+K` | Delete after the caret |
-| `Ctrl+W` | Delete the preceding word |
+| `Ctrl+W` | Delete the preceding word: word-boundary based, spaceless CJK deletes one ICU dictionary word (`今天天气` → `今天`), and ASCII punctuation / script changes sever too (one press on `src/components/Foo.tsx` only removes `tsx`); the same word rule `Ctrl+Z` groups by |
 | `Backspace` / `Delete` | Delete the character before / after the caret; **with a selection, delete the whole selection** |
 | Typing | **Replaces an active selection** (standard editor semantics), caret after the inserted text |
 
@@ -97,7 +98,7 @@ subagent dashboard, show-all, and todo fold are remappable in `/settings` → `d
 | `w` / `b` | Next / previous word start (whitespace-split) |
 | `x` / `X` | Delete the character at / before the caret (`x` deletes the last char at line end) |
 | `d` + second key | `dd` delete whole line (newline included)<br>`d$` delete to line end<br>`d0`/`d^` delete to line start<br>`dw` delete to word end |
-| `u` | Undo the last vim edit (stack capped at 100) |
+| `u` | Undo the draft's last edit (the same stack as `Ctrl+Z`, capped at 100 — text typed in INSERT is undoable too) |
 | `i` / `I` / `a` / `A` | INSERT at caret / first non-blank of the line / after caret / line end |
 | `o` / `O` | New line below / above, then INSERT |
 | `/` | Inserts `/` and returns to INSERT (opens the command menu) |

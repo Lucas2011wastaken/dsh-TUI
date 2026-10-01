@@ -19,7 +19,8 @@
  *   interrupt via Ctrl+C) — cancel counter stays 0
  * - pending `d` + Esc cancels the operator (next `x` deletes normally)
  * - undo stack is cleared when vim is toggled off (re-enabled vim cannot
- *   `u` past pre-toggle edits, but new edits still undo)
+ *   `u` past pre-toggle edits, but new edits still undo). `u` is the shared
+ *   draft undo (same stack as Ctrl+Z), so INSERT typing is undoable too.
  * - multi-line: `$x` on a mid-draft line deletes the last CHAR (not the
  *   newline); `dd` deletes the whole line including its newline
  * - `I` lands on the line's first non-blank; `/` works in NORMAL (inserts
@@ -282,9 +283,14 @@ stdin.write('cd') // INSERT typing (toggle lands in INSERT)
 await settle(() => draft() === 'cd')
 stdin.write('\x1b')
 await settle(() => badge() === 'NORMAL')
-stdin.write('u') // stack was cleared by the toggles: must be a no-op
-await sleep(150) // 固定窗:探针 draft 不得被 undo 改动（栈已清空）
-check('re-enabled vim: undo cannot reach pre-toggle edits', draft() === 'cd', JSON.stringify(draft()))
+stdin.write('u') // shared stack (Ctrl+Z == u): undoes the INSERT typing run…
+check('re-enabled vim: undo cannot reach pre-toggle edits', await settled(() => draft() === ''), JSON.stringify(draft()))
+stdin.write('i') // …and the pre-toggle edits stay gone: back to INSERT for a fresh edit
+await settle(() => badge() === 'INSERT')
+stdin.write('cd')
+await settled(() => draft() === 'cd')
+stdin.write('\x1b')
+await settle(() => badge() === 'NORMAL')
 stdin.write('x') // delete 'd' → 'c' (pushes a fresh snapshot)
 await settled(() => draft() === 'c')
 stdin.write('u')

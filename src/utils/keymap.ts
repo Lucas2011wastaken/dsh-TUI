@@ -157,9 +157,21 @@ export function comboMatchesStrict(combo: ParsedCombo, input: string, key: Combo
  * also accept Cmd (`super`) on macOS (isMod semantics), `alt` maps to the
  * ink `meta` flag. Shift stays exact — ctrl+shift+v must keep meaning the
  * terminal's native paste, never the app's clipboard read.
+ *
+ * `exactPrimary` actions opt out of the ctrl↔Cmd alias: word-level draft
+ * undo must not fire on Cmd+Z, which macOS owns for its own conventions.
+ * `platformAlias` is injectable so a Linux CI can assert BOTH polarities
+ * (`super+v` still pastes, `super+z` never undoes).
  */
-function comboMatchesBuiltin(combo: ParsedCombo, input: string, key: ComboKeyFlags): boolean {
-  const primary = key.ctrl === true || (isMac && key.super === true)
+function comboMatchesBuiltin(
+  combo: ParsedCombo,
+  input: string,
+  key: ComboKeyFlags,
+  exactPrimary = false,
+  platformAlias: boolean = isMac,
+): boolean {
+  const alias = platformAlias && !exactPrimary
+  const primary = key.ctrl === true || (alias && key.super === true)
   if (combo.ctrl !== primary) return false
   if (Boolean(key.meta) !== combo.meta) return false
   if (Boolean(key.shift) !== combo.shift) return false
@@ -185,11 +197,18 @@ export type ShortcutActionId =
   | 'todoFold'
   | 'expandEditor'
   | 'star'
+  | 'undo'
 
 export interface ShortcutActionSpec {
   readonly id: ShortcutActionId
   /** Default combos; the FIRST entry is the canonical display form. */
   readonly defaults: readonly string[]
+  /**
+   * Opt out of the macOS ctrl↔Cmd alias for this action: the combo then needs
+   * the real ctrl flag. Draft undo uses it so Cmd+Z keeps whatever meaning the
+   * rest of macOS gives it.
+   */
+  readonly exactPrimary?: boolean
 }
 
 /**
@@ -214,7 +233,15 @@ export const SHORTCUT_ACTIONS: readonly ShortcutActionSpec[] = [
   // 开屏标语里的"一键 star"：与 `/star`、弹窗按钮同一个动作（gh api PUT）。
   // 用 alt 组合是为了不跟输入框抢字母键。
   { id: 'star', defaults: ['alt+s'] },
+  // Word-level undo for the prompt draft. `exactPrimary` keeps Cmd+Z out of
+  // it on macOS; the combo stays remappable through /settings like any other.
+  { id: 'undo', defaults: ['ctrl+z'], exactPrimary: true },
 ]
+
+/** Actions that refuse the macOS ctrl↔Cmd alias (see `exactPrimary`). */
+const EXACT_PRIMARY_ACTIONS: ReadonlySet<ShortcutActionId> = new Set(
+  SHORTCUT_ACTIONS.filter(action => action.exactPrimary === true).map(action => action.id),
+)
 
 const DEFAULT_COMBO_MAP: ReadonlyMap<ShortcutActionId, readonly ParsedCombo[]> = new Map(
   SHORTCUT_ACTIONS.map(action => [action.id, action.defaults.map(parseCombo).filter((combo): combo is ParsedCombo => combo !== undefined)]),
@@ -291,11 +318,19 @@ export function effectiveComboDisplay(action: ShortcutActionId): string {
 }
 
 /** Match a keypress against an action's EFFECTIVE combos (platform alias
- *  included). This is the one call site Chat/PromptInput should need. */
-export function actionMatches(action: ShortcutActionId, input: string, key: ComboKeyFlags): boolean {
+ *  included, minus the actions that opted out via `exactPrimary`). This is
+ *  the one call site Chat/PromptInput should need. `platformAlias` is a test
+ *  seam: a Linux CI passes `true` to assert the macOS polarity. */
+export function actionMatches(
+  action: ShortcutActionId,
+  input: string,
+  key: ComboKeyFlags,
+  platformAlias: boolean = isMac,
+): boolean {
   const combos = effectiveCombos(action)
+  const exactPrimary = EXACT_PRIMARY_ACTIONS.has(action)
   for (let index = 0; index < combos.length; index += 1) {
-    if (comboMatchesBuiltin(combos[index]!, input, key)) return true
+    if (comboMatchesBuiltin(combos[index]!, input, key, exactPrimary, platformAlias)) return true
   }
   return false
 }
