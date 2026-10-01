@@ -5,8 +5,8 @@
  * NOT the message/conversation rewind (`Esc Esc` → onRewindRequest).
  *
  * Drives the real PromptInput through fake stdin and an injected clock (the
- * 700ms idle rule is exercised by advancing the clock, never by sleeping —
- * a wall-clock wait would be flaky under load).
+ * `now` prop): the 700ms idle rule is exercised by advancing the clock, never
+ * by sleeping — a wall-clock wait would be flaky under load.
  *
  * Checks:
  * - `\x1a` (raw) and `\x1b[122;5u` (kitty CSI-u) agree
@@ -15,11 +15,12 @@
  * - CJK punctuation and script transitions (Han/Latin/digit) break
  * - `1` + `3.14` is not fused into one step (the ±32 context window)
  * - a direction flip (typing → Backspace) and a caret jump break
+ * - a deletion run stays ONE step inside the word it began in — including the
+ *   word's left edge, the text head, and a re-segmented CJK suffix; crossing
+ *   the edge (or the other deletion direction) starts a new step
  * - a bracketed paste is one step, never fused into the typing run
  * - Enter/submit ends the history; `Esc` clear is undoable
  * - recalling a pending message (Alt+Up) is NOT undoable
- * - `Ctrl+W` deletes one ICU word of a spaceless CJK run
- * - vim NORMAL `u` shares the same stack; `/vim` toggling clears it
  * - an undo stack holding an image keeps its capability alive
  * - an empty stack is a no-op: no rewind request, no clear
  * - `suspended` (a panel owns the keyboard) leaves Ctrl+Z inert
@@ -40,12 +41,10 @@ const [
   { default: React },
   { render },
   { PromptInput },
-  { setNowImpl, resetNowImpl },
 ] = await Promise.all([
   import('react'),
   import('../lib/types/ui.js'),
   import('../lib/types/components/PromptInput.js'),
-  import('../lib/types/utils/now.js'),
 ])
 
 let failed = 0
@@ -55,8 +54,9 @@ function check(name, ok, extra = '') {
 }
 
 // ---- injected clock --------------------------------------------------------
+// Handed to the component as the `now` prop; never a wall-clock sleep.
 let clock = 0
-setNowImpl(() => clock)
+const now = () => clock
 const advance = ms => {
   clock += ms
 }
@@ -121,6 +121,7 @@ const baseProps = {
   selectionActive: false,
   controllerRef,
   onRewindRequest() { rewindCalls += 1 },
+  now,
 }
 const mount = extra => React.createElement(PromptInput, { ...baseProps, ...extra })
 
@@ -323,27 +324,82 @@ try {
   check('the restored image binding is live', controllerRef.current?.previewImages?.().length === 1,
     JSON.stringify(controllerRef.current?.previewImages?.().length))
 
-  // ── 17. Ctrl+W deletes one ICU word of a spaceless run ──
+  // ── 17. a deletion run is ONE step while it stays inside its word ──
+  // P0 regression: the old rule asked `isDraftWordBoundary` at the removed
+  // character's LEFT neighbour, so it stopped one keystroke early at a word's
+  // left edge, at the text head, and on a re-segmented CJK suffix.
+
+  // [A] Backspace to the text head, one key per stdin read.
+  await clearAll()
+  await typeInto('abc')
+  stdin.write('\x7f')
+  await settled(() => text() === 'ab', { timeoutMs: 2000 })
+  stdin.write('\x7f')
+  await settled(() => text() === 'a', { timeoutMs: 2000 })
+  stdin.write('\x7f')
+  await settled(() => text() === '', { timeoutMs: 2000 })
+  check('abc + Backspace×3 (per key) is ONE step', await ctrlZTo('abc'), JSON.stringify(text()))
+
+  // The same run fed as ONE stdin chunk must reach the same conclusion.
+  await clearAll()
+  await typeInto('abc')
+  stdin.write('\x7f\x7f\x7f')
+  await settled(() => text() === '', { timeoutMs: 2000 })
+  check('abc + Backspace×3 (one chunk) is ONE step too', await ctrlZTo('abc'), JSON.stringify(text()))
+
+  // [B] Forward Delete from the text head.
+  await clearAll()
+  await typeInto('abc')
+  for (let i = 0; i < 3; i++) {
+    stdin.write('\x1b[D') // ← one at a time: the caret lands on index 0
+    await sleep(30) // 固定窗:pacing 等方向键被消费（光标位置无可轮询锚点）
+  }
+  stdin.write('\x1b[3~')
+  await settled(() => text() === 'bc', { timeoutMs: 2000 })
+  stdin.write('\x1b[3~')
+  await settled(() => text() === 'c', { timeoutMs: 2000 })
+  stdin.write('\x1b[3~')
+  await settled(() => text() === '', { timeoutMs: 2000 })
+  check('|abc + Delete×3 is ONE step', await ctrlZTo('abc'), JSON.stringify(text()))
+
+  // [C] A CJK word deleted from its right edge: the interval comes from the
+  // full pre-run text, so the truncated suffix is never re-segmented.
   await clearAll()
   await typeInto('今天天气')
-  stdin.write('\x17') // Ctrl+W
-  check('Ctrl+W deletes one CJK word, not the whole run', await settled(() => text() === '今天'),
-    JSON.stringify(text()))
+  stdin.write('\x7f')
+  await settled(() => text() === '今天天', { timeoutMs: 2000 })
+  stdin.write('\x7f')
+  await settled(() => text() === '今天', { timeoutMs: 2000 })
+  check('今天天气 + Backspace×2 (word 天气) is ONE step', await ctrlZTo('今天天气'), JSON.stringify(text()))
 
-  // ── 18. vim NORMAL `u` shares the stack; toggling clears it ─
+  // [D] Baseline that must NOT regress: an interior Backspace run is one step.
   await clearAll()
-  controllerRef.current?.toggleVim() // stack cleared by the toggle
-  await sleep(80) // 固定窗:pacing 等 vim 开关注入生效（徽标状态不可从 controller 观察）
-  await typeInto('abc')
-  stdin.write('\x1b') // INSERT → NORMAL
-  await sleep(80) // 固定窗:pacing 等 Esc 切到 NORMAL（同上，无锚点）
-  stdin.write('u')
-  check('vim u is the same undo as Ctrl+Z', await settled(() => text() === '', { timeoutMs: 2000 }),
-    JSON.stringify(text()))
-  stdin.write('\x1b') // NORMAL → INSERT
-  await sleep(80) // 固定窗:pacing 等 Esc 切回 INSERT（同上，无锚点）
-  controllerRef.current?.toggleVim() // OFF: vim must not own the next section's keys
-  await sleep(80) // 固定窗:pacing 等关闭 vim 生效（同上，无锚点）
+  await typeInto('abcdef')
+  stdin.write('\x7f')
+  await settled(() => text() === 'abcde', { timeoutMs: 2000 })
+  stdin.write('\x7f')
+  await settled(() => text() === 'abcd', { timeoutMs: 2000 })
+  stdin.write('\x7f')
+  await settled(() => text() === 'abc', { timeoutMs: 2000 })
+  check('abcdef + Backspace×3 is ONE step (baseline)', await ctrlZTo('abcdef'), JSON.stringify(text()))
+
+  // [E] The word's LEFT edge: "def" is one step, and the space beyond it is a
+  // new one — prove it by deleting the space too, then undoing twice.
+  await clearAll()
+  await typeInto('abc def')
+  stdin.write('\x7f\x7f\x7f')
+  await settled(() => text() === 'abc ', { timeoutMs: 2000 })
+  check('abc def + Backspace×3 (word "def") is ONE step', await ctrlZTo('abc def'), JSON.stringify(text()))
+  await clearAll()
+  await typeInto('abc def')
+  stdin.write('\x7f\x7f\x7f')
+  await settled(() => text() === 'abc ', { timeoutMs: 2000 })
+  stdin.write('\x7f') // the space: outside "def", so its own step
+  await settled(() => text() === 'abc', { timeoutMs: 2000 })
+  const edge1 = await ctrlZTo('abc ')
+  const edge2 = await ctrlZTo('abc def')
+  check("crossing the word's left edge starts a new step", edge1 && edge2,
+    `${JSON.stringify(edge1)}${JSON.stringify(edge2)}`)
 
   // ── 20. suspended: a panel owns the keyboard ────────────
   await clearAll()
@@ -364,7 +420,6 @@ try {
     console.log('\nverify-prompt-undo OK')
   }
 } finally {
-  resetNowImpl()
   instance.unmount()
   rmSync(home, { recursive: true, force: true })
 }

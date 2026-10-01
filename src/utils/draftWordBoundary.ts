@@ -1,26 +1,25 @@
 import { getWordSegmenter } from './intl.js'
 
 /**
- * Word boundaries for the prompt draft, shared by `Ctrl+Z` undo grouping and
- * `Ctrl+W` kill-word so both agree on what a "word" is. Three layers, in
- * priority order:
+ * Word boundaries for the prompt draft. `Intl.Segmenter` (`granularity:
+ * 'word'`, UAX #29 + the ICU dictionary) is the source of truth; a cheap
+ * hard-rule layer in front of it answers the common cases (edges, whitespace,
+ * CJK punctuation, script changes) without paying for a segmentation.
  *
- * 1. Hard breaks, regex only: either edge, whitespace/newline, a CJK
- *    punctuation mark, or a script change (Han / Latin / digit / kana /
- *    hangul / other).
- * 2. ICU arbitration, only when layer 1 missed: segment a window around the
- *    seam with `Intl.Segmenter` (`granularity: 'word'`) and accept a segment
- *    start that lands exactly on the seam. The window is both a cost bound
- *    (segmenting a 30k draft costs ~15ms and would drop frames) and a
- *    correctness matter: ICU's dictionary segmentation is length-dependent,
- *    so a minimal two-character splice disagrees with the full context (a
- *    run of repeated Han characters is the reproducible case).
- * 3. Idle coalescing is deliberately NOT here: the undo stack applies its own
- *    700ms rule so a test clock can be injected at that call site.
+ * Two callers:
+ *
+ * - `Ctrl+Z`/typing grouping asks whether a seam (`text[offset-1] |
+ *   text[offset]`) is a word boundary — {@link isDraftWordBoundary}.
+ * - a deletion run asks for the word interval its first removed character
+ *   belongs to, so the run may keep consuming that word and nothing else —
+ *   {@link draftWordRangeAt}.
+ *
+ * Idle coalescing is deliberately NOT here: the undo stack applies its own
+ * 700ms rule so a test clock can be injected at that call site.
  */
 
 /** Window radius (characters) for the ICU layer, and its scan budget. */
-export const DRAFT_WORD_WINDOW = 32
+const DRAFT_WORD_WINDOW = 32
 
 const WHITESPACE = /\s/u
 const HAN = /\p{Script=Han}/u
@@ -101,16 +100,6 @@ function hardBoundaryAt(text: string, offset: number): boolean {
   return leftClassAt(text, offset) !== scriptClass(right)
 }
 
-function isWhitespaceAt(text: string, index: number): boolean {
-  return WHITESPACE.test(String.fromCodePoint(text.codePointAt(index)!))
-}
-
-/** Next code-point index after `index` (never splits a surrogate pair). */
-function stepForward(text: string, index: number): number {
-  const codePoint = text.codePointAt(index)!
-  return index + (codePoint > 0xffff ? 2 : 1)
-}
-
 /** Previous code-point index before `index` (never splits a surrogate pair). */
 function stepBackward(text: string, index: number): number {
   const codePoint = codePointBefore(text, index)
@@ -124,56 +113,47 @@ function stepBackward(text: string, index: number): number {
  */
 export function isDraftWordBoundary(text: string, offset: number): boolean {
   if (hardBoundaryAt(text, offset)) return true
-  const segmenter = getWordSegmenter()
-  // No ICU: layer 1 above is the whole answer — its hard breaks (whitespace,
-  // CJK punctuation, script change) are what a dictionary would refine.
-  if (segmenter === undefined) return false
+  // Layer 1 rejected this offset, so 0 < offset < text.length, which means the
+  // window's own edges can never masquerade as a seam boundary and the queried
+  // offset is always strictly inside.
   const start = Math.max(0, offset - DRAFT_WORD_WINDOW)
   const end = Math.min(text.length, offset + DRAFT_WORD_WINDOW)
-  // Layer 1 rejected this offset, so 0 < offset < text.length, which means
-  // start < offset < end: the window's own edges can never masquerade as a
-  // seam boundary, and the queried offset is always strictly inside.
-  for (const part of segmenter.segment(text.slice(start, end))) {
+  for (const part of getWordSegmenter().segment(text.slice(start, end))) {
     if (start + part.index === offset) return true
   }
   return false
 }
 
 /**
- * Index of the word boundary at or before `offset`, skipping whitespace
- * first (readline `Ctrl+W` / `alt+b` geometry). Mirrors the whitespace-based
- * helper it replaces for space-delimited text.
+ * The word interval `[start, end)` containing the character at `index`: the
+ * ICU segment when that character is word-like, otherwise just the character
+ * itself (whitespace and punctuation are boundaries, never part of a
+ * multi-character word). A deletion run uses this as the range it may keep
+ * consuming.
+ *
+ * The window widens until the segment no longer touches its edge: ICU
+ * segmentation is length-dependent, so a truncated copy of a repeated-Han run
+ * can split differently from the full draft (and the ±32 window would then
+ * read the wrong word at the seam).
  */
-export function draftWordBoundaryLeft(text: string, offset: number): number {
-  let index = offset
-  while (index > 0 && isWhitespaceAt(text, index - 1)) index--
-  if (index === 0) return 0
-  let steps = 0
-  for (let probe = stepBackward(text, index); probe > 0; probe = stepBackward(text, probe), steps++) {
-    // Beyond the window the ICU layer cannot see the context anyway, so the
-    // scan continues on the cheap hard rules instead of paying ~33µs/char
-    // on a pathologically long single token.
-    const boundary =
-      steps < DRAFT_WORD_WINDOW ? isDraftWordBoundary(text, probe) : hardBoundaryAt(text, probe)
-    if (boundary) return probe
+export function draftWordRangeAt(text: string, index: number): { start: number; end: number } {
+  const single = { start: index, end: index + 1 }
+  if (index < 0 || index >= text.length) return single
+  const segmenter = getWordSegmenter()
+  let radius = DRAFT_WORD_WINDOW
+  for (;;) {
+    const windowStart = Math.max(0, index - radius)
+    const windowEnd = Math.min(text.length, index + radius)
+    for (const part of segmenter.segment(text.slice(windowStart, windowEnd))) {
+      const start = windowStart + part.index
+      const end = start + part.segment.length
+      if (start > index || index >= end) continue
+      const clipped =
+        (start === windowStart && windowStart > 0) || (end === windowEnd && windowEnd < text.length)
+      if (!clipped) return part.isWordLike === true ? { start, end } : single
+      break
+    }
+    if (windowStart === 0 && windowEnd === text.length) return single
+    radius = Math.min(radius * 2, text.length)
   }
-  return 0
-}
-
-/**
- * Index of the word boundary just past the current word and its trailing
- * whitespace (readline `alt+f` geometry), mirroring the whitespace-based
- * helper it replaces for space-delimited text.
- */
-export function draftWordBoundaryRight(text: string, offset: number): number {
-  const length = text.length
-  let index = offset < length ? stepForward(text, offset) : length
-  let steps = 0
-  for (; index < length; index = stepForward(text, index), steps++) {
-    const boundary =
-      steps < DRAFT_WORD_WINDOW ? isDraftWordBoundary(text, index) : hardBoundaryAt(text, index)
-    if (boundary) break
-  }
-  while (index < length && isWhitespaceAt(text, index)) index = stepForward(text, index)
-  return index
 }

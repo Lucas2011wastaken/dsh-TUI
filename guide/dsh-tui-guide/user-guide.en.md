@@ -103,7 +103,7 @@ dsh-tui
 | `Ctrl+←` / `Ctrl+→` (⌘←/→) | jump by word |
 | `Home` / `End`, `Ctrl+E` | logical line start / end (`Ctrl+A` now opens the subagent panel, see §2.7) |
 | `Ctrl+U` / `Ctrl+K` | delete before the cursor (to line start) / after the cursor (to line end) |
-| `Ctrl+W` | delete the previous word: word-boundary based, spaceless CJK deletes one ICU dictionary word (`今天天气` → `今天`), and ASCII punctuation / script changes sever too (one press on `src/components/Foo.tsx` only removes `tsx`) |
+| `Ctrl+W` | delete the previous word |
 | `Ctrl+Z` | undo the draft's last word-level edit (caret and images included); draft-only — a submit or a history recall (`Ctrl+R`/`↑`) ends it, and it is unrelated to the `Esc Esc` conversation/message rewind; remappable via `/settings` |
 | `Backspace` / `Delete` | delete previous / next character; **with a selection, delete the whole selection** |
 | `↑` / `↓` | move between lines when multi-line; browse input history when single-line (last 200 entries, kept across restarts) |

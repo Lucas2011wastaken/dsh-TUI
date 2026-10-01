@@ -1612,9 +1612,6 @@ for (const columns of [32, 80]) {
     screen.text())
   stdin.write('\x1b')
   await settled(() => !screen.text().includes('live draft'))
-  // Ctrl+Z makes the Esc clear recoverable, so the capability must SURVIVE it:
-  // it is released when the draft's undo history ends (see the unmount check
-  // at the bottom), not the instant the text disappears.
   // Ctrl+Z makes the Esc clear recoverable, so the capability must SURVIVE it;
   // it is released when the draft's undo history ends (the submit below), and
   // `verify-composer-image-tokens` pins the unmount release of a stack-held one.

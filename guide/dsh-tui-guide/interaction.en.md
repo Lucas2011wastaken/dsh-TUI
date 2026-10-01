@@ -79,7 +79,7 @@ subagent dashboard, show-all, and todo fold are remappable in `/settings` → `d
 | `Ctrl+A` / `Ctrl+E` | `Ctrl+A` opens the subagent dashboard (`Mod+A` in the editor still moves to line start); `Ctrl+E` moves to line end and also expands or folds hidden older rows in long transcripts |
 | `Ctrl+U` | Delete before the caret |
 | `Ctrl+K` | Delete after the caret |
-| `Ctrl+W` | Delete the preceding word: word-boundary based, spaceless CJK deletes one ICU dictionary word (`今天天气` → `今天`), and ASCII punctuation / script changes sever too (one press on `src/components/Foo.tsx` only removes `tsx`); the same word rule `Ctrl+Z` groups by |
+| `Ctrl+W` | Delete the preceding word |
 | `Backspace` / `Delete` | Delete the character before / after the caret; **with a selection, delete the whole selection** |
 | Typing | **Replaces an active selection** (standard editor semantics), caret after the inserted text |
 
@@ -98,7 +98,7 @@ subagent dashboard, show-all, and todo fold are remappable in `/settings` → `d
 | `w` / `b` | Next / previous word start (whitespace-split) |
 | `x` / `X` | Delete the character at / before the caret (`x` deletes the last char at line end) |
 | `d` + second key | `dd` delete whole line (newline included)<br>`d$` delete to line end<br>`d0`/`d^` delete to line start<br>`dw` delete to word end |
-| `u` | Undo the draft's last edit (the same stack as `Ctrl+Z`, capped at 100 — text typed in INSERT is undoable too) |
+| `u` | Undo the last vim edit (stack capped at 100) |
 | `i` / `I` / `a` / `A` | INSERT at caret / first non-blank of the line / after caret / line end |
 | `o` / `O` | New line below / above, then INSERT |
 | `/` | Inserts `/` and returns to INSERT (opens the command menu) |
