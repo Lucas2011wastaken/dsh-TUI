@@ -3193,12 +3193,17 @@ export function PromptInput({
           if (input === '?' && value.length === 0) return
           // `/` opens the slash-command menu even in NORMAL: insert it and
           // switch to INSERT so the rest of the command types normally
-          // (the menu then owns the keys while it is open).
+          // (the menu then owns the keys while it is open). The insertion is
+          // a NORMAL command, so it lands on the vim undo stack (`u` reverts
+          // it); anything typed afterwards is a draft edit whose first
+          // snapshot already contains the `/`, so `Ctrl+Z` never peels the
+          // `/` off on its own.
           if (input === '/') {
             const text = valueRef.current
             const pos = cursorRef.current
             const next = text.slice(0, pos) + '/' + text.slice(pos)
-            setInput(next, pos + 1, 'step')
+            vimPushUndo() // NORMAL command: one vim-undo step, not a draft edit
+            setInput(next, pos + 1, 'silent')
             setSelectedCommand(0)
             setFileSelected(0)
             vimInsertRef.current = true
