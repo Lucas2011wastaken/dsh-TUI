@@ -12,12 +12,18 @@
  * Mounts the real tree over a fake TTY stdin whose `isRaw` flag the test
  * controls, then emits SIGCONT the way the kernel would.
  *
+ * Also covers the PAUSED handoff (an external editor owns the tty): with the
+ * alt screen active, `pause()` models the handoff — a SIGCONT during it must
+ * touch nothing (no termios re-assert, no repaint, no alt-screen re-entry) —
+ * and the ordinary path must resume once the app is unpaused again.
+ *
  * Run after build: `node scripts/verify-sigcont-rawmode.mjs`
  */
 import { PassThrough, Writable } from 'node:stream'
 import { settle, sleep } from './lib/term-test.mjs'
+import instances from '../lib/types/ink/instances.js'
 
-const [{ default: React }, { render }, { PromptInput }] = await Promise.all([
+const [{ default: React }, { render, AlternateScreen }, { PromptInput }] = await Promise.all([
   import('react'),
   import('../lib/types/ui.js'),
   import('../lib/types/components/PromptInput.js'),
@@ -29,7 +35,8 @@ function check(name, ok, extra = '') {
   if (!ok) failed += 1
 }
 
-const stdout = new Writable({ write(_chunk, _encoding, callback) { callback() } })
+const writes = []
+const stdout = new Writable({ write(chunk, _encoding, callback) { writes.push(String(chunk)); callback() } })
 stdout.columns = 100
 stdout.rows = 30
 stdout.isTTY = true
@@ -67,13 +74,15 @@ const channel = {
 }
 
 const instance = await render(
-  React.createElement(PromptInput, {
-    channel,
-    helpOpen: false,
-    onToggleHelp() {},
-    onRunCommand: () => false,
-    selectionActive: false,
-  }),
+  React.createElement(AlternateScreen, null,
+    React.createElement(PromptInput, {
+      channel,
+      helpOpen: false,
+      onToggleHelp() {},
+      onRunCommand: () => false,
+      selectionActive: false,
+    }),
+  ),
   { stdout, stderr, stdin, exitOnCtrlC: false, patchConsole: false },
 )
 
@@ -98,6 +107,33 @@ try {
   process.emit('SIGCONT')
   await settle(() => rawCalls.includes(true))
   check('a later SIGCONT re-asserts again', rawCalls.includes(true), JSON.stringify(rawCalls))
+
+  // ── paused handoff (external editor owns the tty) ──────────
+  // The <AlternateScreen> wrapper has flipped altScreenActive. `pause()` models
+  // the external-editor handoff. A SIGCONT here — e.g. the editor's own Ctrl+Z
+  // suspending the whole process group — must be left entirely to the child: no
+  // termios re-assert, no repaint, no alt-screen re-entry (all three share the
+  // same `isPaused` early return in handleResume).
+  const ink = instances.get(stdout)
+  check('the Ink instance is reachable for pause()/resume()', ink !== undefined)
+  ink.pause()
+  await sleep(120) // 固定窗:pacing 等 pause() 的收尾重绘落地
+  rawCalls.length = 0
+  const pausedWrites = writes.length
+  process.emit('SIGCONT')
+  await sleep(120) // 固定窗:探针 暂停期间 SIGCONT 必须完全静默：只能等观察窗
+  check('SIGCONT while paused touches nothing (no raw mode, no repaint, no alt-screen re-entry)',
+    !rawCalls.includes(true) && writes.length === pausedWrites,
+    `raw=${JSON.stringify(rawCalls)} writes=${writes.length - pausedWrites}`)
+
+  // Unpausing restores the ordinary path: the next SIGCONT re-asserts termios
+  // (and, with the alt screen active, re-enters it).
+  ink.resume()
+  await sleep(80) // 固定窗:pacing 等 resume 的重绘落地
+  rawCalls.length = 0
+  process.emit('SIGCONT')
+  await settle(() => rawCalls.includes(true))
+  check('SIGCONT after resume re-asserts raw mode again', rawCalls.includes(true), JSON.stringify(rawCalls))
 
   instance.unmount()
   await sleep(120) // 固定窗:pacing 等 unmount 的清理落地（无单一可轮询锚点）
