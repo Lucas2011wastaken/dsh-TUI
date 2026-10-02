@@ -442,7 +442,7 @@ Command-line resume: `dsh-tui --resume` (last session) / `dsh-tui --resume <id>`
 ### 4.3 Message delivery semantics (while the model is working)
 
 Keys are in §2.1:
-- `Enter` = **steer** (inject a next-step boundary, no interrupt)
+- `Enter` = a known `/` command (with or without arguments) runs as a command (its own gate decides while a turn is running); anything else **steers** (inject a next-step boundary, no interrupt)
 - `Tab` = **follow-up** (queue after the turn)
 - `Ctrl+Enter` = **interrupt** (interrupt and send)
 - `Alt+Up` bring the last unhandled message back
@@ -682,7 +682,7 @@ When dsh exits unexpectedly, safe mode gives a **read-only** environment diagnos
 
 **Efficiency**
 
-4. Three deliveries while the model works: `Enter` inject a next step, `Tab` queue, `Ctrl+Enter` interrupt and send.
+4. Three deliveries while the model works: `Enter` inject a next step (a known `/` command runs as a command instead), `Tab` queue, `Ctrl+Enter` interrupt and send.
 5. `Alt+Up` brings the last unhandled message back to edit and resend, no retyping.
 6. A quick question without interrupting the main turn or writing history:
    `/btw <问题>`.
