@@ -29,6 +29,7 @@ import { createActivityProjection } from '../../../channel/activity.js'
 import { channelCapabilities } from '../../../channel/capabilities.js'
 import { anchoredRow, prependHistoryRows, projectHistorySlice, restoreFoldedRows } from '../../../channel/history-restore.js'
 import { t } from '../../../i18n.js'
+import { WORKING_GATE_NOTICES } from '../../../commands.js'
 import { logForDebugging } from '../../../utils/debug.js'
 import { DEFAULT_SESSION_MODES } from '../../../sessionModes.js'
 import { resolveContextOccupancy } from '../../context-occupancy.js'
@@ -464,7 +465,7 @@ export function createCoreChannel(
           if (option === undefined) { unavailable('channel'); return { ok: false, restart: false } }
           const restart = restartFor(option)
           if (restart && state.working) {
-            notify(t('channel-switch-while-working'), { color: 'warning' })
+            notify(t(WORKING_GATE_NOTICES.channel), { color: 'warning' })
             return { ok: false, restart }
           }
           channels.setActive(id)

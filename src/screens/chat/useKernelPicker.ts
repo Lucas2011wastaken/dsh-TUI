@@ -1,6 +1,7 @@
 import React from 'react'
 import type { ChannelUi } from '../../adapter/ports/channel-ui.js'
 import { buildKernelCatalog, type KernelStatus } from '../../components/kernelCatalog.js'
+import { WORKING_GATE_NOTICES } from '../../commands.js'
 import { t } from '../../i18n.js'
 import { KERNEL_IDS, type KernelBackendId } from '../../kernelPrefs.js'
 import type { ChatOverlayAction } from '../chatOverlay.js'
@@ -70,7 +71,7 @@ export function useKernelPicker({ channel, kernelVersion, launchpadShown, onProb
       return
     }
     if (channel.working) {
-      channel.notify(t('kernel-switch-while-working'), { color: 'warning' })
+      channel.notify(t(WORKING_GATE_NOTICES.kernel), { color: 'warning' })
       return
     }
     dispatchOverlay({ type: 'close' })

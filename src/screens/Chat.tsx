@@ -29,6 +29,7 @@ import {
   RECENTS_GROUP_PROVIDER,
 } from '../modelGroups.js'
 import { readModelRecents, recordModelUse, type ModelRecentsRef } from '../modelRecents.js'
+import { WORKING_GATE_NOTICES } from '../commands.js'
 import type { ChannelUi as Channel } from '../adapter/channel/ui-policy.js'
 import { sessionCwdMatches, type ChatRow, type ComposerImageRef, type EffortOption, type ExternalCommandOutcome, type PermissionPresetSnapshot, type PresetOption, type SkillInfo } from '../dsh-adapter/channel.js'
 import type { QuestionStore } from '../channel/questions.js'
@@ -3584,7 +3585,7 @@ export function Chat({
         if (onUpdate === undefined) {
           channel.notify(t('update-unavailable'), { color: 'warning' })
         } else if (channel.working) {
-          channel.notify(t('update-working'), { color: 'warning' })
+          channel.notify(t(WORKING_GATE_NOTICES.update), { color: 'warning' })
         } else {
           channel.notify(t('update-starting'))
           onUpdate()
@@ -3692,7 +3693,7 @@ export function Chat({
         if (onRestart === undefined) {
           channel.notify(t('restart-unavailable'), { color: 'warning' })
         } else if (channel.working) {
-          channel.notify(t('update-working'), { color: 'warning' })
+          channel.notify(t(WORKING_GATE_NOTICES.restart), { color: 'warning' })
         } else {
           channel.notify(t('restart-starting'))
           onRestart()
