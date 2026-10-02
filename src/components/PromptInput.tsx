@@ -2045,8 +2045,9 @@ export function PromptInput({
    * The Enter main path, shared by the inline prompt, the expanded
    * editor's Ctrl+Enter, and its Send button:
    * - command menu open → run the SELECTED command (never send `/mo`);
-   * - model working → STEER into the running turn (next step boundary,
-   *   agent continues — the "immediate" send; Codex/pi semantics);
+   * - model working → a KNOWN command is still a command; anything else
+   *   STEERS into the running turn (next step boundary, agent continues —
+   *   the "immediate" send; Codex/pi semantics);
    * - otherwise → submit directly (or run a unique command).
    * Reads valueRef so a key batch (typing + Enter in one stdin read)
    * operates on the text the preceding keys produced.
@@ -2091,22 +2092,12 @@ export function PromptInput({
       return
     }
     if (channel.working && value.trim() !== '') {
-      // Immediate-command semantics: /btw and /skills are exempt from
-      // steering — neither command interrupts the running turn. Hidden
-      // UI-only easter eggs (e.g. /deepseek) are also safe to run while
-      // streaming. Every other input keeps the steer behavior so /new
-      // /model etc. stay idle-only.
-      const parsed = value.startsWith('/') ? parseCommandName(value) : undefined
-      if (parsed !== undefined && (
-        ((parsed.name === 'btw' || parsed.name === 'skills')
-          && channel.commandList.some(c => c.name === parsed.name))
-        || isHiddenCommandName(parsed.name)
-        // A built-in the backend lacks is refused here too, never steered in.
-        // oxlint-disable-next-line typescript/no-unnecessary-condition -- partial embedder channels omit the snapshot
-        || isUnavailableLocalCommand(parsed.name, channel.backendCapabilities as Channel['backendCapabilities'] | undefined)
-      )) {
-        if (tryRunCommand(value)) return
-      }
+      // While a turn is running a KNOWN command is dispatched as a command:
+      // with or without arguments, with the completion overlay open or closed,
+      // from the inline prompt or the fullscreen editor (issue #1072). Each
+      // command's own gate decides whether it can run mid-turn and says why;
+      // steering is reserved for input that is NOT a command.
+      if (tryRunCommand(value)) return
       steerSend(value)
       return
     }
