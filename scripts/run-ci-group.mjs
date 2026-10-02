@@ -660,6 +660,10 @@ const GROUPS = {
 // 崩溃诊断：serializeCrashDetail 逐层序列化 stack、cause 链、componentStack 与 digest；
 // crash.log 行格式；appendCrashLog 写失败不抛；plugin.ts 的崩溃分支确实接上了它。
     ["verify-crash-detail", ['node', '--import', 'tsx/esm', 'scripts/verify-crash-detail.ts']],
+// `/` 命令浮窗「影响当前对话」灰区回归（issue #1072）：回合运行中按对当前
+// 对话的影响分区（正常区在上、灰区沉底，不插标题行、不多占显示行），灰区整行
+// subtle 且不提亮查询命中，点击映射与命令索引一一对应，36 列不换行。
+    ["verify-command-hold-overlay", ['node', '--import', 'tsx/esm', 'scripts/verify-command-hold-overlay.tsx']],
   ],
   'channel-ui': [
 // L4 composition boundary plus report/metadata lifetime fences.
@@ -687,6 +691,11 @@ const GROUPS = {
 // channel 层分别用 DSH 会话夹具和 Claude 形会话夹具覆盖撤回、取消回执（确认/失败/
 // 未知）与回执在途时的门控。UI 键位在 verify-queue.mjs。
     ["verify-docked-queue", ['node', 'scripts/verify-docked-queue.mjs']],
+// 回合运行中的命令影响度真源表（issue #1072）：门禁提示与 `/` 浮窗灰区分区
+// 读同一张表——表里的命令名必须是真命令、提示 key 必须在字典里、会打断
+// 对话的名单与门禁名单不相交，且 src/ 里不得再有 `t('<门禁 key>')` 字面量
+// （11 处门禁必须走表，提示与标注才不会漂移）。
+    ["verify-command-hold", ['node', '--import', 'tsx/esm', 'scripts/verify-command-hold.ts']],
     ['verify-shell-compat', ['node', 'scripts/verify-shell-compat.mjs']],
     ['verify-agent-lifecycle-compat', ['node', 'scripts/verify-agent-lifecycle-compat.mjs']],
     ['verify-bundled-presets', ['node', 'scripts/verify-bundled-presets.mjs']],

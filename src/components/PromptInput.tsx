@@ -36,7 +36,7 @@ import type {
   StagedImageHandle,
 } from '../dsh-adapter/channel.js'
 import type { TranscriptImage } from '../dsh-adapter/transcript-images.js'
-import { isHiddenCommandName, isUnavailableLocalCommand, parseCommandName } from '../commands.js'
+import { isHiddenCommandName, isUnavailableLocalCommand, parseCommandName, workingHoldOf } from '../commands.js'
 import { appendHistory, HISTORY_LIMIT, historyProjectKey, loadHistoryOldestFirst } from '../history.js'
 import { mentionAtCaret } from '../utils/mentions.js'
 import { preserveSelection, type FileCandidate } from '../utils/fileSuggestions.js'
@@ -1311,7 +1311,27 @@ export function PromptInput({
   // snapshot's cherry-pick resurrected the old formula.)
   const helpViewportHeight = Math.max(3, Math.min(terminalRows - 7, 15))
 
-  const suggestions = value.startsWith('/') ? channel.commandCompletions(value) : []
+  // Issue #1072: while a turn runs, the overlay groups the commands that
+  // AFFECT the running conversation (gated / conversation-acting / steering)
+  // below the ones that do not. The partition is a stable reorder and keeps ONE
+  // index space: `suggestions` stays the only list selection, Enter dispatch and
+  // clicks read, and the default selection stays the first normal-region row.
+  // The region is marked by colour only — it costs no display row.
+  const completions = value.startsWith('/') ? channel.commandCompletions(value) : []
+  const holdOf = (commandLine: string): boolean =>
+    workingHoldOf(commandLine, channel.commandList.find(
+      command => command.name === commandLine.replace(/^\//, '').split(/[\t ]/u)[0],
+    )?.skill === true) !== undefined
+  const normalCompletions = channel.working
+    ? completions.filter(completion => !holdOf(completion.commandLine))
+    : completions
+  /** 灰区起始索引；灰区为空时不分区。 */
+  const suggestionsHoldFrom = channel.working && normalCompletions.length < completions.length
+    ? normalCompletions.length
+    : undefined
+  const suggestions = suggestionsHoldFrom === undefined
+    ? completions
+    : [...normalCompletions, ...completions.filter(completion => holdOf(completion.commandLine))]
   const overlayOpen =
     suggestions.length > 0 &&
     !expanded &&
@@ -4420,6 +4440,7 @@ export function PromptInput({
             columns={columns}
             query={value}
             accent={promptAccent}
+            holdFrom={suggestionsHoldFrom}
             // 点击行 = 运行该命令（与 Enter 同路径）
             onPick={(index) => {
               const command = suggestions[index]
