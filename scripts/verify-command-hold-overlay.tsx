@@ -132,7 +132,14 @@ async function boot(cols: number, working: boolean) {
   instance.rerender(tree)
   ink?.setAltScreenActive(true, true)
   const lines = () => viewportLines(term)
-  return { stdin, channel, instance, lines, frames: () => frames.join('') }
+  return {
+    stdin,
+    channel,
+    instance,
+    lines,
+    frames: () => frames.join(''),
+    frameCount: () => frames.length,
+  }
 }
 
 /** 卡片内的命令行行号：`│` 边框 + 名字紧跟留白/指针。 */
@@ -177,6 +184,7 @@ async function run(): Promise<void> {
     !frames.includes(`${SUBTLE}  status`) && !frames.includes(`${SUBTLE}  theme`))
 
   // ── 4: 点击映射（行索引与命令索引一一对应，不越界）────────────────────
+  const frameCountBeforeModelClick = wide.frameCount()
   lines = wide.lines()
   clickRow(wide.stdin, lines, rowOf(lines, 'model'), 'model')
   check('点击灰区中段行派发该命令（不是相邻行）',
@@ -185,13 +193,29 @@ async function run(): Promise<void> {
   check('灰区命令点击后没有退化成 steer',
     wide.channel.steered.length === 0, JSON.stringify(wide.channel.steered))
 
-  wide.stdin.write('/')
-  await settled(() => rowOf(wide.lines(), 'status') >= 0)
-  lines = wide.lines()
-  clickRow(wide.stdin, lines, rowOf(lines, 'audit'), 'audit')
-  check('点击灰区末尾行派发该命令（末尾不越界）',
-    await settled(() => wide.channel.runs.at(-1) === 'audit'),
-    JSON.stringify(wide.channel.runs))
+  // Dispatch is recorded before Ink necessarily commits the cleared draft.
+  // Wait for that frame so the next readiness check cannot reuse this card.
+  const modelOverlayClosed = await settled(() =>
+    wide.frameCount() > frameCountBeforeModelClick
+      && rowOf(wide.lines(), 'status') < 0,
+  )
+  check('派发 /model 后等待浮窗关闭，再测试第二次打开', modelOverlayClosed)
+  if (modelOverlayClosed) {
+    const closedFrameCount = wide.frameCount()
+    wide.stdin.write('/')
+    const auditOverlayOpened = await settled(() =>
+      wide.frameCount() > closedFrameCount
+        && rowOf(wide.lines(), 'status') >= 0,
+    )
+    check('第二次输入 / 后等待新帧中的浮窗', auditOverlayOpened)
+    if (auditOverlayOpened) {
+      lines = wide.lines()
+      clickRow(wide.stdin, lines, rowOf(lines, 'audit'), 'audit')
+      check('点击灰区末尾行派发该命令（末尾不越界）',
+        await settled(() => wide.channel.runs.at(-1) === 'audit'),
+        JSON.stringify(wide.channel.runs))
+    }
+  }
   wide.instance.unmount()
 
   // ── 2: 灰区为空时保持目录原序、无灰字（空闲态）─────────────────────────
