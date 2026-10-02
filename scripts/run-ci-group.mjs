@@ -694,7 +694,7 @@ const GROUPS = {
 // 回合运行中的命令影响度真源表（issue #1072）：门禁提示与 `/` 浮窗灰区分区
 // 读同一张表——表里的命令名必须是真命令、提示 key 必须在字典里、会打断
 // 对话的名单与门禁名单不相交，且 src/ 里不得再有 `t('<门禁 key>')` 字面量
-// （11 处门禁必须走表，提示与标注才不会漂移）。
+// （门禁必须全部走表，提示与标注才不会漂移；新增门禁不得自带字面量 key）。
     ["verify-command-hold", ['node', '--import', 'tsx/esm', 'scripts/verify-command-hold.ts']],
     ['verify-shell-compat', ['node', 'scripts/verify-shell-compat.mjs']],
     ['verify-agent-lifecycle-compat', ['node', 'scripts/verify-agent-lifecycle-compat.mjs']],

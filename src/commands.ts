@@ -252,11 +252,17 @@ export function localizedDescription(command: LocalCommand & { descriptionKey?: 
 
 /**
  * Commands the channel REFUSES to run while a turn is streaming, mapped to the
- * i18n key of the refusal notice. This table is the single source of truth: the
- * gates read it for their message and the `/` suggestion overlay reads it to
- * sink the rows that affect the running conversation — so the refusal text and
- * the overlay annotation can never drift. A `t(...)` call in a gate pins the key
- * type, so removing an entry from the dict fails the build.
+ * i18n key of the refusal notice. This table is the single source of truth for
+ * what a gate SAYS and for the `/` suggestion overlay that sinks the rows
+ * affecting the running conversation — so the refusal text and the overlay
+ * annotation can never drift. WHETHER a command is refused still lives in each
+ * gate's own `state.working` / `channel.working` branch — the 11 bail-outs under
+ * `src/dsh-adapter/` plus the UI-side gates that share the same refusals — so
+ * a new gate means a new entry here: `scripts/verify-command-hold.ts` fails when
+ * a `working` bail-out under `src/dsh-adapter/` notifies with a literal key of
+ * its own, and when a new name joins this dictionary without a conscious edit
+ * there. A `t(...)` call in a gate pins the key type, so removing an entry from
+ * the dict fails the build.
  */
 export const WORKING_GATE_NOTICES = {
   new: 'new-session-while-working',
