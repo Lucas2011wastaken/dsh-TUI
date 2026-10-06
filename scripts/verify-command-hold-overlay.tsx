@@ -9,7 +9,9 @@
  *   2. 灰区为空（空闲态）时保持目录原序，且不出现灰字；
  *   3. 灰区行整行一次 `subtle` 平铺（暗色 #5E6673），不做查询命中提亮；
  *   4. 点击映射：正常行 / 灰区行各选各自的命令（索引空间不变，不越界）；
- *   5. 窄终端（36 列）每行不越界、不换行（卡片每行仍是 │ … │）。
+ *   5. 窄终端（36 列）每行不越界、不换行（卡片每行仍是 │ … │）；
+ *   6. 浏览型命令归正常区：`/resume`（只打开界面，切换是界面里另外确认的动作，
+ *      且 DSH 下只停放）留在上方，同族的 `/rewind`（core 路径回合中直接拒绝）沉底。
  *
  * 运行：node --import tsx/esm scripts/verify-command-hold-overlay.tsx
  */
@@ -56,7 +58,7 @@ const COMMANDS = [
   { name: 'audit', description: 'Audit the repository', external: true, skill: true },
 ]
 
-function makeChannel(working: boolean) {
+function makeChannel(working: boolean, commands = COMMANDS) {
   const runs: string[] = []
   const submitted: string[] = []
   const steered: string[] = []
@@ -65,8 +67,8 @@ function makeChannel(working: boolean) {
     mode: { id: 'default', plan: false },
     modeIndex: 0,
     cycleMode() {},
-    commandList: COMMANDS,
-    commandCompletions: (input: string) => completeCommands(input, COMMANDS),
+    commandList: commands,
+    commandCompletions: (input: string) => completeCommands(input, commands),
     notifications: [],
     pending: [],
     contextWindow: undefined,
@@ -83,7 +85,7 @@ function makeChannel(working: boolean) {
   }
 }
 
-async function boot(cols: number, working: boolean) {
+async function boot(cols: number, working: boolean, commands = COMMANDS) {
   const term = new XTerm({ cols, rows: ROWS, scrollback: 0, allowProposedApi: true })
   const frames: string[] = []
   const stdout = new Writable({
@@ -103,7 +105,7 @@ async function boot(cols: number, working: boolean) {
   stdin.setEncoding = () => stdin
   stdin.ref = () => stdin
   stdin.unref = () => stdin
-  const channel = makeChannel(working)
+  const channel = makeChannel(working, commands)
   // 浮窗向上生长（OverlayAbove bottom:'100%'），生产里 Chat 把输入框压到屏幕
   // 底部、上方留出转录区；裸渲染 PromptInput 会贴着屏幕顶边，浮窗被裁光。
   // 用 flexGrow 撑出同样的空间，让浮窗行落在可读的屏幕区域里。
@@ -169,9 +171,12 @@ async function run(): Promise<void> {
   check('分区：正常区两行在上、灰区三行沉底，内部各自保持原序',
     statusRow >= 0 && statusRow < themeRow && themeRow < modelRow && modelRow < newRow && newRow < auditRow,
     JSON.stringify({ statusRow, themeRow, modelRow, newRow, auditRow }))
-  check('分区不插标题行、不额外占显示行（组标题文案已删）',
-    !wide.frames().includes('影响当前对话')
-      && lines.filter(line => /^│/.test(line)).length === 5
+  // 「不插标题行」由行数钉住：多一行标题就会多一条 `│` 边框行。原先这里还
+  // 顺带断言渲染结果里不含已删的组标题文案，但那段文案只存在于
+  // `CommandSuggestions.tsx` 的 JSDoc 里，渲染输出永不包含它——恒真子句，
+  // 已删；真正的不变量是上面这个行数。
+  check('分区不插标题行、不额外占显示行',
+    lines.filter(line => /^│/.test(line)).length === 5
       && !lines.some(line => line.includes('↑') || line.includes('↓')),
     JSON.stringify(lines.filter(line => /^│/.test(line)).map(line => line.trim().slice(0, 14))))
   check('默认选中仍是正常区第一行（❯ status），索引空间未变',
@@ -244,6 +249,27 @@ async function run(): Promise<void> {
     card.every(line => stringWidthOf(line) <= 36),
     JSON.stringify(card.map(line => stringWidthOf(line)).filter(width => width > 36)))
   narrow.instance.unmount()
+
+  // ── 6: 浏览型命令归正常区（`/resume` 与 `/tree` 同类）──────────────────
+  // `/resume` 只打开会话管理界面，真正的门禁在界面里的「确认切换」那一步
+  // （DSH 停放、Claude 后端由 core 拒绝），所以命令行本身不沉灰；同族的
+  // `/rewind` 仍是门禁命令（core 路径回合中直接拒绝），必须沉底。这一对
+  // 「同族不同区」正是分区读 `workingHoldOf` 而不是读命令名的意义。
+  const browse = await boot(100, true, [
+    { name: 'resume', description: 'Open the session manager' },
+    { name: 'rewind', description: 'Rewind the conversation' },
+  ])
+  browse.stdin.write('/')
+  await settled(() => rowOf(browse.lines(), 'resume') >= 0 && rowOf(browse.lines(), 'rewind') >= 0)
+  const browseLines = browse.lines()
+  const resumeRow = rowOf(browseLines, 'resume')
+  const rewindRow = rowOf(browseLines, 'rewind')
+  check('浏览型 /resume 留在正常区（界面里的切换是另外确认的动作）',
+    resumeRow >= 0 && resumeRow < rewindRow && !browse.frames().includes(`${SUBTLE}  resume`),
+    JSON.stringify({ resumeRow, rewindRow }))
+  check('同族的 /rewind 仍沉灰区（core 路径回合中直接拒绝）',
+    rewindRow > resumeRow && browse.frames().includes(`${SUBTLE}  rewind`))
+  browse.instance.unmount()
 
   console.log(failed === 0 ? 'verify-command-hold-overlay OK' : `verify-command-hold-overlay: ${failed} 项失败`)
   process.exit(failed === 0 ? 0 : 1)

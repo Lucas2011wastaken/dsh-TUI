@@ -662,7 +662,8 @@ const GROUPS = {
     ["verify-crash-detail", ['node', '--import', 'tsx/esm', 'scripts/verify-crash-detail.ts']],
 // `/` 命令浮窗「影响当前对话」灰区回归（issue #1072）：回合运行中按对当前
 // 对话的影响分区（正常区在上、灰区沉底，不插标题行、不多占显示行），灰区整行
-// subtle 且不提亮查询命中，点击映射与命令索引一一对应，36 列不换行。
+// subtle 且不提亮查询命中，点击映射与命令索引一一对应，36 列不换行；浏览型
+// `/resume` 与门禁型 `/rewind` 同族不同区（只开界面的在上、会被拒的沉底）。
     ["verify-command-hold-overlay", ['node', '--import', 'tsx/esm', 'scripts/verify-command-hold-overlay.tsx']],
   ],
   'channel-ui': [
@@ -695,6 +696,7 @@ const GROUPS = {
 // 读同一张表——表里的命令名必须是真命令、提示 key 必须在字典里、会打断
 // 对话的名单与门禁名单不相交，且 src/ 里不得再有 `t('<门禁 key>')` 字面量
 // （门禁必须全部走表，提示与标注才不会漂移；新增门禁不得自带字面量 key）。
+// 浏览型命令（`/resume`）保留 key 但走 GRAY_ZONE_EXEMPT_COMMANDS 留在正常区。
     ["verify-command-hold", ['node', '--import', 'tsx/esm', 'scripts/verify-command-hold.ts']],
     ['verify-shell-compat', ['node', 'scripts/verify-shell-compat.mjs']],
     ['verify-agent-lifecycle-compat', ['node', 'scripts/verify-agent-lifecycle-compat.mjs']],

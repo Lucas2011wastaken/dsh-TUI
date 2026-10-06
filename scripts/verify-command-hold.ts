@@ -3,7 +3,10 @@
  * gates and the `/` suggestion overlay must read ONE source of truth, so the
  * refusal notice and the "affects this conversation" grouping can never drift.
  *
- *  1. every gated command name is a real local command with a parseable line;
+ *  1. every gated command name is a real local command with a parseable line,
+ *     a notice in the dictionary, and a `gated` classification — except the
+ *     browsers listed in `GRAY_ZONE_EXEMPT_COMMANDS`, which own a notice key
+ *     yet stay in the normal region;
  *  2. every gate notice key exists in the i18n dictionary;
  *  3. the conversation-acting names are local commands and disjoint from
  *     the gated set;
@@ -24,6 +27,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import ts from 'typescript'
 import {
   BACKEND_CHANNEL_COMMAND,
+  GRAY_ZONE_EXEMPT_COMMANDS,
   LOCAL_COMMANDS,
   WORKING_CONVERSATION_COMMANDS,
   WORKING_GATE_NOTICES,
@@ -49,7 +53,21 @@ for (const name of gated) {
   assert.equal(parseCommandName(`/${name}`)?.name, name, `/${name} must parse as a command line`)
   const key = WORKING_GATE_NOTICES[name as keyof typeof WORKING_GATE_NOTICES]
   assert.notEqual(i18nDict[key], undefined, `gate notice ${key} (${name}) must exist in the i18n dictionary`)
-  assert.equal(workingHoldOf(name), 'gated', `${name} must classify as gated`)
+  const exempt = GRAY_ZONE_EXEMPT_COMMANDS.includes(name)
+  assert.equal(
+    workingHoldOf(name),
+    exempt ? undefined : 'gated',
+    exempt
+      ? `${name} owns a notice key of its own, so it must be spelled out in GRAY_ZONE_EXEMPT_COMMANDS to stay in the normal region`
+      : `${name} must classify as gated`,
+  )
+}
+// An exempt name that is not a notice key would be a typo that silently
+// un-grays nothing, and one that is also conversation-acting would be in two
+// families at once.
+for (const name of GRAY_ZONE_EXEMPT_COMMANDS) {
+  assert.ok(gated.includes(name), `${name} is gray-zone exempt but owns no gate notice to exempt`)
+  assert.ok(!WORKING_CONVERSATION_COMMANDS.includes(name), `${name} cannot be both gray-zone exempt and conversation`)
 }
 
 // ── 3: the conversation-acting set is local and disjoint ───────────────────
@@ -72,15 +90,20 @@ for (const name of ['status', 'btw', 'skills', 'bg', 'theme', '/', '']) {
 // Browsing is NOT impact: `/tree` only calls `setTreeOpen(true)` and leaves the
 // running turn untouched (measured on a real turn, issue #1072 review), so it
 // stays in the normal region even though its per-node actions can cancel.
-// `/rewind` used to sit in the conversation family for the same "its purpose is
-// to replace the conversation" reason; under DSH the extension still cancels the
-// turn and re-arms (`session-rewind.ts`), but the core's own rewind path REFUSES
-// mid-turn (`core/sessions.ts`), and one command cannot be classified twice — so
-// it is gated, like `/resume`.
+// `/resume` is the other browser: it opens the session manager, and the per-row
+// switch PARKS the outgoing session instead of ending its turn
+// (`session-resume.ts`), so neither the command nor the switch interrupts the
+// running turn. It keeps its notice key for the core's refusal, which is the
+// case item 1 exempts above. `/rewind` used to sit in the conversation family
+// for the same "its purpose is to replace the conversation" reason; under DSH
+// the extension still cancels the turn and re-arms (`session-rewind.ts`), but
+// the core's own rewind path REFUSES mid-turn (`core/sessions.ts`), and one
+// command cannot be classified twice — so it stays gated.
 assert.equal(workingHoldOf('tree'), undefined, '/tree inspects the session tree; it does not interrupt')
+assert.equal(workingHoldOf('resume'), undefined, '/resume opens the session manager; a switch parks, it does not interrupt')
 assert.equal(workingHoldOf('rewind'), 'gated', '/rewind is refused by the core while a turn runs')
 assert.equal(workingHoldOf('clear'), 'conversation', '/clear acts on the conversation view itself')
-for (const name of ['tree']) {
+for (const name of ['tree', 'resume']) {
   assert.ok(!WORKING_CONVERSATION_COMMANDS.includes(name), `/${name} must not be listed as a hold`)
 }
 
@@ -184,5 +207,17 @@ for (const file of files) {
   }
   visit(ast)
 }
+
+// Item 6 is only as wide as the branches it inspects, and it inspects by
+// SHAPE: a refactor that moves the gates into a shared helper, or that flips
+// them to `if (!state.working) { …run… }` with an early return, leaves this
+// loop with zero branches — every assertion above then passes vacuously while
+// item 5's dictionary → command direction stays satisfied, which is the one
+// hole item 6 exists to close. Pin the floor so the guard cannot go quiet.
+assert.ok(
+  gateBranches >= 11,
+  `only ${gateBranches} \`working\` bail-outs inspected under src/dsh-adapter/; `
+  + 'item 6 assumes the channel gates live there as bail-out branches',
+)
 
 console.log(`verify-command-hold OK: ${gated.length} gated, ${WORKING_CONVERSATION_COMMANDS.length} conversation-acting, ${gateBranches} channel bail-outs inspected`)

@@ -275,7 +275,9 @@ export const WORKING_GATE_NOTICES = {
   restart: 'update-working',
   // `/resume` and the core's `/rewind` refuse mid-turn in the session-switch
   // transaction; under DSH the rewind extension instead CANCELS the turn and
-  // re-arms (session-rewind.ts), so the refusal is the core's own path.
+  // re-arms (session-rewind.ts), so the refusal is the core's own path. The
+  // `/resume` KEY stays here for that core path and for `resumeFailureText`,
+  // but its ROW is not gray-zoned — see GRAY_ZONE_EXEMPT_COMMANDS.
   resume: 'resume-while-working',
   rewind: 'rewind-while-working',
   // Both backend pickers open while a turn runs, but every mutating row inside
@@ -284,6 +286,22 @@ export const WORKING_GATE_NOTICES = {
   kernel: 'kernel-switch-while-working',
   channel: 'channel-switch-while-working',
 } as const
+
+/**
+ * Commands that DO have a mid-turn refusal notice of their own, yet whose ROW
+ * stays in the overlay's normal region: the command only OPENS a browser, and
+ * the refusals belong to the separate, separately confirmed actions INSIDE it.
+ *
+ * `/resume` opens the session manager (`Chat.tsx` `setSupervisorOpen`); the
+ * per-row switch is a separate action that PARKS the outgoing session and lets
+ * its turn keep running (`session-resume.ts`), so neither the command nor the
+ * switch interrupts the running turn — the same reason `/tree` is in the normal
+ * region. Its key stays in {@link WORKING_GATE_NOTICES} because the core's own
+ * session-switch transaction still refuses mid-turn on a backend that gets no
+ * DSH extension (Claude, `core/session-switch.ts`), and `resumeFailureText`
+ * reports that reason with it.
+ */
+export const GRAY_ZONE_EXEMPT_COMMANDS: readonly string[] = ['resume']
 
 /**
  * Commands that MAY run while a turn is streaming but act ON the conversation
@@ -301,7 +319,9 @@ export const WORKING_GATE_NOTICES = {
  * running turn untouched — its per-node rewind/fork/adopt are separate,
  * separately confirmed actions (`session-tree-actions.ts`), and browsing the
  * tree is inspection, not impact (issue #1072 review: measured on a real turn —
- * `/tree` does not interrupt).
+ * `/tree` does not interrupt). `/resume` belongs to that same normal region for
+ * the same reason, even though it does own a notice key for the core's refusal:
+ * see {@link GRAY_ZONE_EXEMPT_COMMANDS}.
  */
 export const WORKING_CONVERSATION_COMMANDS: readonly string[] = [
   'clear', 'exit', 'quit', 'q',
@@ -330,6 +350,7 @@ export function workingHoldOf(name: string, skill?: boolean): WorkingHold | unde
   if (skill === true) return 'inject'
   const root = name.replace(/^\//, '').trim().split(/[\t ]+/u)[0]?.toLowerCase() ?? ''
   if (root === '') return undefined
+  if (GRAY_ZONE_EXEMPT_COMMANDS.includes(root)) return undefined
   if (Object.hasOwn(WORKING_GATE_NOTICES, root)) return 'gated'
   return WORKING_CONVERSATION_COMMANDS.includes(root) ? 'conversation' : undefined
 }
