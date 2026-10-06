@@ -332,7 +332,7 @@ The command menu = built-in commands (58, aliases included) + DSH registry comma
 | Command | Args | Effect |
 |---|---|---|
 | `/new` | none | start a new session (no confirmation; the old session stays under `/resume`) |
-| `/resume` | none | open the **session manager** (workspace + session columns, live filter, pins, cross-workspace): switching just parks the session, the running turn keeps going |
+| `/resume` | none | open the **session manager** (workspace + session columns, live filter, pins, cross-workspace): switching does **not** end the outgoing session — it keeps running in the background; **switching is refused while a turn runs** (wait for it, or press `Ctrl+C` first) |
 | `/home` / `/agentview` / `/bg` | none | the same session manager (`/home`=workspace view · `/agentview`=hosted session state · `/bg`=send to background and open, alias `/background`) |
 | `/tree` | none | session fork tree: hover to preview, click to rewind / fork / switch branch |
 | `/fork` | none | copy the current session into a resumable clone (original unaffected) |
@@ -346,7 +346,7 @@ The command menu = built-in commands (58, aliases included) + DSH registry comma
 | `/export` | none | export the session as Markdown to the working directory |
 | `/btw` | `<问题>` | side question: single turn, no tools, doesn't interrupt the main turn, not written to history |
 | `/trace` | none | open the trace scene (same as `Ctrl+T`) |
-| `/rewind` | none | rewind selector (same as double-press Esc on empty input) |
+| `/rewind` | none | rewind selector (same as double-press Esc on empty input); **a running turn is cancelled first** |
 | `/exit` (alias `/quit` `/q`) | none | exit dsh-tui |
 
 ### 3.2 Status and diagnostics
@@ -371,7 +371,7 @@ The command menu = built-in commands (58, aliases included) + DSH registry comma
 
 | Command | Args | Effect |
 |---|---|---|
-| `/channel` | none | relay channel profiles (Claude backend only), see [Interaction](interaction.en.md#channel-profiles-channel-claude-only) |
+| `/channel` | none | relay channel profiles (Claude backend only); **import / add / manage and any switch that needs a process restart are refused while a turn runs** (the picker itself still opens), see [Interaction](interaction.en.md#channel-profiles-channel-claude-only) |
 | `/model` | none | model selector; **switching = fork the session** (history kept, only routing changes; a session nobody has typed into records no branch, keeping automatic titles for its first prompt), choice persisted to `~/.dsh-tui/model.json` |
 | `/effort` | `status` / `<id>` | reasoning effort: no-arg slider (`←/→` adjust); `status` current level; `<id>` set directly. Persisted to `~/.dsh-tui/effort.json`; new-session start level follows /settings `effortDefault` (§5.3) |
 | `/thinking` | none | extended-thinking display toggle (thinking expands item by item while streaming) |
