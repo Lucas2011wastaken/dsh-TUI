@@ -298,7 +298,7 @@ While the model is working, three paths have different placement:
 | `Tab` | Follow-up: wait until the current turn finishes |
 | `Ctrl+Enter` | Interrupt: stop the turn and deliver immediately |
 
-**While a turn is running, a command is always a command; only input that is not a command steers.** The completion overlay groups commands by their impact on the current conversation: the harmless ones stay on top in their normal style, while gated, interrupting, replacing or steering commands sink to the bottom in the theme's grey (`subtle`, no header row) — where they stay selectable.
+**While a turn is running, a command is always a command; only two kinds of input steer: plain text that is not a command, and a direct skill gesture (`/skill-name …`).** The completion overlay groups commands by their impact on the current conversation: the harmless ones stay on top in their normal style, while gated, interrupting, replacing or steering commands sink to the bottom in the theme's grey (`subtle`, no header row) — where they stay selectable.
 
 - Undelivered messages appear above the editor.
 - `Alt/Option+Up` retrieves the latest one.

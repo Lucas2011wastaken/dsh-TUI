@@ -103,7 +103,7 @@ dsh-tui
 | `Esc` (working + pending) | interrupt the turn and re-send the pending message now |
 | `/btw …` while working | Enter runs it directly (side question never interrupts the main turn) |
 
-While a turn is running, the `/` overlay groups commands by their impact on the current conversation: the harmless ones stay on top in their normal style, while commands that are gated, interrupt or replace the conversation, or steer into it sink to the bottom in the theme's grey (`subtle`), with no extra header row. The grey region never blocks use — the gate still gates and the steer still steers. Only input that is not a command steers into the running turn.
+While a turn is running, the `/` overlay groups commands by their impact on the current conversation: the harmless ones stay on top in their normal style, while commands that are gated, interrupt or replace the conversation, or steer into it sink to the bottom in the theme's grey (`subtle`), with no extra header row. The grey region never blocks use — the gate still gates and the steer still steers. Only two kinds of input steer into the running turn: text that is not a command, and a **direct skill gesture** (`/skill-name …`), which the overlay groups as steering as well.
 
 ### 2.2 Interrupt / exit / system
 
@@ -332,7 +332,7 @@ The command menu = built-in commands (58, aliases included) + DSH registry comma
 | Command | Args | Effect |
 |---|---|---|
 | `/new` | none | start a new session (no confirmation; the old session stays under `/resume`) |
-| `/resume` | none | open the **session manager** (workspace + session columns, live filter, pins, cross-workspace): switching does **not** end the outgoing session — it keeps running in the background; **switching is refused while a turn runs** (wait for it, or press `Ctrl+C` first) |
+| `/resume` | none | open the **session manager** (workspace + session columns, live filter, pins, cross-workspace): switching just **parks** the outgoing session — it keeps running in the background and the active turn is not interrupted (like `/tree`: neither browsing nor switching cuts a running turn short; on the Claude backend a mid-turn switch is refused instead) |
 | `/home` / `/agentview` / `/bg` | none | the same session manager (`/home`=workspace view · `/agentview`=hosted session state · `/bg`=send to background and open, alias `/background`) |
 | `/tree` | none | session fork tree: hover to preview, click to rewind / fork / switch branch |
 | `/fork` | none | copy the current session into a resumable clone (original unaffected) |
