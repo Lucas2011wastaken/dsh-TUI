@@ -14,6 +14,7 @@ import { Writable, PassThrough } from 'node:stream'
 import React from 'react'
 import { render } from '../lib/types/ui.js'
 import { PromptInput } from '../lib/types/components/PromptInput.js'
+import { settle } from './lib/term-test.mjs'
 
 let failed = 0
 function check(name, ok, extra = '') {
@@ -486,6 +487,9 @@ async function run() {
     { name: 'audit', description: 'Registered skill', external: true, skill: true },
     { name: 'notes', description: 'Completion-only filesystem skill', skill: true },
   ]
+  // 等待每一步自己产生的那一帧，而不是固定窗（#791）：挂载一帧、回显键入
+  // 的那一帧、Enter 提交的那一帧。回显帧同时证明输入钩子已经接上，所以
+  // Enter 绝不会写进一个还没安装监听器的组件里。
   const typeAndEnter = async (channel, text, onRunCommand) => {
     const { stdout, stderr, stdin } = makeStreams()
     const instance = await render(
@@ -498,11 +502,13 @@ async function run() {
       }),
       { stdout, stderr, stdin, exitOnCtrlC: false, patchConsole: false },
     )
-    await sleep(600)
+    await settle(() => stdout.frames.length > 0)
+    const typedFrom = stdout.frames.length
     stdin.write(text)
-    await sleep(250)
+    await settle(() => stdout.frames.length > typedFrom)
+    const enteredFrom = stdout.frames.length
     stdin.write('\r')
-    await sleep(300)
+    await settle(() => stdout.frames.length > enteredFrom)
     instance.unmount()
   }
   const dispatchRun = runs => (name, rawInput) => { runs.push([name, rawInput]); return true }
