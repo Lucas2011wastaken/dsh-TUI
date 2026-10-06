@@ -104,20 +104,20 @@ for (const key of new Set(Object.values(WORKING_GATE_NOTICES))) {
 }
 
 // ── 6: a new gate cannot bypass the table ───────────────────────────────────
-// Item 5 only knows the keys already in the dictionary, so a NINTH gate that
+// Item 5 only knows the keys already in the dictionary, so a NEW gate that
 // invents its own notice — or any gate spelled with the other quote style —
 // would slip through while the command is refused mid-turn yet still shown in
 // the overlay's normal region, exactly the drift item 5 claims is impossible.
 // So: every bail-out branch that POSITIVELY reads `…working` under
 // `src/dsh-adapter/`, where the channel gates live, must take its notice from
-// the table. `working` is not exclusive to command gates — the follow-up
-// acknowledgement, the companion stats line and the provider wizard's own
-// `working()` all read it, and `!working` guards are not refusals — so the rule
-// is anchored on the bail-out and on the channel directory instead of on a
-// blanket "any `working` branch", which would red five legitimate sites today.
-// Coverage is deliberately partial and stated as such: the two `Chat.tsx`
-// command gates are pinned by item 5 for the keys they already use, but a NEW
-// gate added to that switch is not caught here.
+// the table. `working` is not exclusive to command gates — the provider wizard
+// reads it to pick its own wording, the follow-up acknowledgement and the
+// companion stats line read it in the UI layer, and `!working` guards are not
+// refusals — so the rule is anchored on the bail-out and on the channel
+// directory instead of on a blanket "any `working` branch". Coverage is
+// deliberately partial and stated as such: the UI-side gates (the five in
+// `src/screens/`) are pinned by item 5 for the keys they already use, but a NEW
+// gate added there is not caught here.
 const positiveWorking = (node: ts.Node, negated = false): boolean => {
   let inner = negated
   if (ts.isPrefixUnaryExpression(node) && node.operator === ts.SyntaxKind.ExclamationToken) {
