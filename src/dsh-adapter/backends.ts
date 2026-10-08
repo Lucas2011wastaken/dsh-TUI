@@ -106,6 +106,8 @@ export async function openBackendStartup(ctx: Context, backend: AgentBackend, in
   }
   return {
     session,
+    // Boot and landing-page state use the target this backend actually opened.
+    resumedSessionId: resumeId,
     label: backend.descriptor.label,
     backendId: backend.id,
     initialHistory,

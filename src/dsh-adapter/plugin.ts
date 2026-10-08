@@ -559,8 +559,6 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
     sourceBackend: parseBackendId(resumeBackendRaw),
     backendChoice,
   })
-  // The id this boot may actually resume: the raw request above minus a target that
-  // belongs to another backend.
   const effectiveSessionId = resumeTarget.sessionId
   // The non-DSH path below opens `backendChoice`'s own session — a revoked target
   // must not reach it either.
@@ -568,15 +566,14 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
   if (resumeTarget.revokedFrom !== undefined) {
     ctx.logger.warn(
       `dsh-tui: dropping the resume target that backend "${resumeTarget.revokedFrom}" left behind; this boot runs on "${backendChoice}". ` +
-      'Start a session there, or name the id yourself with --resume, to continue it.',
+      'A bare --resume request uses this backend\'s own last session; an explicit id is passed through.',
     )
   }
   if (rawBackendGiven !== '' && !isRegisteredBackend(rawBackendGiven.toLowerCase())) {
     // Two cases, two sentences: a typo is not an uninstalled plugin (P0 D1).
     const installed = listBackends().map(entry => entry.manifest.id).join(', ')
-    // A target the user named alongside the missing backend is offered to dsh
-    // as-is: only they know which backend it belongs to, so it is reported here
-    // rather than dropped.
+    // Report the target DSH will actually use: an explicit id, or its own marker
+    // when a bare resume request survived the fallback.
     const resumeClause = effectiveSessionId === undefined
       ? ''
       : ` The resume target "${effectiveSessionId}" stays as it is; dsh will be asked to resume it.`
@@ -617,6 +614,11 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
       backendFallbackNotice = t('kernel-memory-fallback', { name: backendLabel(backendChoice), reason })
     }
   }
+  // Resolve a surviving bare request on the backend that actually opened.
+  // This also covers a remembered backend whose startup fell back to DSH.
+  const bootSessionId = backendStart === undefined
+    ? effectiveSessionId ?? resumeTargetFromArgv(cmdlineArgs ?? process.argv.slice(2))
+    : backendStart.resumedSessionId
   // The backend session (and its child process) belongs to this fiber until the
   // channel adopts it: a boot that throws before then disposes the fiber's
   // effects, and this one stops the child instead of leaking it. Dispose is
@@ -637,7 +639,7 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
     ? { agent: undefined, handle: undefined, agentPreset: undefined, route: undefined }
     : await resolveAgent(
       ctx,
-      effectiveSessionId,
+      bootSessionId,
       configuredRoute,
       startupRoute,
       meta,
@@ -2012,7 +2014,7 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
    * and opens straight into its conversation.
    */
   const dshBoot = backendStart === undefined
-  const noResume = isLandingLaunch({ launchSessionId: effectiveSessionId, initialPrompt })
+  const noResume = isLandingLaunch({ launchSessionId: bootSessionId, initialPrompt })
   const openHomeOnBoot = dshBoot && !homeSeen && noResume && requestedWorkspace === undefined
   /**
    * The launchpad is NOT one-shot the way the workspace home is: every

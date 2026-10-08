@@ -1551,6 +1551,10 @@ if (!runningInsideProfile && ownVersion !== undefined && process.env.DSH_TUI_NO_
     const sessionId = backendChoice !== undefined ? readBackendLastSession(backendChoice) : readLastResumeTarget()
     if (sessionId) setResumeEnv(sessionId, sourceBackend)
   }
+  // Keep the final bare request until boot knows the effective backend. A
+  // missing/foreign marker must not erase it. --continue takes no id, so the
+  // next prompt token cannot accidentally become a resume target.
+  if (resumeFlags.at(-1) === null) args.unshift('--continue')
 
   // 启动：被委托场景下本副本自己的版本即对齐诊断所见的启动器代际。
   if (process.env.DSH_TUI_LAUNCHER_VERSION === undefined && ownVersion !== undefined) {
