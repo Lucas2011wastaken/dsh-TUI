@@ -3543,12 +3543,13 @@ export function Chat({
       }
       case 'plan': {
         // Registered by dsh-plan-mode: bare `/plan` opens an on/off picker
-        // marked with the current state instead of toggling blindly; Enter
-        // dispatches `/plan` or `/plan off`. The catalog's own `on` token (the
-        // `/plan` completion child, the picker's On row) is normalized back to
-        // the bare command: upstream's grammar is `/plan [off|message]`, so a
-        // verbatim `on` would enter plan mode AND steer the word "on" into the
-        // next step as a user message. Every other argument — `/plan off` and
+        // marked with the current state instead of toggling blindly; the
+        // picker's own rows dispatch the bare command and ` off`, never the
+        // catalog token. The catalog's `on` child (the only producer of that
+        // literal argument) is normalized back to the bare command:
+        // upstream's grammar is `/plan [off|message]`, so a verbatim `on`
+        // would enter plan mode AND steer the word "on" into the next step as
+        // a user message. Every other argument — `/plan off` and
         // `/plan <message>` — passes through verbatim. Availability comes from
         // the shared capability facts (the same read Shift+Tab uses), not from
         // a second command-list scan; with no registry command the line falls

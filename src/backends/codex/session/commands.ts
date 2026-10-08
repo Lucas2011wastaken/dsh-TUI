@@ -29,6 +29,9 @@ interface CommandDeps {
   lastDiff(): string | undefined
   planSupported(): boolean
   setPlan(): Promise<void>
+  /** Leave Plan for the permission preset that was active before it (the
+   *  catalog's `off` token). */
+  exitPlan(): Promise<void>
   submit(input: AgentInput, placement: SubmitPlacement, wireInput?: readonly UserInput[]): Promise<{ readonly accepted: boolean; readonly reason?: string }>
   noteTurnStarted(id: string): void
 }
@@ -91,14 +94,20 @@ export function createCodexCommands(deps: CommandDeps) {
           return { accepted: true }
         }
         case 'plan': {
+          // The TUI catalog names the two states `on`/`off` (the `/plan`
+          // completion children — the on/off picker is registry-only and
+          // dispatches the bare command and ` off` itself), while this grammar
+          // is `/plan [prompt]`: every non-empty argument becomes the turn's
+          // prompt. Map both catalog tokens back to their switches so neither
+          // word leaks into the conversation as a prompt; every other argument
+          // stays the prompt.
+          const arg = args.trim()
+          if (arg === 'off') {
+            await deps.exitPlan()
+            return { accepted: true }
+          }
           await deps.setPlan()
-          // The TUI's catalog names the on state `on` (the `/plan` completion
-          // child, the on/off picker's On row), while this grammar is
-          // `/plan [prompt]`: every non-empty argument becomes the turn's
-          // prompt. Normalize the catalog's own token back to the bare switch
-          // so `/plan on` cannot leak the word "on" into the conversation as a
-          // prompt; every other argument stays the prompt.
-          const prompt = args.trim() === 'on' ? '' : args
+          const prompt = arg === 'on' ? '' : args
           return prompt.trim() === '' ? { accepted: true } : deps.submit({ ...input, text: prompt, blocks: [{ type: 'text', text: prompt }, ...(input.blocks?.slice(1) ?? [])] }, placement)
         }
         case 'diff': {

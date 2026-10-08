@@ -94,12 +94,12 @@ await scenario('Plan ask, stay and implementation', async () => {
   } finally { await f.close() }
 })
 
-await scenario('Plan command grammar: `on` is the bare switch, anything else is the prompt', async () => {
+await scenario('Plan command grammar: `on`/`off` are the switches, anything else is the prompt', async () => {
   const f = await fixture()
   try {
     // `/plan on` is the TUI catalog's own on token (the `/plan` completion
-    // child, the on/off picker's On row): it must mean the BARE switch, or the
-    // word "on" is submitted as the prompt.
+    // child): it must mean the BARE switch, or the word "on" is submitted as
+    // the prompt.
     const accepted = await f.session.submit({ text: '/plan on', clientMessageId: 'plan-grammar-on' }, 'followup')
     await settle()
     check('`/plan on` is accepted', accepted.accepted, true)
@@ -110,6 +110,12 @@ await scenario('Plan command grammar: `on` is the bare switch, anything else is 
     await f.session.submit({ text: '/plan outline the task', clientMessageId: 'plan-grammar-message' }, 'followup')
     await settle()
     check('message argument starts a turn with that prompt', JSON.stringify(f.last(CLIENT.turnStart).input).includes('outline the task'))
+    // `/plan off` is the catalog's off token (its other completion child): it
+    // must LEAVE Plan, and never submit the word "off" as a prompt.
+    await f.session.submit({ text: '/plan off', clientMessageId: 'plan-grammar-off' }, 'followup')
+    await settle()
+    check('`/plan off` leaves Plan', f.session.capabilities.modes!.current() !== 'plan')
+    check('`/plan off` starts no turn (no "off" prompt)', f.sent(CLIENT.turnStart).length, 1)
   } finally { await f.close() }
 })
 
