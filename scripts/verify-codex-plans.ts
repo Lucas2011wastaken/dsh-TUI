@@ -94,6 +94,25 @@ await scenario('Plan ask, stay and implementation', async () => {
   } finally { await f.close() }
 })
 
+await scenario('Plan command grammar: `on` is the bare switch, anything else is the prompt', async () => {
+  const f = await fixture()
+  try {
+    // `/plan on` is the TUI catalog's own on token (the `/plan` completion
+    // child, the on/off picker's On row): it must mean the BARE switch, or the
+    // word "on" is submitted as the prompt.
+    const accepted = await f.session.submit({ text: '/plan on', clientMessageId: 'plan-grammar-on' }, 'followup')
+    await settle()
+    check('`/plan on` is accepted', accepted.accepted, true)
+    check('`/plan on` still selects Plan', f.session.capabilities.modes!.current(), 'plan')
+    check('`/plan on` starts no turn (no "on" prompt)', f.sent(CLIENT.turnStart).length, 0)
+    // `/plan <message>` keeps upstream codex semantics: enter plan mode and
+    // submit the message as the turn's prompt.
+    await f.session.submit({ text: '/plan outline the task', clientMessageId: 'plan-grammar-message' }, 'followup')
+    await settle()
+    check('message argument starts a turn with that prompt', JSON.stringify(f.last(CLIENT.turnStart).input).includes('outline the task'))
+  } finally { await f.close() }
+})
+
 await scenario('Plan clear context rebinds thread and preserves tool output', async () => {
   const f = await fixture()
   try {

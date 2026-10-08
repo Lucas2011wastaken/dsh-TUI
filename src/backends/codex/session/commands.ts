@@ -90,9 +90,17 @@ export function createCodexCommands(deps: CommandDeps) {
           if (id !== undefined) deps.noteTurnStarted(id)
           return { accepted: true }
         }
-        case 'plan':
+        case 'plan': {
           await deps.setPlan()
-          return args.trim() === '' ? { accepted: true } : deps.submit({ ...input, text: args, blocks: [{ type: 'text', text: args }, ...(input.blocks?.slice(1) ?? [])] }, placement)
+          // The TUI's catalog names the on state `on` (the `/plan` completion
+          // child, the on/off picker's On row), while this grammar is
+          // `/plan [prompt]`: every non-empty argument becomes the turn's
+          // prompt. Normalize the catalog's own token back to the bare switch
+          // so `/plan on` cannot leak the word "on" into the conversation as a
+          // prompt; every other argument stays the prompt.
+          const prompt = args.trim() === 'on' ? '' : args
+          return prompt.trim() === '' ? { accepted: true } : deps.submit({ ...input, text: prompt, blocks: [{ type: 'text', text: prompt }, ...(input.blocks?.slice(1) ?? [])] }, placement)
+        }
         case 'diff': {
           let diff = deps.lastDiff()
           if (diff === undefined || diff === '') {
