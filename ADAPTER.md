@@ -38,8 +38,12 @@
   注册表只记"真的加载过"的条目——没加载过的后端不会被 import,也不会被关池。
 
 新增一个后端 = 新建 `src/backends/<id>/`(`manifest.ts` + 实现),再把
-`pnpm compile` 重新生成的 `src/dsh-adapter/backends.generated.ts` 一并提交;不改
-`kernelPrefs.ts`、`backends.ts` 与门禁。那份索引**入库**是有意的:CI 的测试组与
+`pnpm compile` 重新生成的 `src/dsh-adapter/backends.generated.ts` 一并提交;
+`kernelPrefs.ts` 与 `backends.ts` 不用改,目录与身份回归也都按 ID 取项(新增目录
+不必同步它们)。唯一的例外是**边界快照**:声明了非空 `vendorPackages` 或
+`nativeKey` 的后端,派生规则会与 `scripts/verify-adapter-boundary.ts` 的
+`EXPECTED_*` 逐字比对,必须把快照与本文档一并更新(不声明这两项的后端无需改动)。
+那份索引**入库**是有意的:CI 的测试组与
 `gates` 复用构建产物、不跑 `compile`,gitignore 的文件在那边不存在,
 而注册表要从 `src/` import 它(`verify-backend-registry` 会断言它与磁盘上的
 manifest 一致,过期即红)。

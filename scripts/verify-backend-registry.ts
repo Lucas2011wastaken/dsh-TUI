@@ -42,7 +42,7 @@ const { backendLabel, getBackend, isRegisteredBackend, listBackends, loadBackend
   await import('../src/dsh-adapter/backend-registry.js')
 const { probeKernels } = await import('../src/dsh-adapter/backends.js')
 const { normalizeBackendChoice } = await import('../src/dsh-adapter/index.js')
-const { readKernelPrefs, resolveRememberedBackend, writeKernelPrefs, parseBackendId } = await import('../src/kernelPrefs.js')
+const { readKernelPrefs, resolveRememberedBackend, writeKernelPrefs, parseBackendId, BUILTIN_BACKEND_IDS } = await import('../src/kernelPrefs.js')
 const { readLastRunRecord, writeLastRunRecord } = await import('../src/update.js')
 
 let passed = 0
@@ -65,8 +65,14 @@ process.on('exit', () => rmSync(tmp, { recursive: true, force: true }))
 
 // ── 1. The registered reality: the seed, the generated index, the manifests ────
 const backends = listBackends()
-check('registry order = dsh, then the manifests in directory order',
-  backends.map(entry => entry.id).join(',') === 'dsh,claude,codex', backends.map(entry => entry.id))
+const backendIds: readonly string[] = backends.map(entry => entry.id)
+// Additive on purpose (P0 §1.2: adding `src/backends/<id>/` must not red this).
+// The seed stays first, every built-in stays present exactly once, and the exact
+// order/completeness against the directory is the parity check right below —
+// pinning the literal three here would only duplicate it and break the drill.
+check('registry starts with dsh and carries every built-in exactly once (parity below pins order and completeness)',
+  backendIds[0] === 'dsh' && BUILTIN_BACKEND_IDS.every(id => backendIds.includes(id))
+    && new Set(backendIds).size === backendIds.length, backendIds)
 check('every registered id passed the syntax gate, and getBackend agrees',
   backends.every(entry => isBackendIdSyntax(entry.id)) && getBackend('codex')?.id === 'codex' && getBackend('nope') === undefined)
 check('backendLabel names the manifest, and an unknown id stays itself',
@@ -138,11 +144,15 @@ await assert.rejects(async () => loadBackend(UNINSTALLED as never), /is not regi
 check('an uninstalled id cannot reach loadBackend through the parse (the R1 crash)',
   parseBackendChoice(UNINSTALLED) === undefined && normalizeBackendChoice(UNINSTALLED) === undefined)
 
+// The store is the syntax layer and nothing else: a plugin backend remembered by
+// another profile must survive the read verbatim, because filtering here would
+// need the registry this module deliberately does not import. The boot filters it
+// at the call site — pinned by the source wiring assertions below.
 const prefsFile = join(tmp, 'kernel.json')
-writeKernelPrefs({ backend: isRegisteredBackend(UNINSTALLED) ? (UNINSTALLED as never) : ('claude' as never) }, prefsFile)
-check('kernel.json: a remembered uninstalled id is filtered like an unknown value',
-  readKernelPrefs(prefsFile).backend === 'claude' && parseBackendId(UNINSTALLED) === UNINSTALLED
-    && (isRegisteredBackend(UNINSTALLED) ? UNINSTALLED : undefined) === undefined)
+writeKernelPrefs({ backend: UNINSTALLED as never }, prefsFile)
+check('kernel.json: the syntax layer keeps a well-formed uninstalled id verbatim (the boot filters, not the store)',
+  readKernelPrefs(prefsFile).backend === UNINSTALLED && parseBackendId(UNINSTALLED) === UNINSTALLED
+    && !isRegisteredBackend(UNINSTALLED))
 const recordFile = join(tmp, 'last-run.json')
 writeLastRunRecord({ backendId: parseBackendId(UNINSTALLED)!, sessionId: 's', cwd: '/w', attemptId: 'a' }, recordFile)
 check('last-run record: an uninstalled id still reads back (the launcher then falls back to dsh)',

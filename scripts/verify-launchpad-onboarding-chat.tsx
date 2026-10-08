@@ -1062,8 +1062,10 @@ const heroIdentical = (before: readonly string[], after: readonly string[]): boo
     await settled(() => chat.screen().includes('未安装')),
     chat.screen().slice(0, 360))
   // 键盘路径：↓ 移到不可选行 + Enter = 只提示原因，绝不切换（选择器留在屏上）。
+  // 步数按 ID 从目录推导（P0 §1.2）：写死一次会在新增后端插到前面时落到别的行。
+  const downsToClaude = Math.max(0, KERNEL_ENTRIES.findIndex(entry => entry.id === 'claude'))
   const beforeKeys = chat.screen().slice(-300)
-  await chat.send('\x1b[B')
+  for (let step = 0; step < downsToClaude; step += 1) await chat.send('\x1b[B')
   const afterDown = chat.screen().slice(-300)
   await chat.send('\r')
   const afterEnter = chat.screen().slice(-300)

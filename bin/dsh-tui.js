@@ -826,6 +826,18 @@ const readBackendLastSession = backendId => {
     return ''
   }
 }
+
+// env 里的后端选择：先按 boot 侧 parseBackendId 的规则**归一**（trim + 小写）再判定。
+// 拿原始值判定会让两侧分歧：`DSH_TUI_BACKEND=Codex` 时 boot 归一后起 codex，启动器
+// 却当它没命中而读 dsh 的 resume.txt——codex 便拿着 DSH 的会话 id 去恢复（必报错）。
+// 归一后 `dsh` 与非法/空值同样走 resume.txt 分支。
+const backendChoiceFromEnv = () => {
+  const raw = process.env.DSH_TUI_BACKEND
+  if (typeof raw !== 'string') return undefined
+  const id = raw.trim().toLowerCase()
+  return isBackendIdSyntax(id) && id !== 'dsh' ? id : undefined
+}
+
 // 安全模式「重试正常启动」的环境（菜单选项 1，首启 fallback 与 `safe` 共用）：
 //   1. 本次启动之后写下的最后运行记录：崩溃时实际在跑的内核与会话，压过
 //      env 里的 --resume（内核切换是用户更新的选择）。
@@ -840,8 +852,9 @@ const resumeEnvForRetry = () => {
   }
   if (process.env.DSH_TUI_RESUME_SESSION !== undefined) return process.env
   let target = ''
-  if (isBackendIdSyntax(process.env.DSH_TUI_BACKEND) && process.env.DSH_TUI_BACKEND !== 'dsh') {
-    target = readBackendLastSession(process.env.DSH_TUI_BACKEND)
+  const backendChoice = backendChoiceFromEnv()
+  if (backendChoice !== undefined) {
+    target = readBackendLastSession(backendChoice)
   } else {
     try {
       target = readFileSync(join(homedir(), '.dsh-tui', 'resume.txt'), 'utf8').trim()
@@ -1510,7 +1523,8 @@ if (!runningInsideProfile && ownVersion !== undefined && process.env.DSH_TUI_NO_
   // 按出现顺序重放 --resume：裸 --resume 时 DSH 读 resume.txt（契约不变），
   // 其他内核读各自的上次会话。
   for (const flag of resumeFlags) {
-    const sessionId = flag ?? (isBackendIdSyntax(process.env.DSH_TUI_BACKEND) && process.env.DSH_TUI_BACKEND !== 'dsh' ? readBackendLastSession(process.env.DSH_TUI_BACKEND) : readLastResumeTarget())
+    const backendChoice = backendChoiceFromEnv()
+    const sessionId = flag ?? (backendChoice !== undefined ? readBackendLastSession(backendChoice) : readLastResumeTarget())
     if (sessionId) setResumeEnv(sessionId)
   }
 

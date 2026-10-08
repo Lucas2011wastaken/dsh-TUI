@@ -1109,25 +1109,30 @@ base.close()
 
   // 目录：DSH 恒在恒可选（默认内核）；claude 依探测结果定可选性。版本一律是
   // **显示串**（产品前缀 + 版本号），不再是裸版本号。
+  // 每一项都**按 ID** 取，不按下标（P0 §1.2：新增一个后端目录不该让这些标签变
+  // 红）；行序与成员完整性由 verify-backend-registry 的目录 parity 断言负责。
+  const rowOf = (options: ReturnType<typeof catalog>, id: string) => options.find(option => option.id === id)
   const dshOnly = catalog({ current: 'dsh', dshVersion: '0.2.6' })
   check('K1 目录：DSH 恒可选并带版本显示串；claude / codex 未探测=置灰为「检测中…」（不是未安装）',
-    dshOnly.length === 3 && dshOnly[0]?.id === 'dsh' && dshOnly[0]?.current === true && dshOnly[0]?.selectable === true && dshOnly[0]?.version === 'dsh-core v0.2.6'
-      && dshOnly[1]?.id === 'claude' && dshOnly[1]?.current === false && dshOnly[1]?.selectable === false && dshOnly[1]?.reasonKey === 'kernel-probing'
-      && dshOnly[2]?.id === 'codex' && dshOnly[2]?.selectable === false && dshOnly[2]?.reasonKey === 'kernel-probing',
+    rowOf(dshOnly, 'dsh')?.current === true && rowOf(dshOnly, 'dsh')?.selectable === true && rowOf(dshOnly, 'dsh')?.version === 'dsh-core v0.2.6'
+      && rowOf(dshOnly, 'claude')?.current === false && rowOf(dshOnly, 'claude')?.selectable === false && rowOf(dshOnly, 'claude')?.reasonKey === 'kernel-probing'
+      && rowOf(dshOnly, 'codex')?.selectable === false && rowOf(dshOnly, 'codex')?.reasonKey === 'kernel-probing',
     JSON.stringify(dshOnly))
   const ok = catalog({ current: 'claude', dshVersion: '0.2.6', statuses: { claude: { installed: true, auth: 'ok', version: '2.1.287' } } })
   check('K2 目录：installed+auth=ok 的 claude 可选、版本显示串、current 标记在 claude',
-    ok[0]?.current === false && ok[1]?.selectable === true && ok[1]?.current === true && ok[1]?.version === 'claude-code v2.1.287' && ok[1]?.reasonKey === undefined,
+    rowOf(ok, 'dsh')?.current === false && rowOf(ok, 'claude')?.selectable === true && rowOf(ok, 'claude')?.current === true
+      && rowOf(ok, 'claude')?.version === 'claude-code v2.1.287' && rowOf(ok, 'claude')?.reasonKey === undefined,
     JSON.stringify(ok))
   check('K3 目录：auth=missing 置灰(未登录)；auth=unknown 仍可选（分不清≠没有）；installed=false → 未安装',
-    catalog({ current: 'dsh', statuses: { claude: { installed: true, auth: 'missing', version: '1.2.3' } } })[1]?.selectable === false
-      && catalog({ current: 'dsh', statuses: { claude: { installed: true, auth: 'missing' } } })[1]?.reasonKey === 'kernel-unavailable-auth-missing'
-      && catalog({ current: 'dsh', statuses: { claude: { installed: true, auth: 'unknown' } } })[1]?.selectable === true
-      && catalog({ current: 'dsh', statuses: { claude: { installed: false, version: '1.2.3' } } })[1]?.reasonKey === 'kernel-unavailable-not-installed')
+    rowOf(catalog({ current: 'dsh', statuses: { claude: { installed: true, auth: 'missing', version: '1.2.3' } } }), 'claude')?.selectable === false
+      && rowOf(catalog({ current: 'dsh', statuses: { claude: { installed: true, auth: 'missing' } } }), 'claude')?.reasonKey === 'kernel-unavailable-auth-missing'
+      && rowOf(catalog({ current: 'dsh', statuses: { claude: { installed: true, auth: 'unknown' } } }), 'claude')?.selectable === true
+      && rowOf(catalog({ current: 'dsh', statuses: { claude: { installed: false, version: '1.2.3' } } }), 'claude')?.reasonKey === 'kernel-unavailable-not-installed')
   // 短品牌名不再是宿主里的 id→名字表：它来自 manifest，经宿主投影（P0 D2）。
+  const entryOf = (id: string) => KERNEL_ENTRIES.find(entry => entry.id === id)
   check('K4 短品牌名：来自 manifest（dsh→DSH、claude→Claude、codex→Codex），落地页与重启通知共用',
-    KERNEL_ENTRIES[0]?.shortLabel === 'DSH' && KERNEL_ENTRIES[1]?.shortLabel === 'Claude' && KERNEL_ENTRIES[2]?.shortLabel === 'Codex'
-      && KERNEL_ENTRIES[0]?.label.kind === 'key' && KERNEL_ENTRIES[1]?.label.kind === 'key',
+    entryOf('dsh')?.shortLabel === 'DSH' && entryOf('claude')?.shortLabel === 'Claude' && entryOf('codex')?.shortLabel === 'Codex'
+      && entryOf('dsh')?.label.kind === 'key' && entryOf('claude')?.label.kind === 'key',
     JSON.stringify(KERNEL_ENTRIES.map(entry => [entry.id, entry.shortLabel])))
   // 版本显示串：产品名来自 manifest 的 product（dsh-core / claude-code）；空/缺省
   // = undefined（调用方整段省掉，绝不画一个空壳的 v）；没有 product 的条目裸版本。
@@ -1138,14 +1143,17 @@ base.close()
       && kernelVersionLabel(undefined, '9.9.9') === '9.9.9',
     JSON.stringify([kernelVersionLabel('dsh-core', '0.2.0-rc.2'), kernelVersionLabel('dsh-core', ''), kernelVersionLabel(undefined, '9.9.9')]))
   // 副标题：版本 · 置灰原因——谁有拼谁，两样都没有 = undefined（底栏与选择器共用）。
-  const subtitleOf = (input: Omit<Parameters<typeof buildKernelCatalog>[0], 'entries'>) => catalog(input).map(option => kernelSubtitle(option, key => 'R:' + key))
+  const subtitleOf = (input: Omit<Parameters<typeof buildKernelCatalog>[0], 'entries'>, id: string) => {
+    const option = rowOf(catalog(input), id)
+    return option === undefined ? undefined : kernelSubtitle(option, key => 'R:' + key)
+  }
   check('K4c kernelSubtitle：版本·原因 / 只有版本 / 只有原因 / 都没有=undefined',
-    subtitleOf({ current: 'dsh', dshVersion: '0.2.6' })[1] === 'R:kernel-probing'
-      && subtitleOf({ current: 'dsh', dshVersion: '0.2.6', statuses: { claude: { installed: false } } })[1] === 'R:kernel-unavailable-not-installed'
-      && subtitleOf({ current: 'dsh', dshVersion: '0.2.6' })[0] === 'dsh-core v0.2.6'
-      && subtitleOf({ current: 'dsh' })[0] === undefined
-      && subtitleOf({ current: 'dsh', statuses: { claude: { installed: true, auth: 'missing', version: '1.2.3' } } })[1] === 'claude-code v1.2.3 · R:kernel-unavailable-auth-missing',
-    JSON.stringify(subtitleOf({ current: 'dsh', dshVersion: '0.2.6' })))
+    subtitleOf({ current: 'dsh', dshVersion: '0.2.6' }, 'claude') === 'R:kernel-probing'
+      && subtitleOf({ current: 'dsh', dshVersion: '0.2.6', statuses: { claude: { installed: false } } }, 'claude') === 'R:kernel-unavailable-not-installed'
+      && subtitleOf({ current: 'dsh', dshVersion: '0.2.6' }, 'dsh') === 'dsh-core v0.2.6'
+      && subtitleOf({ current: 'dsh' }, 'dsh') === undefined
+      && subtitleOf({ current: 'dsh', statuses: { claude: { installed: true, auth: 'missing', version: '1.2.3' } } }, 'claude') === 'claude-code v1.2.3 · R:kernel-unavailable-auth-missing',
+    JSON.stringify(catalog({ current: 'dsh', dshVersion: '0.2.6' }).map(option => [option.id, kernelSubtitle(option, key => 'R:' + key)])))
 
   // kernel.json 记忆：原子写（tmp+rename，claude prefs.ts 同款）往返。
   const dir = mkdtempSync(join(tmpdir(), 'verify-launchpad-kernel-'))
@@ -2517,10 +2525,12 @@ for (const cols of [120, 100, 72, 60, 48]) {
   const firstGlyph = (row: number) => firstGlyphCell(s.term, row, COLS)
   /** 对照基准：右下角第一行 TUI 版本号。 */
   const tuiCell = cellAtText(s.term, lines, tuiRow, 'dsh-tui v' + VERSION)
+  /** 铭牌行号：按模型的顺序推导，不写死位置（P0 §1.2：新增后端不得让这里变红）。 */
+  const plateRows = probing.map(option => lines.findIndex((line, index) => index > tuiRow && line.includes(option.shortLabel)))
   check('S1 内核区排在 TUI 版本之下，一行一个内核：当前行打 ▸ 且带版本串',
-    tuiRow >= 0 && dshRow === tuiRow + 1 && claudeRow === tuiRow + 2
-      && lines[dshRow]!.includes('dsh-core v0.2.0-rc.2'),
-    `tui=${tuiRow} dsh=${dshRow} claude=${claudeRow} ${JSON.stringify(lines[dshRow]?.trimEnd())}`)
+    tuiRow >= 0 && plateRows.every((row, index) => row === tuiRow + 1 + index)
+      && lines[tuiRow + 1]!.includes('dsh-core v0.2.0-rc.2'),
+    `tui=${tuiRow} plate=${JSON.stringify(plateRows)} ${JSON.stringify(lines[tuiRow + 1]?.trimEnd())}`)
   const dshFg = fgKeyOf(firstGlyph(dshRow))
   const claudeFg = fgKeyOf(firstGlyph(claudeRow))
   check('S2 当前内核行正常亮度（与 dim 行不同色），其余行两个空格前缀且与 TUI 版本行同色（dim）',

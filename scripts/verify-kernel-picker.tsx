@@ -214,7 +214,10 @@ const POINTER = '\u276f'
 
 // ── 2. 当前标记 / 焦点指针 / 不可选行变暗（焦点压上去也不亮）─────────────────
 {
-  const picker = await mountPicker({ options: NOT_INSTALLED, focusIndex: 1, pick: true })
+  // 焦点行按 ID 从模型推导（P0 §1.2）：写死下标会在新增后端插到前面时落到别的行。
+  const claudeIndex = NOT_INSTALLED.findIndex(option => option.id === 'claude')
+  const dshIndex = NOT_INSTALLED.findIndex(option => option.id === 'dsh')
+  const picker = await mountPicker({ options: NOT_INSTALLED, focusIndex: claudeIndex, pick: true })
   const lines = picker.lines()
   const dshRow = picker.rowOf(DSH_LABEL)
   const claudeRow = picker.rowOf(CLAUDE_LABEL)
@@ -237,8 +240,8 @@ const POINTER = '\u276f'
   // 鼠标：点行回行号——不可选行也照样回（宿主决定提示还是重启，组件不替它决定）。
   await picker.click(CLAUDE_LABEL)
   await picker.click(DSH_LABEL)
-  check('9 鼠标点行回行号（claude → 1、dsh → 0）',
-    picker.picked.length === 2 && picker.picked[0] === 1 && picker.picked[1] === 0,
+  check('9 鼠标点行回行号（claude / dsh 各回自己在目录里的行号）',
+    picker.picked.length === 2 && picker.picked[0] === claudeIndex && picker.picked[1] === dshIndex,
     JSON.stringify(picker.picked))
   picker.close()
 }
