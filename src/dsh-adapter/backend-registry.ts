@@ -49,6 +49,28 @@ const DSH_MANIFEST: BackendManifest = {
 }
 
 /**
+ * The one backend whose SDK install this host actually implements:
+ * `sdkInstallSurface()` (`backends.ts`) statically wires Claude's installer and
+ * nothing else, and the `sdk-install` overlay carries no backend id at all — it
+ * could not install anything else even if it wanted to.
+ *
+ * That makes `installable` / `sdkInstall` an **exclusive** privilege rather than
+ * free-form manifest data, in the same family as `nativeKey` (refused outright off
+ * the tree). Stage A opens the backend set to plugins and to a fourth in-tree
+ * backend; without the gate below, any of them could turn its own dim row into a
+ * one-Enter path into *Claude's* wizard — a row wearing one name while installing
+ * another program. Stage B gives each backend its own host-side installer and this
+ * check becomes "does this id have an install surface", which is why it is stated
+ * as a single id rather than a flag.
+ *
+ * Kept local on purpose: the registry must not import a concrete backend (they
+ * enter only through the lazy `load()`), and the value is self-checking anyway —
+ * the real Claude manifest declares exactly this privilege at module load, so a
+ * wrong constant makes this module fail to import.
+ */
+const HOST_INSTALLABLE_BACKEND_ID = 'claude'
+
+/**
  * One registered backend: the manifest, its id as a validated {@link KernelBackendId}
  * (the cast below is reached only after the syntax gate), and the lazy loader.
  * Everything downstream — picker rows, session refs, `~/.dsh-tui/backends/<id>/`
@@ -108,6 +130,10 @@ export function registerBackend(entry: BackendEntry): void {
   }
   if ((manifest.installable === true) !== (manifest.sdkInstall !== undefined)) {
     throw new Error(`${where} must declare installable exactly when it declares sdkInstall`)
+  }
+  if (manifest.id !== HOST_INSTALLABLE_BACKEND_ID
+    && (manifest.installable === true || manifest.sdkInstall !== undefined)) {
+    throw new Error(`${where} declares installable/sdkInstall, but this host ships exactly one install wizard (${HOST_INSTALLABLE_BACKEND_ID}); a backend brings its own in Stage B`)
   }
   // Plugin-declared names are external input: flatten control/escape sequences
   // and cap the width here, once, so the picker, the launchpad plate and the

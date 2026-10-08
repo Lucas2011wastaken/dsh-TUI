@@ -121,6 +121,17 @@ check('an always-available entry may not have a loader',
 check('installable and sdkInstall must agree',
   throws(() => registerBackend({ manifest: fakeManifest({ installable: true }) }))
     && throws(() => registerBackend({ manifest: fakeManifest({ sdkInstall: { specifier: '@acme/x@1', version: '1' } }) })))
+// Stage A ships exactly one install wizard — Claude's; `sdkInstallSurface()`
+// statically wires that one installer and the sdk-install overlay carries no
+// backend id at all. So declaring the data is an *exclusive* privilege, not
+// free-form manifest data: without this gate a fourth backend could turn its own
+// dim row into a one-Enter path into Claude's wizard (review, scope note). The
+// rule is id-based, and the real Claude manifest declares that very privilege at
+// module load, so a wrong constant makes the registry itself fail to import.
+check('only the host-installable backend may declare an install surface',
+  throws(() => registerBackend({
+    manifest: fakeManifest({ id: 'acme-install', inTree: true, installable: true, sdkInstall: { specifier: '@acme/x@1', version: '1' } }),
+  })))
 check('ids must match the syntax gate',
   ['has:colon', '..', 'a/b', 'Acme', '', 'x'.repeat(33)].every(id => !isBackendIdSyntax(id))
     && throws(() => registerBackend({ manifest: fakeManifest({ id: 'has:colon' }) })))

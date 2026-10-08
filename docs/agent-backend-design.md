@@ -252,10 +252,12 @@ SDK `settings` 选项把路由钉回 `https://api.anthropic.com`。CLI 拒绝令
    `backends.ts`（目录与身份回归都按 ID 取项，新增目录不必同步它们）；声明了非空
    `vendorPackages` 或 `nativeKey` 时，`verify-adapter-boundary.ts` 的 `EXPECTED_*`
    快照要与 `ADAPTER.md` 一并更新（派生结果逐字比对，门禁报错会写明——不声明这
-   两项的后端无需改动）；把 `pnpm compile` 重新生成的
+   两项的后端无需改动）；`installable` / `sdkInstall` 是**排他特权**：本仓库只实现了
+   Claude 那一个安装向导（`sdkInstallSurface()`），别的 id 声明它会被 `registerBackend`
+   当场拒绝（Stage B 给每个后端配上宿主侧安装器后才放开）；把 `pnpm compile` 重新生成的
    `src/dsh-adapter/backends.generated.ts` 一起提交（它是入库的生成产物，过期会被
-   `verify-backend-registry` 判红）。字段语义与三条边界（id 语法、
-   `nativeKey` 缺省的含义、`unloadExport` 只管进程级资源池）见
+   `verify-backend-registry` 判红）。字段语义与四条边界（id 语法、
+   `nativeKey` 缺省的含义、`unloadExport` 只管进程级资源池、`installable` 的排他性）见
    [ADAPTER.md](../ADAPTER.md) 的「后端 manifest」一节。
 2. 实现 `AgentBackend`（检测、`open`、可选的离线会话目录）与 `AgentSession`。
 3. 写翻译器：把后端消息翻成 `AgentEvent`，live 与回放用同一套映射；不认识的消息
