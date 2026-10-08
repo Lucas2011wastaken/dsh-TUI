@@ -42,8 +42,16 @@ export interface Config {
    *  the local Claude CLI through the Claude Agent SDK (optional peer
    *  `@anthropic-ai/claude-agent-sdk`); `codex`, the experimental Codex
    *  backend driving the user's own `codex` CLI over `codex app-server`.
-   *  `dsh-tui --backend <id>` sets it through `DSH_TUI_BACKEND`. */
-  backend?: KernelBackendId
+   *  `dsh-tui --backend <id>` sets it through `DSH_TUI_BACKEND`.
+   *
+   *  A plain `string` on purpose: this is the **input** surface, so an embedder
+   *  writing `{ backend: 'codex' }` keeps compiling. The value is gated right
+   *  below (`normalizeBackendChoice`: syntax, then registry) and the boot re-reads
+   *  it through that same gate — the `BackendId` brand stays inside the package,
+   *  where it guards session refs and `~/.dsh-tui/backends/<id>/` paths. Declaring
+   *  the branded `KernelBackendId` here breaks published consumers instead
+   *  (PR #1380 review R1). */
+  backend?: string
   /** LLM provider route. The route resolves atomically (issue #67): when
    *  cordis.yml names BOTH `provider` and `model`, that pair wins; otherwise
    *  the `/model` choice persisted in `~/.dsh-tui/model.json` wins whole;

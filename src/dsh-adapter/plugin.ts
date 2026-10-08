@@ -49,7 +49,7 @@ import { initialPromptFromCmdlineArgs } from './startup-args.js'
 import { readHomePrefs } from '../homePrefs.js'
 import { handoffEventTag, formatHandoffNotice } from '../handoffEvents.js'
 import { armFirstFrameAck, beginHandoffAck, handoffAttemptId, ownsAltScreenExit } from '../handoffAck.js'
-import { KERNEL_SWITCH_HANDOFF_ENV, readKernelPrefs, resolveRememberedBackend, writeKernelPrefs, type KernelBackendId } from '../kernelPrefs.js'
+import { KERNEL_SWITCH_HANDOFF_ENV, RESUME_BACKEND_ENV, parseBackendId, readKernelPrefs, resolveRememberedBackend, resolveResumeTarget, writeKernelPrefs, type KernelBackendId } from '../kernelPrefs.js'
 import { shouldOfferOnboarding } from '../onboardingPrefs.js'
 import { resolveSessionCwd } from '../utils/workspaceRoot.js'
 import { beginRestartAttempt, checkForTuiUpdate, installedTuiVersion, isBootDeadlockTarget, isStandaloneRuntime, isVersionNewer, logRestartEvent, resolveDshProfileName, resolveTuiUpdateTarget, restartTui, updateTuiAndRestart, writeHandoffNotice, writeLastRunRecord, type TuiRestartOptions } from '../update.js'
@@ -497,6 +497,11 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
   // contains the DSH launcher's own -- and is only a legacy embedder fallback.
   const cmdline = (ctx as { cmdlineArgs?: { get?: () => readonly string[]; args?: readonly string[] } }).cmdlineArgs
   const cmdlineArgs = cmdline?.get?.() ?? cmdline?.args
+  // The raw request, deliberately self-contained: `scripts/verify-startup-argv.mjs`
+  // replays this very statement (picked out of the compiled `apply` by name) to check
+  // the launcher's argv interception end to end, so it has to stay computable from
+  // `config` and `cmdlineArgs` alone. Whether the target may actually be used is
+  // decided further down, once the backend this boot lands on is known.
   const launchSessionId = config.sessionId ?? resumeTargetFromArgv(cmdlineArgs ?? process.argv.slice(2))
   // The session's backend (Config `backend`, `dsh-tui --backend`). A non-DSH
   // backend opens its own session here and skips everything DSH-specific
@@ -531,18 +536,53 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
   const rememberedBackend = readKernelPrefs().backend
   const backendChoice = resolveRememberedBackend({
     ...(handoffBackend === undefined ? {} : { handoff: handoffBackend }),
-    configured: config.backend,
+    configured: parseBackendChoice(config.backend),
     envRaw: rawBackend,
     envKnown: isRegisteredBackend,
     memory: isRegisteredBackend(rememberedBackend) ? rememberedBackend : undefined,
   })
   const rawBackendGiven = rawBackend === undefined ? '' : rawBackend.trim()
+  // The launcher marks a *derived* resume target with the backend it read it from
+  // (RESUME_BACKEND_ENV); a target the user placed carries no mark. Read and
+  // deleted right away, like the kernel handoff above, so no child inherits it.
+  // The mark is parsed with the syntax gate alone: the source is typically a
+  // backend that is NOT registered here, which is the whole reason to check.
+  // A marked target belongs to that one backend, and this boot may have landed
+  // elsewhere — an uninstalled plugin id falls back to dsh (P0 D1), an unset
+  // DSH_TUI_BACKEND follows the remembered kernel instead. Handing it over either
+  // fails or resumes an unrelated session that happens to share the id, so it is
+  // revoked rather than carried across (PR #1380 review R2).
+  const resumeBackendRaw = process.env[RESUME_BACKEND_ENV]
+  if (resumeBackendRaw !== undefined) delete process.env[RESUME_BACKEND_ENV]
+  const resumeTarget = resolveResumeTarget({
+    sessionId: launchSessionId,
+    sourceBackend: parseBackendId(resumeBackendRaw),
+    backendChoice,
+  })
+  // The id this boot may actually resume: the raw request above minus a target that
+  // belongs to another backend.
+  const effectiveSessionId = resumeTarget.sessionId
+  // The non-DSH path below opens `backendChoice`'s own session — a revoked target
+  // must not reach it either.
+  const configuredSessionId = resumeTarget.revokedFrom === undefined ? config.sessionId : undefined
+  if (resumeTarget.revokedFrom !== undefined) {
+    ctx.logger.warn(
+      `dsh-tui: dropping the resume target that backend "${resumeTarget.revokedFrom}" left behind; this boot runs on "${backendChoice}". ` +
+      'Start a session there, or name the id yourself with --resume, to continue it.',
+    )
+  }
   if (rawBackendGiven !== '' && !isRegisteredBackend(rawBackendGiven.toLowerCase())) {
     // Two cases, two sentences: a typo is not an uninstalled plugin (P0 D1).
     const installed = listBackends().map(entry => entry.manifest.id).join(', ')
-    ctx.logger.warn(isBackendIdSyntax(rawBackendGiven)
+    // A target the user named alongside the missing backend is offered to dsh
+    // as-is: only they know which backend it belongs to, so it is reported here
+    // rather than dropped.
+    const resumeClause = effectiveSessionId === undefined
+      ? ''
+      : ` The resume target "${effectiveSessionId}" stays as it is; dsh will be asked to resume it.`
+    ctx.logger.warn((isBackendIdSyntax(rawBackendGiven)
       ? `dsh-tui: DSH_TUI_BACKEND="${rawBackend}" names no installed backend (registered: ${installed}); starting on dsh`
-      : `dsh-tui: DSH_TUI_BACKEND="${rawBackend}" is not a valid backend id (lowercase letters, digits and dashes); starting on dsh`)
+      : `dsh-tui: DSH_TUI_BACKEND="${rawBackend}" is not a valid backend id (lowercase letters, digits and dashes); starting on dsh`) + resumeClause)
   }
   /**
    * Whether a Config row or DSH_TUI_BACKEND overrides the selector's
@@ -567,11 +607,11 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
           logForDebugging(`[${backendChoice}-stderr] ${line}`)
           stderrReporter.push(line)
         },
-        ...(config.sessionId === undefined ? {} : { configuredSessionId: config.sessionId }),
+        ...(configuredSessionId === undefined ? {} : { configuredSessionId }),
         argv: cmdlineArgs ?? process.argv.slice(2),
       })
     } catch (error) {
-      if (backendPinned || handoffBackend !== undefined || launchSessionId !== undefined) throw error
+      if (backendPinned || handoffBackend !== undefined || effectiveSessionId !== undefined) throw error
       const reason = error instanceof Error ? error.message : String(error)
       logForDebugging(`dsh-tui: remembered backend "${backendChoice}" failed to open (${reason}); falling back to dsh`)
       backendFallbackNotice = t('kernel-memory-fallback', { name: backendLabel(backendChoice), reason })
@@ -597,7 +637,7 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
     ? { agent: undefined, handle: undefined, agentPreset: undefined, route: undefined }
     : await resolveAgent(
       ctx,
-      launchSessionId,
+      effectiveSessionId,
       configuredRoute,
       startupRoute,
       meta,
@@ -1972,7 +2012,7 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
    * and opens straight into its conversation.
    */
   const dshBoot = backendStart === undefined
-  const noResume = isLandingLaunch({ launchSessionId, initialPrompt })
+  const noResume = isLandingLaunch({ launchSessionId: effectiveSessionId, initialPrompt })
   const openHomeOnBoot = dshBoot && !homeSeen && noResume && requestedWorkspace === undefined
   /**
    * The launchpad is NOT one-shot the way the workspace home is: every

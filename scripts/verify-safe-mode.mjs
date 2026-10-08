@@ -539,6 +539,75 @@ const cleanManifest = {
       JSON.stringify({ r: env.DSH_TUI_RESUME_SESSION, b: env.DSH_TUI_BACKEND }),
     )
   }
+  // C9 来源标记（review R2）：派生的恢复目标要一并记下**读它时的内核**，boot 若
+  //    回落到别的内核（未注册的插件 id → dsh；内存内核顶掉 env）才撤得掉它，而不是
+  //    把别的内核的会话 id 交给 dsh。判定走上面的真实 launcher 实现。
+  {
+    const launcher = makeLauncher({ env: {}, home: chainHome })
+    launcher.noteLaunchChain()
+    writeRecord(chainHome, { backendId: 'claude', sessionId: 'claude-45', cwd: 'D:/w', attemptId: 'b6', updatedAt: Date.now() + 5000 })
+    const env = launcher.resumeEnvForRetry()
+    check(
+      '来源: 记录派生的目标带来源内核（claude-45 ← claude）',
+      env.DSH_TUI_RESUME_SESSION === 'claude-45' && env.DSH_TUI_RESUME_BACKEND === 'claude',
+      JSON.stringify({ r: env.DSH_TUI_RESUME_SESSION, s: env.DSH_TUI_RESUME_BACKEND }),
+    )
+  }
+  {
+    const launcher = makeLauncher({ env: { DSH_TUI_RESUME_SESSION: 'stale-x', DSH_TUI_RESUME_BACKEND: 'codex' }, home: chainHome })
+    launcher.noteLaunchChain()
+    writeRecord(chainHome, { backendId: 'claude', sessionId: '   ', cwd: 'D:/w', attemptId: 'b7', updatedAt: Date.now() + 5000 })
+    const env = launcher.resumeEnvForRetry()
+    check(
+      '来源: 记录没有可恢复会话时，会话与来源两个 marker 一起清掉（不留孤儿来源）',
+      env.DSH_TUI_RESUME_SESSION === undefined && env.DSH_TUI_RESUME_BACKEND === undefined,
+      JSON.stringify({ r: env.DSH_TUI_RESUME_SESSION, s: env.DSH_TUI_RESUME_BACKEND }),
+    )
+  }
+  {
+    rmSync(chainDotTui, { recursive: true, force: true })
+    const sourceHome = join(tmp, 's02-source')
+    mkdirSync(join(sourceHome, '.dsh-tui', 'backends', 'codex'), { recursive: true })
+    writeFileSync(join(sourceHome, '.dsh-tui', 'resume.txt'), 'dsh-marker-11', 'utf8')
+    writeFileSync(join(sourceHome, '.dsh-tui', 'backends', 'codex', 'prefs.json'), JSON.stringify({ lastSession: 'codex-prefs-11' }), 'utf8')
+    const dshLauncher = makeLauncher({ env: {}, home: sourceHome })
+    dshLauncher.noteLaunchChain()
+    const dshEnv = dshLauncher.resumeEnvForRetry()
+    check(
+      '来源: 无记录 + 空 env → resume.txt 的目标标记来源 dsh（内存内核顶掉时撤得掉）',
+      dshEnv.DSH_TUI_RESUME_SESSION === 'dsh-marker-11' && dshEnv.DSH_TUI_RESUME_BACKEND === 'dsh',
+      JSON.stringify({ r: dshEnv.DSH_TUI_RESUME_SESSION, s: dshEnv.DSH_TUI_RESUME_BACKEND }),
+    )
+    const codexLauncher = makeLauncher({ env: { DSH_TUI_BACKEND: 'codex' }, home: sourceHome })
+    codexLauncher.noteLaunchChain()
+    const codexEnv = codexLauncher.resumeEnvForRetry()
+    check(
+      '来源: 无记录 + codex env → 目标标记来源 codex',
+      codexEnv.DSH_TUI_RESUME_SESSION === 'codex-prefs-11' && codexEnv.DSH_TUI_RESUME_BACKEND === 'codex',
+      JSON.stringify({ r: codexEnv.DSH_TUI_RESUME_SESSION, s: codexEnv.DSH_TUI_RESUME_BACKEND }),
+    )
+  }
+  {
+    const launcher = makeLauncher({ env: { DSH_TUI_RESUME_SESSION: 'explicit-keep' }, home: join(tmp, 's02-source') })
+    launcher.noteLaunchChain()
+    const env = launcher.resumeEnvForRetry()
+    check(
+      '来源: 显式 marker 原样保留、不追加来源标记（归属由用户决定）',
+      env.DSH_TUI_RESUME_SESSION === 'explicit-keep' && env.DSH_TUI_RESUME_BACKEND === undefined,
+      JSON.stringify({ r: env.DSH_TUI_RESUME_SESSION, s: env.DSH_TUI_RESUME_BACKEND }),
+    )
+  }
+  // C10 接线 tripwire：裸 --resume 的**派生**目标带来源，显式 id 不带（上一格是
+  //     行为断言，这一格保证重放循环本身没把两者写反）。
+  {
+    const derivedAt = binSource.indexOf('setResumeEnv(sessionId, sourceBackend)')
+    const explicitAt = binSource.indexOf('setResumeEnv(flag, undefined)')
+    check(
+      '接线: 裸 --resume 派生目标带来源，显式 id 清掉来源',
+      derivedAt > 0 && explicitAt > 0 && explicitAt < derivedAt,
+      'derived=' + derivedAt + ' explicit=' + explicitAt,
+    )
+  }
 }
 
 // --- safe 手动入口：零环境 + 非 TTY 降级 + 控制面只读 --------------------------

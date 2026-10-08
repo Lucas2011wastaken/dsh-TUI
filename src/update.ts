@@ -8,7 +8,7 @@ import { gte, gt, lt, valid } from 'semver'
 import { shellQuote } from './utils/shellQuote.js'
 import { DATA_DIR } from './utils/paths.js'
 import { stripResumeArgs } from './sessionHistory.js'
-import { KERNEL_SWITCH_HANDOFF_ENV, parseBackendId, type KernelBackendId } from './kernelPrefs.js'
+import { KERNEL_SWITCH_HANDOFF_ENV, RESUME_BACKEND_ENV, parseBackendId, type KernelBackendId } from './kernelPrefs.js'
 import { classifyReplacementOutcome, formatHandoffNotice, handoffEventTag, writeHandoffStage } from './handoffEvents.js'
 import { HANDOFF_ACK_FD_ENV, HANDOFF_ATTEMPT_ENV, HANDOFF_SCREEN_ENV, parseHandoffAckLine } from './handoffAck.js'
 import { DISABLE_KITTY_KEYBOARD, DISABLE_MODIFY_OTHER_KEYS, DISABLE_WIN32_INPUT_MODE } from './ink/termio/csi.js'
@@ -2097,6 +2097,11 @@ export function restartChildEnv(
   delete childEnv[HANDOFF_SCREEN_ENV]
   delete childEnv[HANDOFF_ACK_FD_ENV]
   delete childEnv[HANDOFF_ATTEMPT_ENV]
+  // A derived resume target's provenance is never inherited: whatever survives
+  // here was built by THIS process, and on a kernel switch even the target itself
+  // goes (below). Keeping a stale mark would make the replacement revoke a target
+  // nobody derived (see resolveResumeTarget in kernelPrefs.ts).
+  delete childEnv[RESUME_BACKEND_ENV]
   if (options.backend === undefined && options.kernel !== undefined) childEnv[KERNEL_SWITCH_HANDOFF_ENV] = options.kernel
   if (options.backend !== undefined) {
     childEnv.DSH_TUI_BACKEND = options.backend

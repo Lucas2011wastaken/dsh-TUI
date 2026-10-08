@@ -162,3 +162,42 @@ export function resolveRememberedBackend(input: {
   if (input.envRaw !== undefined && input.envRaw.trim() !== '') return DSH_BACKEND_ID
   return input.memory ?? DSH_BACKEND_ID
 }
+
+/**
+ * The backend a **derived** resume target was read from (launcher → boot handoff).
+ *
+ * `DSH_TUI_RESUME_SESSION` alone cannot be trusted across backends. The launcher
+ * derives a bare `--resume` target from the chosen backend's own
+ * `backends/<id>/prefs.json` (`envFromLastRun` does the same from `last-run.json`),
+ * and this boot may then land on a *different* backend: an uninstalled plugin id
+ * falls back to dsh (P0 D1), and an unset `DSH_TUI_BACKEND` follows the remembered
+ * kernel instead. Handing the id to whoever booted resumes the wrong backend's
+ * session, or fails on one that never heard of it. This variable records the
+ * source so the boot can refuse it.
+ *
+ * An id the user placed themselves (`--resume <id>`, a Config row, `/restart`)
+ * carries no mark — where it belongs is theirs to decide, and the boot only says
+ * what it knows. Boot deletes this from process.env as soon as it reads it,
+ * exactly like {@link KERNEL_SWITCH_HANDOFF_ENV}.
+ */
+export const RESUME_BACKEND_ENV = 'DSH_TUI_RESUME_BACKEND'
+
+/**
+ * Whether a resume target may be handed to the backend this boot landed on. A
+ * derived target is usable only on the backend it came from; a revoked one is
+ * dropped rather than carried over, which is why the result hands the source back
+ * for the caller's warning instead of returning nothing. Pure.
+ */
+export function resolveResumeTarget(input: {
+  /** The id as given: DSH_TUI_RESUME_SESSION, else Config.sessionId. */
+  readonly sessionId?: string | undefined
+  /** RESUME_BACKEND_ENV, normalized. Absent = the user named the target. */
+  readonly sourceBackend?: KernelBackendId | undefined
+  /** The backend this boot landed on (plugin.ts `backendChoice`). */
+  readonly backendChoice: KernelBackendId
+}): { readonly sessionId?: string; readonly revokedFrom?: KernelBackendId } {
+  const sessionId = input.sessionId?.trim()
+  if (sessionId === undefined || sessionId === '') return {}
+  if (input.sourceBackend === undefined || input.sourceBackend === input.backendChoice) return { sessionId }
+  return { revokedFrom: input.sourceBackend }
+}

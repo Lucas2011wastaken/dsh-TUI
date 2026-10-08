@@ -11,9 +11,10 @@ import { buildKernelCatalog, kernelEntriesOf, kernelSubtitle } from '../src/comp
 import type { KernelOption } from '../src/components/kernelCatalog.js'
 import { setLang, t } from '../src/i18n.js'
 import { isBackendIdSyntax } from '../src/agent/backend-manifest.js'
-import { BUILTIN_BACKEND_IDS, parseBackendId, resolveRememberedBackend } from '../src/kernelPrefs.js'
+import { BUILTIN_BACKEND_IDS, parseBackendId, resolveRememberedBackend, resolveResumeTarget } from '../src/kernelPrefs.js'
 import { normalizeBackendChoice } from '../src/dsh-adapter/index.js'
 import { isRegisteredBackend, listBackends, parseBackendChoice } from '../src/dsh-adapter/backend-registry.js'
+import { sdkInstallSurface } from '../src/dsh-adapter/backends.js'
 
 setLang('en')
 let passed = 0
@@ -41,10 +42,21 @@ check('codex: label, product, short name and pool hook come from its manifest',
   codexLabel?.kind === 'key' && codexLabel.key === 'kernel-label-codex'
     && t('kernel-label-codex') === 'Codex' && codex?.manifest.product === 'codex-cli'
     && codex?.manifest.shortLabel === 'Codex' && codex?.manifest.unloadExport === 'closeAllCodexHubs')
+// Whole-table, not name-by-name: `registerBackend` already refuses an install
+// surface on any other backend, and this is the other half of the same fact — the
+// registry can say "not you", it cannot say which id the host's one wizard belongs
+// to. Stated as a set so a fourth backend arriving with the privilege reds here
+// rather than slipping past a check that only ever asked about dsh and codex
+// (review, scope note).
+const installableIds = backends.filter(entry => entry.manifest.installable === true).map(entry => entry.id)
+const sdkInstallIds = backends.filter(entry => entry.manifest.sdkInstall !== undefined).map(entry => entry.id)
 check('only the Claude SDK is host-installable, and only it declares the install data',
-  claude?.manifest.installable === true && claude.manifest.sdkInstall?.specifier.startsWith('@anthropic-ai/claude-agent-sdk@') === true
-    && dsh?.manifest.installable !== true && codex?.manifest.installable !== true
-    && dsh?.manifest.sdkInstall === undefined && codex?.manifest.sdkInstall === undefined)
+  installableIds.join(',') === 'claude' && sdkInstallIds.join(',') === 'claude'
+    && claude?.manifest.sdkInstall?.specifier.startsWith('@anthropic-ai/claude-agent-sdk@') === true)
+const onlyInstallable = backends.find(entry => entry.manifest.sdkInstall !== undefined)
+check('the host wizard reads the backend the admission gate allows (one id, spelled once each)',
+  onlyInstallable !== undefined && sdkInstallSurface()?.specifier === onlyInstallable.manifest.sdkInstall?.specifier
+    && sdkInstallSurface()?.version === onlyInstallable.manifest.sdkInstall?.version)
 
 // ── The two-stage parse: syntax, then membership (D1) ────────────────────────
 check('syntax gate passes a plugin-shaped id, the registry gate does not',
@@ -56,6 +68,23 @@ check('an uninstalled-but-well-formed DSH_TUI_BACKEND falls back to dsh, never t
   resolveRememberedBackend({ envRaw: 'acme-agent', memory: 'claude' }) === 'acme-agent'
     && resolveRememberedBackend({ envRaw: 'acme-agent', envKnown: isRegisteredBackend, memory: 'claude' }) === 'dsh'
     && resolveRememberedBackend({ envRaw: 'Acme Agent', envKnown: isRegisteredBackend, memory: 'claude' }) === 'dsh')
+
+// ── A derived resume target belongs to the backend it came from (review R2) ──
+// The launcher marks what it read out of another backend's prefs
+// (RESUME_BACKEND_ENV); this boot may land elsewhere — an unregistered plugin id
+// falls back to dsh, an unset DSH_TUI_BACKEND follows the remembered kernel — and
+// the id must not follow it there.
+check('R2: a marked target is used when its source is the backend this boot landed on',
+  resolveResumeTarget({ sessionId: 'claude-1', sourceBackend: 'claude', backendChoice: 'claude' }).sessionId === 'claude-1')
+check('R2: a marked target is revoked, source reported, when the backends differ',
+  resolveResumeTarget({ sessionId: 'codex-1', sourceBackend: 'codex', backendChoice: 'dsh' }).sessionId === undefined
+    && resolveResumeTarget({ sessionId: 'codex-1', sourceBackend: 'codex', backendChoice: 'dsh' }).revokedFrom === 'codex'
+    && resolveResumeTarget({ sessionId: 'dsh-1', sourceBackend: 'dsh', backendChoice: 'claude' }).revokedFrom === 'dsh')
+check('R2: an unmarked target (--resume <id>, a Config row) is never revoked here',
+  resolveResumeTarget({ sessionId: 'typed-1', backendChoice: 'dsh' }).sessionId === 'typed-1')
+check('R2: a blank target is no target, marked or not',
+  resolveResumeTarget({ sessionId: '   ', sourceBackend: 'claude', backendChoice: 'dsh' }).sessionId === undefined
+    && resolveResumeTarget({ backendChoice: 'dsh' }).sessionId === undefined)
 
 const entries = kernelEntriesOf(backends)
 const entryOf = (id: string) => entries.find(entry => entry.id === id)

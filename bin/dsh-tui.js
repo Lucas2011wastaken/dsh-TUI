@@ -771,7 +771,7 @@ const startDshSession = (dshArgs, profile = PROFILE, env = process.env) =>
 // 那个会话，dsh 会在恢复时再报一次错，正好污染最该干净的通道。其余宿主变量
 // （PATH / DSH_HOME / 凭据…）是救援能工作的前提，照常继承。
 // home 层补丁不在此列：它由 createRescueProfile 的干净性门禁单独把关。
-const RESCUE_DROPPED_ENV = ['DSH_TUI_RESUME_SESSION', 'DSH_TUI_WORKSPACE_TARGET']
+const RESCUE_DROPPED_ENV = ['DSH_TUI_RESUME_SESSION', 'DSH_TUI_RESUME_BACKEND', 'DSH_TUI_WORKSPACE_TARGET']
 const rescueEnv = () => {
   const env = { ...process.env }
   for (const key of RESCUE_DROPPED_ENV) delete env[key]
@@ -799,14 +799,19 @@ const readLastRunRecord = () => {
 // 记录 → 重试 env：DSH_TUI_BACKEND 与一次性的 DSH_TUI_BACKEND_HANDOFF（后者
 // 压过 Config 行）都设成记录里的内核；记录有可恢复的会话 id 才设
 // DSH_TUI_RESUME_SESSION，否则删掉继承来的值，在该内核上冷启动。
+// DSH_TUI_RESUME_BACKEND 记下这个 id 是**从哪个内核读来的**：记录里的内核可能
+// 已经不在注册表里，boot 会回落 dsh，届时这个 id 必须被撤销而不是交给 dsh
+// （见 src/kernelPrefs.ts 的 resolveResumeTarget）。
 const envFromLastRun = record => {
   const env = { ...process.env }
   env.DSH_TUI_BACKEND = record.backendId
   env.DSH_TUI_BACKEND_HANDOFF = record.backendId
   if (typeof record.sessionId === 'string' && record.sessionId.trim() !== '') {
     env.DSH_TUI_RESUME_SESSION = record.sessionId
+    env.DSH_TUI_RESUME_BACKEND = record.backendId
   } else {
     delete env.DSH_TUI_RESUME_SESSION
+    delete env.DSH_TUI_RESUME_BACKEND
   }
   return env
 }
@@ -852,9 +857,13 @@ const resumeEnvForRetry = () => {
   }
   if (process.env.DSH_TUI_RESUME_SESSION !== undefined) return process.env
   let target = ''
+  // 与裸 --resume 同理：这两个目标都是**派生**的，来源内核要一并记下，boot 回落
+  // 到别的内核时才撤得掉（显式 marker 走上面那条 return，不带来源）。
+  let source = 'dsh'
   const backendChoice = backendChoiceFromEnv()
   if (backendChoice !== undefined) {
     target = readBackendLastSession(backendChoice)
+    source = backendChoice
   } else {
     try {
       target = readFileSync(join(homedir(), '.dsh-tui', 'resume.txt'), 'utf8').trim()
@@ -862,7 +871,9 @@ const resumeEnvForRetry = () => {
       // 没有历史会话可恢复——静默冷启动。
     }
   }
-  return target === '' ? process.env : { ...process.env, DSH_TUI_RESUME_SESSION: target }
+  return target === ''
+    ? process.env
+    : { ...process.env, DSH_TUI_RESUME_SESSION: target, DSH_TUI_RESUME_BACKEND: source }
 }
 
 // TTY 判定：询问与菜单都要求 stdin/stdout 均可交互（readline 需要 stdin，
@@ -1439,8 +1450,12 @@ if (!runningInsideProfile && ownVersion !== undefined && process.env.DSH_TUI_NO_
   if (!runningInsideProfile) checkProfileAlignment(installedVersion)
 
   // --resume / 工作区目标拦截（launcher 契约，见 src/sessionHistory.ts）。
-  const setResumeEnv = sessionId => {
+  // sourceBackend 只在**派生**目标时给出（读的是那个内核的上次会话）；显式敲的
+  // id 传 undefined，把来源标记删掉——它归用户管，启动器不替它作证。
+  const setResumeEnv = (sessionId, sourceBackend) => {
     process.env.DSH_TUI_RESUME_SESSION = sessionId
+    if (sourceBackend === undefined) delete process.env.DSH_TUI_RESUME_BACKEND
+    else process.env.DSH_TUI_RESUME_BACKEND = sourceBackend
   }
   const readLastResumeTarget = () => {
     try {
@@ -1521,11 +1536,20 @@ if (!runningInsideProfile && ownVersion !== undefined && process.env.DSH_TUI_NO_
   }
 
   // 按出现顺序重放 --resume：裸 --resume 时 DSH 读 resume.txt（契约不变），
-  // 其他内核读各自的上次会话。
+  // 其他内核读各自的上次会话。派生出来的目标同时记下**来源内核**
+  // （DSH_TUI_RESUME_BACKEND），boot 若回落到别的内核就撤销它；显式给出的 id 不
+  // 带来源，原样透传。
   for (const flag of resumeFlags) {
     const backendChoice = backendChoiceFromEnv()
-    const sessionId = flag ?? (backendChoice !== undefined ? readBackendLastSession(backendChoice) : readLastResumeTarget())
-    if (sessionId) setResumeEnv(sessionId)
+    if (flag !== null) {
+      setResumeEnv(flag, undefined)
+      continue
+    }
+    // 没有 --backend 时裸 --resume 读的是 DSH 的 resume.txt，来源即 dsh：内存里
+    // 记着的内核（kernel.json）可能把它顶掉，那时这个 id 同样不该跟过去。
+    const sourceBackend = backendChoice ?? 'dsh'
+    const sessionId = backendChoice !== undefined ? readBackendLastSession(backendChoice) : readLastResumeTarget()
+    if (sessionId) setResumeEnv(sessionId, sourceBackend)
   }
 
   // 启动：被委托场景下本副本自己的版本即对齐诊断所见的启动器代际。
