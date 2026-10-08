@@ -58,13 +58,24 @@ writeFileSync(join(workDir, 'tsconfig.json'), `${JSON.stringify({
   files: ['public-config.ts'],
 }, null, 2)}\n`, 'utf8')
 
-const run = spawnSync(process.execPath, [tsc, '-p', join(workDir, 'tsconfig.json')], { encoding: 'utf8' })
-const output = `${run.stdout ?? ''}${run.stderr ?? ''}`.trim()
-if (output === '') {
-  console.log('PASS: Config.backend accepts dsh / claude / codex / a plugin id, and still rejects a non-string')
-  console.log('\nverify-public-config-types OK (1 check)')
-  process.exit(0)
+// `--listFiles` 让"真的检查了这个文件"可证：只看"没有诊断"是不设防的——tsc 没起来、
+// 或者 program 里根本没这个文件，同样一声不吭，测试便空转通过。
+const run = spawnSync(process.execPath, [tsc, '-p', join(workDir, 'tsconfig.json'), '--listFiles'], { encoding: 'utf8' })
+if (run.error !== undefined) {
+  console.error(`could not run tsc (${tsc}): ${run.error.message}`)
+  process.exit(1)
 }
-console.error('The published Config surface no longer accepts plain backend ids (review R1):')
-console.error(output)
-process.exit(1)
+const stdout = run.stdout ?? ''
+if (run.status !== 0) {
+  console.error('The published Config surface no longer accepts plain backend ids (review R1):')
+  console.error(`${stdout}${run.stderr ?? ''}`.trim())
+  process.exit(1)
+}
+if (!stdout.includes('public-config.ts')) {
+  console.error('tsc exited 0 but never checked the fixture — the check would pass for any shape:')
+  console.error(stdout.trim())
+  process.exit(1)
+}
+console.log('PASS: Config.backend accepts dsh / claude / codex / a plugin id, and still rejects a non-string')
+console.log('\nverify-public-config-types OK (1 check)')
+process.exit(0)
