@@ -28,14 +28,21 @@ const { Terminal: XTerm } = xterm
 const [
   { render, AlternateScreen, useInput },
   { KernelPicker },
-  { buildKernelCatalog },
+  { buildKernelCatalog, kernelEntriesOf },
+  { listBackends },
   { t, setLang },
 ] = await Promise.all([
   import('../src/ui.js'),
   import('../src/components/KernelPicker.js'),
   import('../src/components/kernelCatalog.js'),
+  import('../src/dsh-adapter/backend-registry.js'),
   import('../src/i18n.js'),
 ])
+
+/** P0：选择器的目录由宿主投影后传进来（Chat 收到的是同一份
+ *  `kernelEntriesOf(listBackends())`）——回归直接用真实 registry 目录，
+ *  行序仍是 dsh / claude / codex。 */
+const KERNEL_ENTRIES = kernelEntriesOf(listBackends())
 
 let failures = 0
 function check(name: string, ok: boolean, extra = ''): void {
@@ -177,11 +184,11 @@ async function mountPicker(options: {
   return { term, input, picked, lines, rowOf, click, hover, close: () => app.unmount() }
 }
 
-const PROBING = buildKernelCatalog({ current: 'dsh', dshVersion: '0.2.0-rc.2' })
-const READY = buildKernelCatalog({ current: 'dsh', dshVersion: '0.2.0-rc.2', statuses: { claude: { installed: true, auth: 'ok', version: '2.1.0' } } })
-const NOT_INSTALLED = buildKernelCatalog({ current: 'dsh', dshVersion: '0.2.0-rc.2', statuses: { claude: { installed: false } } })
+const PROBING = buildKernelCatalog({ entries: KERNEL_ENTRIES, current: 'dsh', dshVersion: '0.2.0-rc.2' })
+const READY = buildKernelCatalog({ entries: KERNEL_ENTRIES, current: 'dsh', dshVersion: '0.2.0-rc.2', statuses: { claude: { installed: true, auth: 'ok', version: '2.1.0' } } })
+const NOT_INSTALLED = buildKernelCatalog({ entries: KERNEL_ENTRIES, current: 'dsh', dshVersion: '0.2.0-rc.2', statuses: { claude: { installed: false } } })
 /** 当前内核 = claude：勾要跟着挪到第二行（不是钉死在第一行）。 */
-const CLAUDE_CURRENT = buildKernelCatalog({ current: 'claude', dshVersion: '0.2.0-rc.2', statuses: { claude: { installed: true, auth: 'ok', version: '2.1.0' } } })
+const CLAUDE_CURRENT = buildKernelCatalog({ entries: KERNEL_ENTRIES, current: 'claude', dshVersion: '0.2.0-rc.2', statuses: { claude: { installed: true, auth: 'ok', version: '2.1.0' } } })
 
 const DSH_LABEL = t('kernel-label-dsh')
 const CLAUDE_LABEL = t('kernel-label-claude')

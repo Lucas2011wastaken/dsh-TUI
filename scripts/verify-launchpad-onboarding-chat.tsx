@@ -47,6 +47,8 @@ const [
   { readOnboardingPrefs },
   { isLandingLaunch },
   { noteBoundaryRecoveryRemount },
+  { kernelEntriesOf },
+  { listBackends },
 ] = await Promise.all([
   import('../src/ui.js'),
   import('../src/screens/Chat.js'),
@@ -56,7 +58,13 @@ const [
   import('../src/onboardingPrefs.js'),
   import('../src/dsh-adapter/plugin.js'),
   import('../src/ink/update-overflow-guard.js'),
+  import('../src/components/kernelCatalog.js'),
+  import('../src/dsh-adapter/backend-registry.js'),
 ])
+
+/** 内核目录：与真机组合根同源（`kernelEntriesOf(listBackends())`）——选择器那一屏
+ *  与右下角铭牌的名字都来自它，headless 宿主也得喂，否则内核行整块不存在。 */
+const KERNEL_ENTRIES = kernelEntriesOf(listBackends())
 
 let failures = 0
 let checks = 0
@@ -278,7 +286,10 @@ async function mountChat(flags: Flags, over: Record<string, unknown> = {}, chatP
           openHomeOnBoot={flags.openHomeOnBoot === true}
           launchpadOnBoot={flags.launchpadOnBoot === true}
           onboardingOnBoot={flags.onboardingOnBoot === true}
-          // 宿主注入的缝（内核选择器等）：用例按需补，缺省与真机之外的
+          // 内核目录与真机同源（P0 起由宿主注入，不再是全局闭集）：缺了它右下角
+          // 铭牌与选择器一行的内核都不存在。
+          kernelEntries={KERNEL_ENTRIES}
+          // 其余宿主注入的缝（探测、切换等）：用例按需补，缺省与真机之外的
           // headless 宿主一致（没有这些能力时 Chat 只提示、不假装）。
           {...chatProps}
         />

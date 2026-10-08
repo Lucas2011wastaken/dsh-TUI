@@ -9,7 +9,8 @@
 import type { Context } from '@deepseek-ai/cordis'
 import Schema from '@deepseek-ai/schemastery'
 import type { SessionModeSpec } from '../sessionModes.js'
-import { isKernelId, type KernelBackendId } from '../kernelPrefs.js'
+import { parseBackendChoice } from './backend-registry.js'
+import type { KernelBackendId } from '../kernelPrefs.js'
 import { BTW_CONTEXT_BUDGET_DEFAULT, BTW_CONTEXT_TURNS_DEFAULT, DEFAULT_COMPANION_SKIN, DEFAULT_SIDE_PANEL_IDS, DEFAULT_STATUS_BAR, normalizeBtwContextBudget, normalizeBtwContextTurns, normalizeCompanionSkin, normalizePageMargin, normalizeSidePanelPanels, normalizeSidePanelRatio, type CodeFrameStyle, type ImageBacking, type MathImageBacking, type MathImageScale, type MathRendering, type PageMarginSetting, type ScrollGutterMode, type StatusBarConfig, type ToolBackground } from '../tuiDisplayPrefs.js'
 import { SHORTCUT_ACTIONS, type ShortcutActionId } from '../utils/keymap.js'
 import { normalizeSplashFont, type SplashFontSetting } from '../components/splashFonts.js'
@@ -254,12 +255,12 @@ export interface Config {
   modes?: SessionModeSpec[]
 }
 
-/** The backend a configured value names: case-insensitive, trimmed;
- *  empty or unknown → undefined (the DSH default). */
+/** The backend a configured value names: case-insensitive, trimmed, and
+ *  **registered** — both halves of the parse (P0 D1). Empty, malformed, or a
+ *  well-formed id that no installed backend answers to → undefined, which the
+ *  Config row and the boot both read as "not configured" (the DSH default). */
 export function normalizeBackendChoice(value: unknown): KernelBackendId | undefined {
-  if (typeof value !== 'string') return undefined
-  const id = value.trim().toLowerCase()
-  return isKernelId(id) ? id : undefined
+  return parseBackendChoice(value)
 }
 
 export const Config: Schema<Config, RuntimeConfig<Config>> = editableConfig<Config>(Schema.object({

@@ -97,6 +97,9 @@ const run = (args, env = {}) =>
 // 替身必须**真的造出半成品**（半装与 no-op 两种模式都写盘），否则「清理」类
 // 断言会因为 `!existsSync(...)` 恒真而空转（变异测试实证：删掉实现的 rmSync，
 // 套件照样全绿——那是假通过）。
+/** stub 记录的 env 行（见 STUB_MODULE）：救援路径必须把两个会话控制变量都剥掉；
+ *  行格式只有一处定义——stub 写什么，断言就比什么。 */
+const RESCUE_CLEAN_ENV = 'resume=none workspace=none backend=none'
 const STUB_MODULE = `import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
@@ -115,7 +118,7 @@ bump('calls')
 appendFileSync(join(state, 'argv'), argv.join(' ') + '\\n')
 // 被剥离的会话控制变量**两个都**记，且记在同一行：argv 与 env 两个文件是按行
 // 号一一配对的（见 stubCalls），一个调用占两行会让后面每次配对整体错位。
-appendFileSync(join(state, 'env'), 'resume=' + (process.env.DSH_TUI_RESUME_SESSION ?? 'none') + ' workspace=' + (process.env.DSH_TUI_WORKSPACE_TARGET ?? 'none') + '\\n')
+appendFileSync(join(state, 'env'), 'resume=' + (process.env.DSH_TUI_RESUME_SESSION ?? 'none') + ' workspace=' + (process.env.DSH_TUI_WORKSPACE_TARGET ?? 'none') + ' backend=' + (process.env.DSH_TUI_BACKEND ?? 'none') + '\\n')
 
 const [command] = argv
 if (command === '--version') {
@@ -331,6 +334,28 @@ const cleanManifest = {
     const r = runFb({ DSH_STUB_PROFILE_EXIT: '42', DSH_TUI_LANG: 'en' })
     check('fallback: safeHint 双语', r.stderr.includes('Run dsh-tui safe'), `status=${r.status}`)
   }
+  {
+    // --backend 的闭集校验在 P0 放宽成 id 语法校验（D1）：合法但没装的 id
+    // 不再早退，而是进 TUI 后由 boot 告警 + 回落 dsh（启动器看不到 profile 里
+    // 装了什么）。这里钉住「透传」，非法语法仍然当场 exit 2。
+    const r = run(['--backend', 'claud'], { PATH: stub.dir, DSH_STUB_STATE: stub.state, DSH_HOME: profHome, DSH_TUI_NO_DELEGATE: '1', DSH_STUB_PROFILE_EXIT: '42' })
+    // stubCalls 是追加式的：本块前面几次 fallback 的调用也在里面，取**最后一次**
+    // --profile 才是这次 --backend 的透传证据。
+    const call = stubCalls(stub.state).filter(c => c.argv.startsWith('--profile')).at(-1)
+    check(
+      '--backend：语法合法的未装 id 不再早退（透传给会话，退出码保真）',
+      r.status === 42 && call !== undefined && call.env.includes('backend=claud') && !r.stderr.includes('非法的 --backend'),
+      `status=${r.status} env=${call?.env ?? 'none'}`,
+    )
+  }
+  {
+    const r = run(['--backend', 'Bad Id'], { PATH: stub.dir, DSH_STUB_STATE: stub.state, DSH_HOME: profHome, DSH_TUI_NO_DELEGATE: '1' })
+    check(
+      '--backend：语法非法仍然 exit 2 + 明确文案（不再列"可选"闭集）',
+      r.status === 2 && r.stderr.includes('非法的 --backend') && !r.stderr.includes('可选 dsh'),
+      `status=${r.status}`,
+    )
+  }
   if (isWin) {
     skip('fallback: 信号透传且无 safe 提示', 'Windows has no POSIX signal semantics (Node turns kill into TerminateProcess, so spawnSync reports a code, never a signal)')
   } else {
@@ -350,10 +375,16 @@ const cleanManifest = {
 // resumeEnvForRetry），注入受控的 homedir 与 process.env。
 {
   const binSource = readFileSync(bin, 'utf8')
-  const idsStart = binSource.indexOf('const KERNEL_IDS = [')
+  const idsStart = binSource.indexOf('const BUILTIN_BACKEND_IDS = [')
   const idsEnd = binSource.indexOf('\n', idsStart)
   if (idsStart < 0 || idsEnd < 0) throw new Error('bin kernel registry not found')
-  const KERNEL_IDS = new vm.Script(binSource.slice(idsStart, idsEnd) + '\nKERNEL_IDS').runInNewContext()
+  const KERNEL_IDS = new vm.Script(binSource.slice(idsStart, idsEnd) + '\nBUILTIN_BACKEND_IDS').runInNewContext()
+  // 切出来的 resumeEnvForRetry 现在按 id 语法判定非 DSH 内核（P0 D1），所以把
+  // 启动器里**同一段源码**切出来注入——不是测试里另写一份规则。
+  const syntaxStart = binSource.indexOf('const BACKEND_ID_PATTERN = ')
+  const syntaxEnd = binSource.indexOf('\n', binSource.indexOf('const isBackendIdSyntax = '))
+  if (syntaxStart < 0 || syntaxEnd < 0) throw new Error('bin backend id rule not found')
+  const isBackendIdSyntax = new vm.Script(binSource.slice(syntaxStart, syntaxEnd) + '\nisBackendIdSyntax').runInNewContext()
   const fromMarker = 'const readLastRunRecord = () => {'
   const from = binSource.indexOf(fromMarker)
   const to = binSource.indexOf('// TTY 判定：')
@@ -367,6 +398,7 @@ const cleanManifest = {
       homedir: () => home,
       process: sandboxProcess,
       KERNEL_IDS,
+      isBackendIdSyntax,
     }
     context.globalThis = context
     const factory = new vm.Script(
@@ -797,7 +829,7 @@ const cleanManifest = {
   // 断言：只断 resume 时，第二个键哪天从剥离清单里掉出去本套件照样全绿。
   check(
     '救援: 显式环境剥离宿主会话控制变量（resume 与 workspace 两键）',
-    r.status === 0 && addCall?.env === 'resume=none workspace=none',
+    r.status === 0 && addCall?.env === RESCUE_CLEAN_ENV,
     addCall?.env ?? 'no call',
   )
 }

@@ -7,11 +7,14 @@ import * as toolAskUser from '@deepseek-ai/dsh-tool-ask-user'
 import type { Context } from '@deepseek-ai/cordis'
 import type { SettingsNamespace } from '@deepseek-ai/dsh-settings'
 import Schema from '@deepseek-ai/schemastery'
-import { Config, normalizeBackendChoice } from './index.js'
+import { Config } from './index.js'
 import { configValues, createSettingsScope, resolveSettingsNamespace, type RuntimeConfig } from './compat/settings.js'
 import { createChannel } from './channel.js'
 import { createDshSession } from './backend/session.js'
-import { BACKEND_LOADERS, closeBackendResources, openBackendStartup, probeKernels, sdkInstall } from './backends.js'
+import { kernelEntriesOf } from '../components/kernelCatalog.js'
+import { openBackendStartup, probeKernels, sdkInstallSurface } from './backends.js'
+import { backendLabel, isBackendIdSyntax, isRegisteredBackend, listBackends, loadBackend, parseBackendChoice, unloadBackends } from './backend-registry.js'
+import type { SdkInstaller, SdkInstallTarget } from '../agent/backend.js'
 import { formatSessionRef } from '../agent/refs.js'
 import type { AgentSession } from '../agent/session.js'
 import { mountFailureText } from '../sessions/resumeFailure.js'
@@ -46,7 +49,7 @@ import { initialPromptFromCmdlineArgs } from './startup-args.js'
 import { readHomePrefs } from '../homePrefs.js'
 import { handoffEventTag, formatHandoffNotice } from '../handoffEvents.js'
 import { armFirstFrameAck, beginHandoffAck, handoffAttemptId, ownsAltScreenExit } from '../handoffAck.js'
-import { KERNEL_IDS, KERNEL_SWITCH_HANDOFF_ENV, kernelDisplayName, readKernelPrefs, resolveRememberedBackend, writeKernelPrefs, type KernelBackendId } from '../kernelPrefs.js'
+import { KERNEL_SWITCH_HANDOFF_ENV, readKernelPrefs, resolveRememberedBackend, writeKernelPrefs, type KernelBackendId } from '../kernelPrefs.js'
 import { shouldOfferOnboarding } from '../onboardingPrefs.js'
 import { resolveSessionCwd } from '../utils/workspaceRoot.js'
 import { beginRestartAttempt, checkForTuiUpdate, installedTuiVersion, isBootDeadlockTarget, isStandaloneRuntime, isVersionNewer, logRestartEvent, resolveDshProfileName, resolveTuiUpdateTarget, restartTui, updateTuiAndRestart, writeHandoffNotice, writeLastRunRecord, type TuiRestartOptions } from '../update.js'
@@ -513,21 +516,33 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
   // invalid value is ignored.
   const handoffBackendRaw = process.env[KERNEL_SWITCH_HANDOFF_ENV]
   if (handoffBackendRaw !== undefined) delete process.env[KERNEL_SWITCH_HANDOFF_ENV]
-  const handoffBackend = normalizeBackendChoice(handoffBackendRaw)
+  const handoffBackend = parseBackendChoice(handoffBackendRaw)
   // Fullscreen kernel switch: the old process spawned this one with an ACK
   // pipe on fd 3 and the alternate screen still open (see handoffAck.ts).
   const handoffAck = beginHandoffAck()
   if (handoffAck !== undefined) {
     logRestartEvent('handoff/boot: ack armed', { attemptId: handoffAttemptId() ?? '' })
   }
+  // Every source is parsed in two stages (P0 D1): syntax first, then the
+  // registry. An id that is syntactically valid but not installed must behave
+  // exactly like an unknown value did before the set was open — dsh plus a
+  // warning, never a crashed boot. `envKnown` carries that into the resolver for
+  // the one source that arrives raw; the other three are parsed above/beside.
+  const rememberedBackend = readKernelPrefs().backend
   const backendChoice = resolveRememberedBackend({
     ...(handoffBackend === undefined ? {} : { handoff: handoffBackend }),
     configured: config.backend,
     envRaw: rawBackend,
-    memory: readKernelPrefs().backend,
+    envKnown: isRegisteredBackend,
+    memory: isRegisteredBackend(rememberedBackend) ? rememberedBackend : undefined,
   })
-  if (rawBackend !== undefined && rawBackend.trim() !== '' && normalizeBackendChoice(rawBackend) === undefined) {
-    ctx.logger.warn(`dsh-tui: DSH_TUI_BACKEND="${rawBackend}" names no known backend (${KERNEL_IDS.join(', ')}); starting on dsh`)
+  const rawBackendGiven = rawBackend === undefined ? '' : rawBackend.trim()
+  if (rawBackendGiven !== '' && !isRegisteredBackend(rawBackendGiven.toLowerCase())) {
+    // Two cases, two sentences: a typo is not an uninstalled plugin (P0 D1).
+    const installed = listBackends().map(entry => entry.manifest.id).join(', ')
+    ctx.logger.warn(isBackendIdSyntax(rawBackendGiven)
+      ? `dsh-tui: DSH_TUI_BACKEND="${rawBackend}" names no installed backend (registered: ${installed}); starting on dsh`
+      : `dsh-tui: DSH_TUI_BACKEND="${rawBackend}" is not a valid backend id (lowercase letters, digits and dashes); starting on dsh`)
   }
   /**
    * Whether a Config row or DSH_TUI_BACKEND overrides the selector's
@@ -546,7 +561,7 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
   let backendFallbackNotice: string | undefined
   if (backendChoice !== 'dsh') {
     try {
-      backendStart = await openBackendStartup(ctx, await BACKEND_LOADERS[backendChoice](), {
+      backendStart = await openBackendStartup(ctx, await loadBackend(backendChoice), {
         cwd: sessionCwd,
         stderr: line => {
           logForDebugging(`[${backendChoice}-stderr] ${line}`)
@@ -559,7 +574,7 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
       if (backendPinned || handoffBackend !== undefined || launchSessionId !== undefined) throw error
       const reason = error instanceof Error ? error.message : String(error)
       logForDebugging(`dsh-tui: remembered backend "${backendChoice}" failed to open (${reason}); falling back to dsh`)
-      backendFallbackNotice = t('kernel-memory-fallback', { name: kernelDisplayName(backendChoice), reason })
+      backendFallbackNotice = t('kernel-memory-fallback', { name: backendLabel(backendChoice), reason })
     }
   }
   // The backend session (and its child process) belongs to this fiber until the
@@ -1753,20 +1768,26 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
       // inherited DSH_TUI_RESUME_SESSION marker from the replacement env.
       // kernel.json was already written when the choice was accepted.
       if (backendSwitchRequested !== undefined) {
-        logRestartEvent('funnel: backend-switch branch entered', { backend: backendSwitchRequested })
+        // Captured: the closure below runs after this block, where the outer
+        // `let` is no longer narrowed.
+        const switchingTo = backendSwitchRequested
+        logRestartEvent('funnel: backend-switch branch entered', { backend: switchingTo })
         // Fullscreen keeps the alternate screen and writes the "switching"
         // notice into it until the replacement takes over (see handoffAck.ts);
         // inline restores the main screen and writes the notice there.
-        logRestartEvent(handoffEventTag('starting'), { backend: backendSwitchRequested })
+        logRestartEvent(handoffEventTag('starting'), { backend: switchingTo })
         const keepAlt = bootedFullscreen
         void finishExit(
           ctx,
           instance,
           bootedFullscreen,
-          formatHandoffNotice('starting', { name: kernelDisplayName(backendSwitchRequested), color: process.stdout.isTTY === true }),
+          formatHandoffNotice('starting', { name: backendLabel(switchingTo), color: process.stdout.isTTY === true }),
           undefined,
           () => runRestart(ctx, profile, '', undefined, {
-            backend: backendSwitchRequested,
+            backend: switchingTo,
+            // The replacement's parent prints the same name this process just
+            // put on screen (update.ts has no registry to look it up in).
+            backendName: backendLabel(switchingTo),
             ...(keepAlt ? { handoffScreen: 'alt' } : {}),
           }),
           { keepAltScreen: keepAlt },
@@ -1858,7 +1879,7 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
     backendSwitchRequested = backend
     writeKernelPrefs({ backend })
     logRestartEvent('command: backend switch accepted', { backend })
-    notifyChannel(t('kernel-switch-restarting', { name: kernelDisplayName(backend) }))
+    notifyChannel(t('kernel-switch-restarting', { name: backendLabel(backend) }))
     handleExit()
   }
 
@@ -2012,12 +2033,13 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
     onSwitchBackend: switchBackend,
     // /channel: restart with a new session after the connection changed.
     onRestartFreshSession: restartFreshSession,
+    // The backend registry as the picker sees it: the UI takes data, not the
+    // registry (P0). dsh first, then the manifest order — picker order.
+    kernelEntries: kernelEntriesOf(listBackends()),
     onProbeKernels: () => probeKernels(ctx, sessionCwd),
-    // The kernel picker's SDK install wizard (the dim Claude row, Enter).
-    onResolveSdkInstallTarget: sdkInstall.resolveTarget,
-    onStartSdkInstall: sdkInstall.start,
-    onCheckPnpm: sdkInstall.checkPnpm,
-    sdkInstallPinned: sdkInstall.pinned,
+    // The kernel picker's SDK install wizard (the dim Claude row, Enter): the
+    // spec comes from the entry that declares it, the actions from this host.
+    ...sdkInstallProps(),
     kernelPinned: backendPinned,
     // Only a `dsh --profile <name>` launch has a profile installation for
     // `/update` to act on; source checkouts and `--config` overlays get the
@@ -2769,6 +2791,27 @@ function disposeRootAndExit(ctx: Context, code: number): void {
   disposeRootAndThen(ctx, () => process.exit(code), code)
 }
 
+/** Chat's SDK install wizard props (the dim row's Enter path): the spec comes
+ *  from the registry entry that declares `sdkInstall`, the actions from this
+ *  host. Empty when nothing declares it — `canInstallSdk` wants all four, so the
+ *  dim row keeps its dead-end reason instead of opening a wizard with no
+ *  target. */
+function sdkInstallProps(): {
+  readonly onResolveSdkInstallTarget?: () => SdkInstallTarget
+  readonly onStartSdkInstall?: (dir: string) => SdkInstaller
+  readonly onCheckPnpm?: () => Promise<boolean>
+  readonly sdkInstallPinned?: { readonly specifier: string; readonly version: string }
+} {
+  const surface = sdkInstallSurface()
+  if (surface === undefined) return {}
+  return {
+    onResolveSdkInstallTarget: surface.resolveTarget,
+    onStartSdkInstall: surface.start,
+    onCheckPnpm: surface.checkPnpm,
+    sdkInstallPinned: { specifier: surface.specifier, version: surface.version },
+  }
+}
+
 /**
  * The real way back into a session after the TUI process is gone. The
  * package ships no `dsh-tui` bin — resuming means feeding the session id
@@ -2798,7 +2841,9 @@ function disposeRootAndThen(ctx: Context, done: () => void, fallbackCode = 1): v
     process.exit(fallbackCode)
   }, 5000)
   timer.unref()
-  void withHostRootCapability(() => ctx.root.fiber.dispose()).finally(() => closeBackendResources()).then(
+  // The pooled, process-wide resources of every backend this process actually
+  // loaded are closed here — after the fiber, never before (P0 D4-P2/P3).
+  void withHostRootCapability(() => ctx.root.fiber.dispose()).finally(() => unloadBackends()).then(
     () => {
       clearTimeout(timer)
       done()

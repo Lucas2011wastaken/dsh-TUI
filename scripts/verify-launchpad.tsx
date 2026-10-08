@@ -83,7 +83,15 @@ const [
 applyCompanionSkin('whale')
 
 /** 内核目录由 buildKernelCatalog 生成，与 Chat 使用同一构造函数。 */
-const { buildKernelCatalog } = await import('../src/components/kernelCatalog.js')
+const { buildKernelCatalog, kernelEntriesOf } = await import('../src/components/kernelCatalog.js')
+const { listBackends } = await import('../src/dsh-adapter/backend-registry.js')
+
+/** P0：目录由宿主投影后传进来（Chat 拿到的就是 `kernelEntriesOf(listBackends())`），
+ *  行的静态半边来自 manifest；回归直接用真实 registry 目录（dsh / claude / codex）。 */
+const KERNEL_ENTRIES = kernelEntriesOf(listBackends())
+/** 与 Chat 同一条构造路径：目录注入 + 本夹具的探测状态。 */
+const catalog = (input: Omit<Parameters<typeof buildKernelCatalog>[0], 'entries'>) =>
+  buildKernelCatalog({ ...input, entries: KERNEL_ENTRIES })
 
 /** 夹具的默认状态：有上次会话 + 条件位全不成立（动作表 = Continue·会话与工作区·设置·内核·帮助）。 */
 const DEFAULT_ACTIONS = resolveLaunchpadActions({ lastSessionTitle: '修个登录页', jobsRunning: false, updateAvailable: false, starDue: false })
@@ -1060,17 +1068,23 @@ base.close()
   check('E6 lastSessionTitle 为空白 = 无历史（不造 Continue，落常态档）',
     resolveLaunchpadActions({ lastSessionTitle: '   ', jobsRunning: false, updateAvailable: false, starDue: false })[0]?.id === 'sessions-workspace',
     resolveLaunchpadActions({ lastSessionTitle: '   ', jobsRunning: false, updateAvailable: false, starDue: false }).map(a => a.id).join(','))
-  // 内核入口：backendId 缺省时使用短标签，提供时显示对应名称（名称来自
-  // kernelCatalog 的 displayName，chip 上屏「内核 · Claude」/「Kernel · DSH」）。
-  const namedBackend = resolveLaunchpadActions({ lastSessionTitle: '修个登录页', jobsRunning: false, updateAvailable: false, starDue: false, backendId: 'claude' })
-  check('E6b backendId=claude：内核入口带名（labelKey = backend-named，values.name = Claude）',
+  // 内核入口：backendId 缺省时使用短标签，提供了 backendLabel（manifest 的
+  // shortLabel，由 Launchpad/Chat 从选择器目录取）时带名——chip 上屏
+  // 「内核 · Claude」/「Kernel · DSH」。
+  const namedBackend = resolveLaunchpadActions({ lastSessionTitle: '修个登录页', jobsRunning: false, updateAvailable: false, starDue: false, backendId: 'claude', backendLabel: 'Claude' })
+  check('E6b backendId=claude + backendLabel：内核入口带名（labelKey = backend-named，values.name = Claude）',
     namedBackend.find(a => a.id === 'backend')?.labelKey === 'launchpad-action-backend-named' && namedBackend.find(a => a.id === 'backend')?.values?.name === 'Claude',
     JSON.stringify(namedBackend.find(a => a.id === 'backend')))
+  // 短名缺席（目录里没有这一行，例如宿主未接线）时**退回原样 id**——绝不自己按
+  // id 查表编品牌名（P0 D2：名字只有一个来源，就是 manifest）。
+  check('E6b2 backendLabel 缺席：内核入口退回原样 id（不猜品牌名）',
+    resolveLaunchpadActions({ lastSessionTitle: '修个登录页', jobsRunning: false, updateAvailable: false, starDue: false, backendId: 'claude' })
+      .find(a => a.id === 'backend')?.values?.name === 'claude')
   check("E6c backendId 缺省：内核入口用短标签（无插值，阶段B接线前的回退）",
     resolveLaunchpadActions({ lastSessionTitle: '修个登录页', jobsRunning: false, updateAvailable: false, starDue: false }).find(a => a.id === 'backend')?.labelKey === 'launchpad-action-backend'
       && resolveLaunchpadActions({ lastSessionTitle: '修个登录页', jobsRunning: false, updateAvailable: false, starDue: false }).find(a => a.id === 'backend')?.values === undefined)
-  check('E6d backendId=dsh：带名 DSH',
-    resolveLaunchpadActions({ jobsRunning: false, updateAvailable: false, starDue: false, backendId: 'dsh' }).find(a => a.id === 'backend')?.values?.name === 'DSH')
+  check('E6d backendId=dsh + backendLabel：带名 DSH',
+    resolveLaunchpadActions({ jobsRunning: false, updateAvailable: false, starDue: false, backendId: 'dsh', backendLabel: 'DSH' }).find(a => a.id === 'backend')?.values?.name === 'DSH')
 }
 {
   const labels = DEFAULT_ACTIONS.map(a => t(a.labelKey as never, a.values as never))
@@ -1086,41 +1100,45 @@ base.close()
 
 // ── K. 内核选择：目录、kernel.json 记忆与 boot 优先级 ──
 {
-  const { buildKernelCatalog, kernelDisplayName, kernelVersionLabel, kernelSubtitle } = await import('../src/components/kernelCatalog.js')
+  const { kernelVersionLabel, kernelSubtitle } = await import('../src/components/kernelCatalog.js')
   const { readKernelPrefs, writeKernelPrefs, resolveRememberedBackend } = await import('../src/kernelPrefs.js')
+  const { isRegisteredBackend, parseBackendChoice } = await import('../src/dsh-adapter/backend-registry.js')
   const { mkdtempSync, readFileSync, rmSync, writeFileSync } = await import('node:fs')
   const { tmpdir } = await import('node:os')
   const { join } = await import('node:path')
 
   // 目录：DSH 恒在恒可选（默认内核）；claude 依探测结果定可选性。版本一律是
   // **显示串**（产品前缀 + 版本号），不再是裸版本号。
-  const dshOnly = buildKernelCatalog({ current: 'dsh', dshVersion: '0.2.6' })
+  const dshOnly = catalog({ current: 'dsh', dshVersion: '0.2.6' })
   check('K1 目录：DSH 恒可选并带版本显示串；claude / codex 未探测=置灰为「检测中…」（不是未安装）',
     dshOnly.length === 3 && dshOnly[0]?.id === 'dsh' && dshOnly[0]?.current === true && dshOnly[0]?.selectable === true && dshOnly[0]?.version === 'dsh-core v0.2.6'
       && dshOnly[1]?.id === 'claude' && dshOnly[1]?.current === false && dshOnly[1]?.selectable === false && dshOnly[1]?.reasonKey === 'kernel-probing'
       && dshOnly[2]?.id === 'codex' && dshOnly[2]?.selectable === false && dshOnly[2]?.reasonKey === 'kernel-probing',
     JSON.stringify(dshOnly))
-  const ok = buildKernelCatalog({ current: 'claude', dshVersion: '0.2.6', statuses: { claude: { installed: true, auth: 'ok', version: '2.1.287' } } })
+  const ok = catalog({ current: 'claude', dshVersion: '0.2.6', statuses: { claude: { installed: true, auth: 'ok', version: '2.1.287' } } })
   check('K2 目录：installed+auth=ok 的 claude 可选、版本显示串、current 标记在 claude',
     ok[0]?.current === false && ok[1]?.selectable === true && ok[1]?.current === true && ok[1]?.version === 'claude-code v2.1.287' && ok[1]?.reasonKey === undefined,
     JSON.stringify(ok))
   check('K3 目录：auth=missing 置灰(未登录)；auth=unknown 仍可选（分不清≠没有）；installed=false → 未安装',
-    buildKernelCatalog({ current: 'dsh', statuses: { claude: { installed: true, auth: 'missing', version: '1.2.3' } } })[1]?.selectable === false
-      && buildKernelCatalog({ current: 'dsh', statuses: { claude: { installed: true, auth: 'missing' } } })[1]?.reasonKey === 'kernel-unavailable-auth-missing'
-      && buildKernelCatalog({ current: 'dsh', statuses: { claude: { installed: true, auth: 'unknown' } } })[1]?.selectable === true
-      && buildKernelCatalog({ current: 'dsh', statuses: { claude: { installed: false, version: '1.2.3' } } })[1]?.reasonKey === 'kernel-unavailable-not-installed')
-  check('K4 显示名：dsh→DSH、claude→Claude（chip 插值与重启通知共用）',
-    kernelDisplayName('dsh') === 'DSH' && kernelDisplayName('claude') === 'Claude')
-  // 版本显示串：产品前缀表（dsh→dsh-core、claude→claude-code）；空/缺省 = undefined
-  // （调用方整段省掉，绝不画一个空壳的 v）；未知 id 不编造产品名。
-  check('K4b kernelVersionLabel：产品前缀 + 空格 + v + 版本号；空串/缺省 undefined；未知 id 裸版本',
-    kernelVersionLabel('dsh', '0.2.0-rc.2') === 'dsh-core v0.2.0-rc.2'
-      && kernelVersionLabel('claude', '2.0.1') === 'claude-code v2.0.1'
-      && kernelVersionLabel('dsh', '') === undefined && kernelVersionLabel('dsh') === undefined
-      && kernelVersionLabel('custom', '9.9.9') === '9.9.9',
-    JSON.stringify([kernelVersionLabel('dsh', '0.2.0-rc.2'), kernelVersionLabel('dsh', ''), kernelVersionLabel('custom', '9.9.9')]))
+    catalog({ current: 'dsh', statuses: { claude: { installed: true, auth: 'missing', version: '1.2.3' } } })[1]?.selectable === false
+      && catalog({ current: 'dsh', statuses: { claude: { installed: true, auth: 'missing' } } })[1]?.reasonKey === 'kernel-unavailable-auth-missing'
+      && catalog({ current: 'dsh', statuses: { claude: { installed: true, auth: 'unknown' } } })[1]?.selectable === true
+      && catalog({ current: 'dsh', statuses: { claude: { installed: false, version: '1.2.3' } } })[1]?.reasonKey === 'kernel-unavailable-not-installed')
+  // 短品牌名不再是宿主里的 id→名字表：它来自 manifest，经宿主投影（P0 D2）。
+  check('K4 短品牌名：来自 manifest（dsh→DSH、claude→Claude、codex→Codex），落地页与重启通知共用',
+    KERNEL_ENTRIES[0]?.shortLabel === 'DSH' && KERNEL_ENTRIES[1]?.shortLabel === 'Claude' && KERNEL_ENTRIES[2]?.shortLabel === 'Codex'
+      && KERNEL_ENTRIES[0]?.label.kind === 'key' && KERNEL_ENTRIES[1]?.label.kind === 'key',
+    JSON.stringify(KERNEL_ENTRIES.map(entry => [entry.id, entry.shortLabel])))
+  // 版本显示串：产品名来自 manifest 的 product（dsh-core / claude-code）；空/缺省
+  // = undefined（调用方整段省掉，绝不画一个空壳的 v）；没有 product 的条目裸版本。
+  check('K4b kernelVersionLabel：产品名 + 空格 + v + 版本号；空串/缺省 undefined；无产品名裸版本',
+    kernelVersionLabel('dsh-core', '0.2.0-rc.2') === 'dsh-core v0.2.0-rc.2'
+      && kernelVersionLabel('claude-code', '2.0.1') === 'claude-code v2.0.1'
+      && kernelVersionLabel('dsh-core', '') === undefined && kernelVersionLabel('dsh-core') === undefined
+      && kernelVersionLabel(undefined, '9.9.9') === '9.9.9',
+    JSON.stringify([kernelVersionLabel('dsh-core', '0.2.0-rc.2'), kernelVersionLabel('dsh-core', ''), kernelVersionLabel(undefined, '9.9.9')]))
   // 副标题：版本 · 置灰原因——谁有拼谁，两样都没有 = undefined（底栏与选择器共用）。
-  const subtitleOf = (input: Parameters<typeof buildKernelCatalog>[0]) => buildKernelCatalog(input).map(option => kernelSubtitle(option, key => 'R:' + key))
+  const subtitleOf = (input: Omit<Parameters<typeof buildKernelCatalog>[0], 'entries'>) => catalog(input).map(option => kernelSubtitle(option, key => 'R:' + key))
   check('K4c kernelSubtitle：版本·原因 / 只有版本 / 只有原因 / 都没有=undefined',
     subtitleOf({ current: 'dsh', dshVersion: '0.2.6' })[1] === 'R:kernel-probing'
       && subtitleOf({ current: 'dsh', dshVersion: '0.2.6', statuses: { claude: { installed: false } } })[1] === 'R:kernel-unavailable-not-installed'
@@ -1140,8 +1158,14 @@ base.close()
   check('K5b kernel.json：覆盖写往返（claude→dsh）', readKernelPrefs(file).backend === 'dsh')
   writeFileSync(file, '{ not json', 'utf8')
   check('K6 kernel.json：坏 JSON 读作无记忆（读失败=无记忆，不抛）', readKernelPrefs(file).backend === undefined)
+  writeFileSync(file, '{"backend":"Non Sense"}', 'utf8')
+  check('K6b kernel.json：语法非法的 backend 值读作无记忆', readKernelPrefs(file).backend === undefined)
+  // P0 D1：语法合法但没装的 id 是**读得回来**的（真源投影，不在读路径上做成员判断）；
+  // boot 侧再用 registry 那一半过滤成 dsh——见 K6b2 与 K7b。
   writeFileSync(file, '{"backend":"nonsense"}', 'utf8')
-  check('K6b kernel.json：非法 backend 值读作无记忆', readKernelPrefs(file).backend === undefined)
+  check('K6b2 kernel.json：语法合法但未注册的 id 照读（成员判断在 boot，不在读路径）',
+    readKernelPrefs(file).backend === 'nonsense' && isRegisteredBackend('nonsense') === false
+      && parseBackendChoice('nonsense') === undefined)
   writeFileSync(file, '{"backend":"claude","extra":1}', 'utf8')
   check('K6c kernel.json：未知字段容忍，backend 保留', readKernelPrefs(file).backend === 'claude')
 
@@ -1152,7 +1176,14 @@ base.close()
     P('dsh', 'claude', 'claude') === 'dsh' && P(undefined, 'claude', 'dsh') === 'claude'
       && P(undefined, undefined, 'claude') === 'claude' && P() === 'dsh')
   check('K7b boot 优先级：非法 env → dsh（不是记忆——与启动警告 starting on dsh 一致）；空白 env = 无 env',
-    P(undefined, 'nonsense', 'claude') === 'dsh' && P(undefined, '  CLAUDE  ', 'dsh') === 'claude' && P(undefined, '', 'claude') === 'claude')
+    resolveRememberedBackend({ envRaw: 'Non Sense', envKnown: isRegisteredBackend, memory: 'claude' }) === 'dsh'
+      && resolveRememberedBackend({ envRaw: 'Non Sense', memory: 'claude' }) === 'dsh'
+      && P(undefined, '  CLAUDE  ', 'dsh') === 'claude' && P(undefined, '', 'claude') === 'claude')
+  // P0 D1：未注册（但语法合法）的 env 与拼错的 env 同一条路——dsh，且**不吃记忆**。
+  // 少了 envKnown 这一半，它会被当成合法选择一路走到 loadBackend 上，撞死 boot。
+  check('K7b2 boot 优先级：语法合法但未安装的 env 同样回落 dsh（registry 那一半）',
+    resolveRememberedBackend({ envRaw: 'nonsense', envKnown: isRegisteredBackend, memory: 'claude' }) === 'dsh'
+      && resolveRememberedBackend({ envRaw: 'nonsense', memory: 'claude' }) === 'nonsense')
   check('K7c boot 优先级：env 大小写/空白归一（镜像 normalizeBackendChoice）',
     P(undefined, 'Claude', 'dsh') === 'claude' && P(undefined, ' dsh ', 'claude') === 'dsh')
   // 记忆只被选择器写：boot 解析（读路径）绝不改文件。
@@ -1171,9 +1202,12 @@ base.close()
     H('claude', 'dsh', 'claude', 'claude') === 'claude' && H(undefined, 'dsh', 'claude', 'claude') === 'dsh')
   check('K10b 反向切换同样成立：handoff=dsh 压过 configured=claude',
     H('dsh', 'claude', 'claude', 'claude') === 'dsh')
+  // handoff 在 plugin.ts 里先过 registry 那一半（parseBackendChoice），语法非法的
+  // 才轮到 resolver 的语法闸门兜底。
   check('K10c 非法 handoff 按不存在处理（回落到 Config > env > memory）',
-    resolveRememberedBackend({ handoff: 'nonsense' as never, configured: 'claude' }) === 'claude'
-      && resolveRememberedBackend({ handoff: '' as never, memory: 'claude' }) === 'claude')
+    resolveRememberedBackend({ handoff: 'Non Sense' as never, configured: 'claude' }) === 'claude'
+      && resolveRememberedBackend({ handoff: '' as never, memory: 'claude' }) === 'claude'
+      && parseBackendChoice('nonsense') === undefined)
 
   // 组合根整链：restartChildEnv 生成切换进程环境变量 →
   // 用 boot 同款输入喂真实 resolver，断言落到目标内核（选择器侧的
@@ -1220,8 +1254,13 @@ base.close()
     readLastRunRecord(recordFile)?.sessionId === '')
   writeFileSync(recordFile, '{ not json', 'utf8')
   check('LR2 坏 JSON 读作 undefined（不抛）', readLastRunRecord(recordFile) === undefined)
-  writeFileSync(recordFile, '{"backendId":"nonsense","sessionId":"x","cwd":"c","attemptId":"a","updatedAt":1}', 'utf8')
+  writeFileSync(recordFile, '{"backendId":"Non Sense","sessionId":"x","cwd":"c","attemptId":"a","updatedAt":1}', 'utf8')
   check('LR2b 非法 backendId 读作 undefined（拒绝跨域恢复的载体）', readLastRunRecord(recordFile) === undefined)
+  // P0 D1：语法合法的 id 读得回来（安全重试要能按记录里的内核重启）；它是否装过，
+  // 由 boot 的 registry 那一半决定（未装 → dsh + 告警）。
+  writeFileSync(recordFile, '{"backendId":"nonsense","sessionId":"x","cwd":"c","attemptId":"a","updatedAt":1}', 'utf8')
+  check('LR2c 语法合法但未注册的 backendId 照读（重试载体不丢，boot 再回落 dsh）',
+    readLastRunRecord(recordFile)?.backendId === 'nonsense')
   writeFileSync(recordFile, '{"backendId":"claude","sessionId":"x","attemptId":"a","updatedAt":1}', 'utf8')
   check('LR2c 缺 cwd 字段读作 undefined', readLastRunRecord(recordFile) === undefined)
   const blocker2 = join(recordDir, 'blocker-file')
@@ -2435,7 +2474,7 @@ for (const cols of [120, 100, 72, 60, 48]) {
   // ▸、主题蓝），行与行右缘对齐（同一块铭牌带）；kernels 缺省时右侧只有第一行
   // （降级不编造内核号）。底部带满 3 行后，输入框在任何档位都不被挤掉
   // （input-only 档由 D 组钉死；这里再钉 corners 行数）。
-  const s = await openLaunchpad([], { kernels: buildKernelCatalog({ current: 'dsh', dshVersion: '0.2.0-rc.2' }) })
+  const s = await openLaunchpad([], { kernels: catalog({ current: 'dsh', dshVersion: '0.2.0-rc.2' }) })
   await settled(() => s.screen().includes('dsh-core v0.2.0-rc.2'))
   const lines = viewportLines(s.term)
   const tuiRow = lines.findIndex(l => l.includes(`dsh-tui v${VERSION}`))
@@ -2459,7 +2498,7 @@ for (const cols of [120, 100, 72, 60, 48]) {
 // 用户原话：「在这里显示可以选择的内核 并且有箭头或者高亮 表明目前记忆中启动
 // 的内核」——目录由 kernelCatalog 的真实派生函数造（夹具不手写形状）。
 {
-  // 底栏用**短品牌名**（kernelDisplayName：DSH / Claude，与「内核 · DSH」那个 chip
+  // 底栏用**短品牌名**（manifest 的 shortLabel：DSH / Claude，与「内核 · DSH」那个 chip
   // 同源）——全名 40 列会把左下角的目录铭牌挤掉；全名留给选择器那一屏。
   const DSH_LABEL = 'DSH'
   const CLAUDE_LABEL = 'Claude'
@@ -2467,7 +2506,7 @@ for (const cols of [120, 100, 72, 60, 48]) {
   const MARK = '\u25b8 '
   /** Launchpad 的 KERNEL_CORNER_FOCUS（内核区在焦点环里的编码）。 */
   const KERNEL_FOCUS = -8
-  const probing = buildKernelCatalog({ current: 'dsh', dshVersion: '0.2.0-rc.2' })
+  const probing = catalog({ current: 'dsh', dshVersion: '0.2.0-rc.2' })
   const ev: Ev[] = []
   const s = await openLaunchpad(ev, { kernels: probing, kernelPick: true })
   await settled(() => s.screen().includes('dsh-tui v' + VERSION))
@@ -2534,14 +2573,14 @@ for (const cols of [120, 100, 72, 60, 48]) {
   s2.close()
   {
     // 已探测「未安装」：置灰原因是未安装（与「检测中…」分得清）。
-    const s3 = await openLaunchpad([], { kernels: buildKernelCatalog({ current: 'dsh', dshVersion: '0.2.0-rc.2', statuses: { claude: { installed: false } } }) })
+    const s3 = await openLaunchpad([], { kernels: catalog({ current: 'dsh', dshVersion: '0.2.0-rc.2', statuses: { claude: { installed: false } } }) })
     check('S7 已探测未安装：claude 行显示「未安装」',
       await settled(() => s3.screen().includes(CLAUDE_LABEL + ' · 未安装')), s3.screen().slice(-160))
     s3.close()
   }
   {
     // 已探测可用：版本串是**产品前缀 + 版本号**，且这一行不变暗（可选）。
-    const s4 = await openLaunchpad([], { kernels: buildKernelCatalog({ current: 'dsh', dshVersion: '0.2.0-rc.2', statuses: { claude: { installed: true, auth: 'ok', version: '2.0.1' } } }) })
+    const s4 = await openLaunchpad([], { kernels: catalog({ current: 'dsh', dshVersion: '0.2.0-rc.2', statuses: { claude: { installed: true, auth: 'ok', version: '2.0.1' } } }) })
     check('S8 可选内核显示版本串：claude-code v2.0.1（不是裸版本号）',
       await settled(() => s4.screen().includes(CLAUDE_LABEL + ' · claude-code v2.0.1')), s4.screen().slice(-160))
     const lines4 = viewportLines(s4.term)

@@ -63,7 +63,14 @@ const ownVersion = ownPackage?.name === '@deepseek-harness-tui/dsh-tui' ? ownPac
 const PACKAGE = '@deepseek-harness-tui/dsh-tui'
 const PROFILE = 'dsh-tui'
 // Kept local so the launcher also works without compiled modules.
-const KERNEL_IDS = ['dsh', 'claude', 'codex']
+/** 内置内核：只用于文案（"内置 dsh / claude / codex"）与 rescue/safe 提示。
+ *  **不是校验来源**——插件后端由各自 profile 提供，启动器看不到，所以
+ *  `--backend` 只做 id 语法校验（P0 D1）。 */
+const BUILTIN_BACKEND_IDS = ['dsh', 'claude', 'codex']
+/** 后端 id 语法，与 src/agent/backend-manifest.ts 的 BACKEND_ID_PATTERN 同一规则
+ *  （启动器要能在没有编译产物时工作，所以这里是副本；两边改动必须同步）。 */
+const BACKEND_ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,31}$/
+const isBackendIdSyntax = value => typeof value === 'string' && BACKEND_ID_PATTERN.test(value)
 
 // 随包用户手册（guide/，见 scripts/build-guide.mjs）：交给 dsh 当内核
 // dsh-skill-filesystem 的随包技能根（rank 600 的 bundledSkillDir 默认取这个
@@ -466,7 +473,8 @@ const MSG = {
       `Options:\n` +
       `  --resume [id]          Resume the last (or the given) session\n` +
       `  -c, --continue         Same as --resume\n` +
-      `  --backend <id>         Agent backend: dsh | claude | codex (claude, codex: experimental)\n` +
+      `  --backend <id>         Agent backend: dsh | claude | codex, or an installed plugin backend\n` +
+      `                         (claude, codex and plugin backends: experimental)\n` +
       `  -- <prompt...>        Treat the remaining arguments as literal prompt text\n` +
       `  <path|url>             Open with the given workspace target\n\n` +
       `Leading DSH options (e.g. --dump-config, --patch <path>) are forwarded unchanged.\n` +
@@ -484,7 +492,8 @@ const MSG = {
       `选项：\n` +
       `  --resume [id]          恢复上次（或指定 id 的）会话\n` +
       `  -c, --continue         同 --resume\n` +
-      `  --backend <id>         Agent 后端：dsh | claude | codex（claude、codex 为实验性）\n` +
+      `  --backend <id>         Agent 后端：dsh | claude | codex，或已安装的插件后端\n` +
+      `                         （claude、codex 与插件后端均为实验性）\n` +
       `  -- <提示词...>         将剩余参数作为字面提示词\n` +
       `  <路径|URL>             以指定工作区目标启动\n\n` +
       `前置 DSH 选项（如 --dump-config、--patch <路径>）原样转发。\n` +
@@ -779,7 +788,7 @@ const readLastRunRecord = () => {
   try {
     const parsed = JSON.parse(readFileSync(join(homedir(), '.dsh-tui', 'last-run.json'), 'utf8'))
     if (parsed === null || typeof parsed !== 'object') return undefined
-    if (!KERNEL_IDS.includes(parsed.backendId)) return undefined
+    if (!isBackendIdSyntax(parsed.backendId)) return undefined
     if (typeof parsed.sessionId !== 'string' || typeof parsed.cwd !== 'string' || typeof parsed.attemptId !== 'string') return undefined
     if (typeof parsed.updatedAt !== 'number' || !Number.isFinite(parsed.updatedAt)) return undefined
     return parsed
@@ -831,7 +840,7 @@ const resumeEnvForRetry = () => {
   }
   if (process.env.DSH_TUI_RESUME_SESSION !== undefined) return process.env
   let target = ''
-  if (KERNEL_IDS.includes(process.env.DSH_TUI_BACKEND) && process.env.DSH_TUI_BACKEND !== 'dsh') {
+  if (isBackendIdSyntax(process.env.DSH_TUI_BACKEND) && process.env.DSH_TUI_BACKEND !== 'dsh') {
     target = readBackendLastSession(process.env.DSH_TUI_BACKEND)
   } else {
     try {
@@ -1466,8 +1475,13 @@ if (!runningInsideProfile && ownVersion !== undefined && process.env.DSH_TUI_NO_
     if (a === '--backend' || a.startsWith('--backend=')) {
       const backend = a.startsWith('--backend=') ? a.slice('--backend='.length).trim() : (argv[i + 1] ?? '').trim()
       if (a === '--backend' && argv[i + 1] !== undefined) i += 1
-      if (!KERNEL_IDS.includes(backend)) {
-        console.error(lang === 'zh' ? `未知的 --backend：${backend}（可选 ${KERNEL_IDS.join(' / ')}）` : `Unknown --backend: ${backend} (expected ${KERNEL_IDS.join(' or ')})`)
+      // 只挡语法非法：合法但没装的 id（插件后端、或拼错的 id）进 TUI 后由 boot
+      // 告警并回落 dsh——启动器拿不到 profile 里装了什么（P0 D1 的已知代价，
+      // Stage C 的 /plugin 会让启动器读已装清单后恢复"装前即报错"）。
+      if (!isBackendIdSyntax(backend)) {
+        console.error(lang === 'zh'
+          ? `非法的 --backend：${backend}（后端 id 只能是小写字母、数字与连字符，最长 32 字符；内置 ${BUILTIN_BACKEND_IDS.join(' / ')}，插件后端需已安装）`
+          : `Invalid --backend: ${backend} (a backend id is lowercase letters, digits and dashes, at most 32 characters; built-in: ${BUILTIN_BACKEND_IDS.join(' or ')} — a plugin backend must be installed)`)
         process.exit(2)
       }
       process.env.DSH_TUI_BACKEND = backend
@@ -1496,7 +1510,7 @@ if (!runningInsideProfile && ownVersion !== undefined && process.env.DSH_TUI_NO_
   // 按出现顺序重放 --resume：裸 --resume 时 DSH 读 resume.txt（契约不变），
   // 其他内核读各自的上次会话。
   for (const flag of resumeFlags) {
-    const sessionId = flag ?? (KERNEL_IDS.includes(process.env.DSH_TUI_BACKEND) && process.env.DSH_TUI_BACKEND !== 'dsh' ? readBackendLastSession(process.env.DSH_TUI_BACKEND) : readLastResumeTarget())
+    const sessionId = flag ?? (isBackendIdSyntax(process.env.DSH_TUI_BACKEND) && process.env.DSH_TUI_BACKEND !== 'dsh' ? readBackendLastSession(process.env.DSH_TUI_BACKEND) : readLastResumeTarget())
     if (sessionId) setResumeEnv(sessionId)
   }
 

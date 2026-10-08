@@ -244,8 +244,16 @@ SDK `settings` 选项把路由钉回 `https://api.anthropic.com`。CLI 拒绝令
 
 ## 接入新后端
 
-1. 新建 `src/backends/<id>/`，厂商包只在这里 import；在 `verify-adapter-boundary.ts`
-   登记对应的包与 `native.<id>` 规则。
+1. 新建 `src/backends/<id>/`，厂商包只在这里 import；同时写 `manifest.ts`——后端的
+   静态声明（id / label / shortLabel / product / `backendExport` / 可选的
+   `vendorPackages`、`nativeKey`、`unloadExport`、`sdkInstall`）。构建期索引
+   （`scripts/gen-backend-index.mjs`，挂在 `compile` 上）会把它纳入注册表，门禁的
+   厂商包与 `native.<id>` 规则也由它派生：**不要手改** `kernelPrefs.ts` /
+   `backends.ts` / `verify-adapter-boundary.ts`；把 `pnpm compile` 重新生成的
+   `src/dsh-adapter/backends.generated.ts` 一起提交（它是入库的生成产物，过期会被
+   `verify-backend-registry` 判红）。字段语义与三条边界（id 语法、
+   `nativeKey` 缺省的含义、`unloadExport` 只管进程级资源池）见
+   [ADAPTER.md](../ADAPTER.md) 的「后端 manifest」一节。
 2. 实现 `AgentBackend`（检测、`open`、可选的离线会话目录）与 `AgentSession`。
 3. 写翻译器：把后端消息翻成 `AgentEvent`，live 与回放用同一套映射；不认识的消息
    忽略，不崩。
