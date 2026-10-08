@@ -2520,16 +2520,35 @@ for (const cols of [120, 100, 72, 60, 48]) {
   await settled(() => s.screen().includes('dsh-tui v' + VERSION))
   const lines = viewportLines(s.term)
   const tuiRow = lines.findIndex(l => l.includes('dsh-tui v' + VERSION))
-  const dshRow = lines.findIndex(l => l.includes(MARK + DSH_LABEL))
-  const claudeRow = lines.findIndex(l => l.includes(CLAUDE_LABEL))
   const firstGlyph = (row: number) => firstGlyphCell(s.term, row, COLS)
   /** 对照基准：右下角第一行 TUI 版本号。 */
   const tuiCell = cellAtText(s.term, lines, tuiRow, 'dsh-tui v' + VERSION)
-  /** 铭牌行号：按模型的顺序推导，不写死位置（P0 §1.2：新增后端不得让这里变红）。 */
-  const plateRows = probing.map(option => lines.findIndex((line, index) => index > tuiRow && line.includes(option.shortLabel)))
+  /** 铭牌行号：按模型的顺序推导，不写死位置（P0 §1.2：新增后端不得让这里变红）。
+   *  名字只在**推导出的那一行**上校验：manifest 并不要求短名互不为子串，全局
+   *  findIndex 找子串会被排在 Claude 之前、短名又含 "Claude" 的新后端抢先命中，
+   *  S1/S2/S3 便拿它的行当 Claude 的行而假红（PR #1380 review）。 */
+  const plateRows = probing.map((option, index) => (
+    tuiRow >= 0 && lines[tuiRow + 1 + index]?.includes(option.shortLabel) ? tuiRow + 1 + index : -1
+  ))
+  /** 内核 id → 铭牌行号（按 ID 取项，不按位置也不按子串）。 */
+  const plateRowOf = (id: string): number => {
+    const index = probing.findIndex(option => option.id === id)
+    return index < 0 ? -1 : plateRows[index]!
+  }
+  /** 行内某段文字首字符的单元格（1 起，与 findCell 同口径）。 */
+  const cellInRow = (row: number, needle: string): { col: number; row: number } | null => {
+    const line = row < 0 ? '' : lines[row] ?? ''
+    const at = line.indexOf(needle)
+    return at < 0 ? null : { col: stringWidth(line.slice(0, at)) + 1, row: row + 1 }
+  }
+  const dshRow = plateRowOf('dsh')
+  const claudeRow = plateRowOf('claude')
   check('S1 内核区排在 TUI 版本之下，一行一个内核：当前行打 ▸ 且带版本串',
     tuiRow >= 0 && plateRows.every((row, index) => row === tuiRow + 1 + index)
-      && lines[tuiRow + 1]!.includes('dsh-core v0.2.0-rc.2'),
+      && lines[tuiRow + 1]!.includes('dsh-core v0.2.0-rc.2')
+      // 内核区正好这么多行：紧邻的下一行不得再是任何内核的铭牌。少了这条，上面
+      // 那句只证明「每行写的是它自己」，多画一行照样通过。
+      && !probing.some(option => (lines[tuiRow + 1 + probing.length] ?? '').includes(option.shortLabel)),
     `tui=${tuiRow} plate=${JSON.stringify(plateRows)} ${JSON.stringify(lines[tuiRow + 1]?.trimEnd())}`)
   const dshFg = fgKeyOf(firstGlyph(dshRow))
   const claudeFg = fgKeyOf(firstGlyph(claudeRow))
@@ -2557,7 +2576,7 @@ for (const cols of [120, 100, 72, 60, 48]) {
   // 悬停将焦点移到内核区；非当前项从 dim 切换为高亮，
   // 行**亮起来**（加粗）——这就是「可以点」的鼠标反馈。
   const beforeHover = ev.length
-  const hoverAt = findCell(s.term, CLAUDE_LABEL)!
+  const hoverAt = cellInRow(claudeRow, CLAUDE_LABEL)!
   s.input.write('\u001b[<35;' + hoverAt.col + ';' + hoverAt.row + 'M')
   check('S5 悬停内核区 → 焦点落到 KERNEL_CORNER_FOCUS(-8)（鼠标与键盘同一格）',
     await settled(() => last(ev, 'focus')?.value === KERNEL_FOCUS), JSON.stringify(ev.slice(beforeHover)))
@@ -2590,12 +2609,14 @@ for (const cols of [120, 100, 72, 60, 48]) {
   }
   {
     // 已探测可用：版本串是**产品前缀 + 版本号**，且这一行不变暗（可选）。
-    const s4 = await openLaunchpad([], { kernels: catalog({ current: 'dsh', dshVersion: '0.2.0-rc.2', statuses: { claude: { installed: true, auth: 'ok', version: '2.0.1' } } }) })
+    const ready = catalog({ current: 'dsh', dshVersion: '0.2.0-rc.2', statuses: { claude: { installed: true, auth: 'ok', version: '2.0.1' } } })
+    const s4 = await openLaunchpad([], { kernels: ready })
     check('S8 可选内核显示版本串：claude-code v2.0.1（不是裸版本号）',
       await settled(() => s4.screen().includes(CLAUDE_LABEL + ' · claude-code v2.0.1')), s4.screen().slice(-160))
     const lines4 = viewportLines(s4.term)
     const tui4 = lines4.findIndex(l => l.includes('dsh-tui v' + VERSION))
-    const claude4 = rowOf(s4.term, CLAUDE_LABEL)
+    // 按 ID 定位 Claude 那一行，不用全屏找 "Claude" 子串（理由见 S1）。
+    const claude4 = tui4 + 1 + ready.findIndex(option => option.id === 'claude')
     const claude4Fg = fgKeyOf(firstGlyphCell(s4.term, claude4, COLS))
     // 底栏只管「现在跑的是它」：可选择的内核行**照样** dim（可选性由选择器那一行
     // 表达——picker 里只有不可选行才变暗，两条不同的口径各测各的）。
