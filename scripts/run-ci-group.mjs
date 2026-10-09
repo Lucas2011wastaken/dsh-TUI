@@ -436,8 +436,10 @@ const GROUPS = {
   ],
   'session-workspace': [
     ["verify-backend-startup", ['node', '--import', 'tsx/esm', 'scripts/verify-backend-startup.ts']],
-// 后端注册表回归（P0 Stage A）：注册闸门（重复 id / 保留 id / 非 inTree 用宿主
-// 词表 / native 越权 / installable 与 sdkInstall 漂移）、五条来源的两段式解析
+// 后端注册表回归（P0 Stage A + B-1）：注册闸门（重复 id / 保留 id / 非 inTree 用宿主
+// 词表 / native 越权 / 安装配方缺字段）、**安装面按声明不按 id**（非 inTree 条目声明
+// 宿主执行器即可装、装的是它自己的 specifier；codex 式"没有安装面"是缺省配方；
+// 宿主不认识的执行器＝不抛错、不可装、无向导）、五条来源的两段式解析
 // （语法合法但未装的 id → dsh + 告警，绝不打死 boot）、D4 的池记账（未加载即
 // 不 import、不关池；已加载的按序关、幂等、单条失败不阻断也不抛）、生成索引的
 // 发现/行序/失败即红，以及**坏基线必须红**——把边界门禁连同 src 副本搬进临时

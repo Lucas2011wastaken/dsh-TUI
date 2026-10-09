@@ -126,7 +126,7 @@ import { PermissionsPicker } from '../components/PermissionsPicker.js'
 import { ModePicker } from '../components/ModePicker.js'
 import { KernelPicker } from '../components/KernelPicker.js'
 import { SdkInstallWizard, type SdkInstallPhase } from '../components/SdkInstallWizard.js'
-import type { SdkInstaller, SdkInstallTarget } from '../agent/backend.js'
+import type { SdkInstaller, SdkInstallSurface } from '../agent/backend.js'
 import { ChannelPicker } from '../components/ChannelPicker.js'
 import type { KernelEntry, KernelStatus } from '../components/kernelCatalog.js'
 import type { KernelBackendId } from '../kernelPrefs.js'
@@ -390,10 +390,7 @@ export function Chat({
   onRestartFreshSession,
   onProbeKernels,
   kernelEntries = EMPTY_KERNEL_ENTRIES,
-  onResolveSdkInstallTarget,
-  onStartSdkInstall,
-  onCheckPnpm,
-  sdkInstallPinned,
+  onResolveSdkInstall,
   kernelPinned,
   fullscreen = false,
   trajectorySeen: trajectorySeenProp,
@@ -465,16 +462,16 @@ export function Chat({
    */
   kernelEntries?: readonly KernelEntry[]
   /**
-   * SDK 安装向导（组合根注入，同上不 import 具体后端）。resolveTarget 同步
-   * 快（argv + 文件系统判定）；start 在 profile 目录跑 `pnpm add`，返回可
-   * 取消的句柄；checkPnpm 是确认后的预检。与 {@link sdkInstallPinned} 齐
-   * 备时向导可用，缺一则「未安装」行保持死路提示。
+   * SDK 安装向导（组合根注入，同上不 import 具体后端）：**按后端 id 现查安装面**——
+   * 清单声明"装什么、用哪个执行器"，宿主查表给出动作（resolveTarget 同步、只读
+   * argv + 文件系统；start 在 profile 目录跑 `pnpm add` 并返回可取消句柄；
+   * preflight 是确认后的预检）。
+   *
+   * 返回 undefined＝该后端没有安装面（没声明配方，或配方的执行器不是本宿主实现的），
+   * 「未安装」行保持死路提示。按 id 查而不是开局定一份：行上的「可装」与这里查的是
+   * 同一个派生事实，用户点哪行就装哪行（Stage B / §6 第 12 条）。
    */
-  onResolveSdkInstallTarget?: () => SdkInstallTarget
-  onStartSdkInstall?: (dir: string) => SdkInstaller
-  onCheckPnpm?: () => Promise<boolean>
-  /** 向导显示与手动兜底命令用的安装目标（`@anthropic-ai/claude-agent-sdk@<pin>`）。 */
-  sdkInstallPinned?: { readonly specifier: string; readonly version: string }
+  onResolveSdkInstall?: (id: KernelBackendId) => SdkInstallSurface | undefined
   /** 启动参数（Config 行 / DSH_TUI_BACKEND）压过了记忆：选择器明说。 */
   kernelPinned?: boolean
   /**
@@ -848,8 +845,7 @@ export function Chat({
       setLaunchpadUpdateAvailable(update !== undefined)
     }).catch(() => undefined)
   }, [launchpadShown])
-  const canInstallSdk = onResolveSdkInstallTarget !== undefined && onStartSdkInstall !== undefined
-    && onCheckPnpm !== undefined && sdkInstallPinned !== undefined
+  const canInstallSdk = onResolveSdkInstall !== undefined
   const { currentId: kernelCurrentId, options: kernelOptions, open: openKernelPicker, pick: pickKernel, reprobe: reprobeKernels } = useKernelPicker({
     channel, kernelVersion, kernelEntries, launchpadShown, onProbeKernels, onSwitchBackend, canInstallSdk, dispatchOverlay,
   })
@@ -861,33 +857,47 @@ export function Chat({
    * 不进 overlay union）。生命周期约定：向导打开时从 idle 初始化，安装
    * （checking/running）期间面板保持打开——所有异步落地都发生在面板还在
    * 的窗口内；关闭路径（Esc/Enter 离开）一律重置回 idle，下一次打开重新
-   * 解析安装目标。
+   * 按 id 解析安装面与安装目标。
    */
   const [sdkPhase, setSdkPhase] = React.useState<SdkInstallPhase>({ kind: 'idle' })
   const sdkInstallerRef = React.useRef<SdkInstaller | undefined>(undefined)
-  // 打开即解析安装目标（同步、只读 argv + 文件系统）：profile → 确认面板；
-  // standalone / 无 profile → 直接给手动指引面板。
+  /** 本次向导的安装面：打开时按行上的后端 id 解析一次，整个向导生命周期内不变
+   *  （确认面板、预检、安装、失败面板的手动兜底命令读的都是同一份）。 */
+  const sdkSurfaceRef = React.useRef<SdkInstallSurface | undefined>(undefined)
+  // 打开即按 id 解析安装面与安装目标（同步、只读 argv + 文件系统）：profile →
+  // 确认面板；standalone / 无 profile → 直接给手动指引面板。查不到安装面＝
+  // 这一行其实没有安装面（清单改了配方/执行器换人）：收回向导，不留一个
+  // 按什么都不动的死面板。
   React.useEffect(() => {
-    if (overlay.kind !== 'sdk-install' || sdkPhase.kind !== 'idle' || onResolveSdkInstallTarget === undefined) return
-    const target = onResolveSdkInstallTarget()
-    if (target.kind === 'profile' && sdkInstallPinned !== undefined) {
-      setSdkPhase({ kind: 'confirm', dir: target.dir, version: sdkInstallPinned.version, specifier: sdkInstallPinned.specifier })
+    if (overlay.kind !== 'sdk-install' || sdkPhase.kind !== 'idle' || onResolveSdkInstall === undefined) return
+    const surface = onResolveSdkInstall(overlay.backendId)
+    if (surface === undefined) {
+      dispatchOverlay({ type: 'close' })
+      return
+    }
+    sdkSurfaceRef.current = surface
+    const target = surface.resolveTarget()
+    if (target.kind === 'profile') {
+      setSdkPhase({ kind: 'confirm', dir: target.dir, version: surface.version, specifier: surface.specifier })
     } else {
       setSdkPhase({ kind: 'no-target', reason: target.kind === 'standalone' ? 'standalone' : 'no-profile' })
     }
-  }, [overlay.kind, sdkPhase.kind, onResolveSdkInstallTarget, sdkInstallPinned])
+  }, [overlay, sdkPhase.kind, onResolveSdkInstall, dispatchOverlay])
   const closeSdkInstallToKernelPicker = (): void => {
+    sdkSurfaceRef.current = undefined
     setSdkPhase({ kind: 'idle' })
     dispatchOverlay({ type: 'close' })
     openKernelPicker()
   }
   const closeSdkInstall = (): void => {
+    sdkSurfaceRef.current = undefined
     setSdkPhase({ kind: 'idle' })
     dispatchOverlay({ type: 'close' })
   }
   const runSdkInstall = (dir: string): void => {
-    if (onStartSdkInstall === undefined || sdkInstallPinned === undefined) return
-    const installer = onStartSdkInstall(dir)
+    const surface = sdkSurfaceRef.current
+    if (surface === undefined) return
+    const installer = surface.start(dir)
     sdkInstallerRef.current = installer
     setSdkPhase({ kind: 'running' })
     void installer.result.then(result => {
@@ -896,20 +906,21 @@ export function Chat({
         reprobeKernels()
         setSdkPhase({ kind: 'done', rebuiltStore: result.rebuiltStore === true })
       } else if (result.kind === 'failed') {
-        setSdkPhase({ kind: 'failed', exitCode: result.exitCode, tail: result.tail, dir, version: sdkInstallPinned.version, specifier: sdkInstallPinned.specifier })
+        setSdkPhase({ kind: 'failed', exitCode: result.exitCode, tail: result.tail, dir, version: surface.version, specifier: surface.specifier })
       } else if (result.kind === 'pnpm-missing') {
-        setSdkPhase({ kind: 'pnpm-missing', dir, version: sdkInstallPinned.version, specifier: sdkInstallPinned.specifier })
+        setSdkPhase({ kind: 'pnpm-missing', dir, version: surface.version, specifier: surface.specifier })
       } else {
         setSdkPhase({ kind: 'cancelled' })
       }
     })
   }
   const confirmSdkInstall = (dir: string): void => {
-    if (onCheckPnpm === undefined) return
+    const surface = sdkSurfaceRef.current
+    if (surface === undefined) return
     setSdkPhase({ kind: 'checking' })
-    void onCheckPnpm().then(ok => {
-      if (!ok && sdkInstallPinned !== undefined) {
-        setSdkPhase({ kind: 'pnpm-missing', dir, version: sdkInstallPinned.version, specifier: sdkInstallPinned.specifier })
+    void surface.preflight().then(ok => {
+      if (!ok) {
+        setSdkPhase({ kind: 'pnpm-missing', dir, version: surface.version, specifier: surface.specifier })
         return
       }
       runSdkInstall(dir)
