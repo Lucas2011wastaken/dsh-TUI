@@ -17,9 +17,14 @@
  *
  * **Scope (W-1).** This decides; it does not wire the family into the registry /
  * descriptor chain. A third-party bundle still cannot reach a picker through it —
- * that is the C stage's entry condition, not a gap in this function. The reason
- * codes below are the ones the contract profile
- * (`tui-profile/registry/contracts/backend-v1alpha1.json`) publishes.
+ * that is the C stage's entry condition, not a gap in this function.
+ *
+ * **Published codes.** The contract profile
+ * (`tui-profile/registry/contracts/backend-v1alpha1.json`) publishes exactly the
+ * codes this file can produce: `BACKEND_ID_RESERVED` and `PERMISSION_NOT_GRANTED`.
+ * A code with no producer is a phantom its readers would write error handling for,
+ * so a future one waits until the stage that gives it a producer
+ * (`scripts/verify-backend-contribution.ts` pins the pair).
  */
 import type { BackendSpec } from '../adapter/spec/tui-contributions.js'
 import type { NegotiationDecision } from '../adapter/standard/types.js'
@@ -40,8 +45,9 @@ export interface BackendAdmissionHost {
  *  that registers without being offered. `rejected`/`unknown` never reach the
  *  registry — the caller throws on them (a build-time error for an in-tree
  *  manifest must be loud). `reasonCode` stays a `string` because the vocabulary
- *  is `NegotiationDecision`'s, shared with every other plugin surface; today the
- *  only value produced here is `PERMISSION_NOT_GRANTED`. */
+ *  is `NegotiationDecision`'s, shared with every other plugin surface; among
+ *  these three verdicts the only `reasonCode` produced is
+ *  `PERMISSION_NOT_GRANTED` (`rejected` carries `BACKEND_ID_RESERVED`). */
 export type BackendAdmission =
   | { readonly decision: 'compatible' }
   | { readonly decision: 'compatible_degraded'; readonly missingOptional: readonly string[] }
@@ -57,9 +63,9 @@ export function backendAdmission(spec: BackendSpec, host: BackendAdmissionHost):
   // it before projecting), but this is the reusable gate for a bundle, so it
   // refuses it itself rather than trusting the caller to have done it. The other
   // two member refusals — a host label key and a `nativeKey` declaration — are
-  // shape violations: `validateBackendSpec()` rejects both as unknown fields, so
-  // they cannot arrive as a `BackendSpec` at all. The contract profile still
-  // publishes their error names for the family as a whole.
+  // shape violations: `validateBackendSpec()` rejects both as unknown fields
+  // (`exactRecord`), so they cannot arrive as a `BackendSpec` at all and never
+  // need a reason code of their own.
   if (host.reservedIds.has(spec.id)) {
     return { decision: 'rejected', reasonCode: 'BACKEND_ID_RESERVED' }
   }

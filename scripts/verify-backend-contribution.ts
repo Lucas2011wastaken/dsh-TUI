@@ -8,8 +8,9 @@
  *  2. **Single source** — the capability vocabulary equals `SessionCapabilities`'
  *     member names (bidirectional, TS AST) and the reserved id set equals the
  *     registry's built-in ids.
- *  3. **Admission** — the verdicts this host can produce, including the shape of a
- *     `waiting_authorization` refusal.
+ *  3. **Admission** — the verdicts this host can produce, the shape of a
+ *     `waiting_authorization` refusal, and the reason codes the contract profile
+ *     publishes (each published code needs a producer, so a phantom name fails).
  *  4. **The probe backend** — the resource invariants claude and codex are held to
  *     (never loaded means never imported, never closed; only what was loaded is
  *     closed), the two install-surface shapes, and the declaration covering what
@@ -160,6 +161,17 @@ check('dogfood: flipping `inTree` on a built-in reds on its host label key, and 
       && unknownName.missingOptional.includes('permission:totally.invented.permission'), unknownName)
   check('admission: a reserved id is refused with the contract\'s own reason code',
     reserved.decision === 'rejected' && reserved.reasonCode === 'BACKEND_ID_RESERVED', reserved)
+  // The contract is the family's published error vocabulary — the C stage's
+  // descriptor and third-party backends write error handling against it. It must
+  // equal what this host can actually return: a name no path produces is a phantom
+  // (the shape refusals are `validateBackendSpec()` TypeErrors, and the unknown
+  // capability path degrades instead of refusing), and the waiting state's code is
+  // the shared `PERMISSION_NOT_GRANTED`, not a `BACKEND_`-prefixed twin.
+  const publishedCodes = (JSON.parse(readFileSync(
+    join(ROOT, 'tui-profile', 'registry', 'contracts', 'backend-v1alpha1.json'), 'utf8',
+  )) as { errors?: readonly string[] }).errors ?? []
+  check('admission: the contract profile publishes no code the admission path cannot produce',
+    [...publishedCodes].sort().join(',') === 'BACKEND_ID_RESERVED,PERMISSION_NOT_GRANTED', publishedCodes)
   // `unknown` is reserved for a future protocol version and deliberately not
   // produced here: W-1 knows the family's single apiVersion. Asserting its absence
   // keeps "we never return it by accident" honest without pretending to implement a

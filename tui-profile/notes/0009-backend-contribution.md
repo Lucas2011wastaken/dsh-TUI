@@ -41,6 +41,8 @@
 
 准入判定本身是纯函数 `backendAdmission(spec, host)`，返回 `BackendAdmission`，沿用插件准入的五态词汇：`compatible`、`compatible_degraded`（带 `missingOptional`）、`waiting_authorization`（带 `deniedPermissions`），以及不会成为注册表条目的 `rejected`（`BACKEND_ID_RESERVED`）与 `unknown`——后两者由调用方抛错，内建 manifest 走到那里必须是响亮的构建期错误。
 
+contract 的 `errors` 只发布**有产出者**的码，今天正好是上面两个：`BACKEND_ID_RESERVED`（准入拒绝）与 `PERMISSION_NOT_GRANTED`（等待授权，复用插件准入的词表）。形状违规（`label` 用宿主 i18n 键、声明 `nativeKey`）由 `validateBackendSpec()` 以未知字段的 `TypeError` 拒绝，不占错误码；能力/恢复不匹配一类的码在 C 段给出真正产出点之前不发布——发布没有产出者的码，等于让第三方为一条永远走不到的失败路径写错误处理。这一对由 `scripts/verify-backend-contribution.ts` 钉住。
+
 **这不是隔离。** 后端在宿主进程内运行，就是全信任代码；准入、grants 与 effect ledger 给的是**能力声明与可审计性**，不是沙箱。后端真正需要的宿主服务——`BackendHost` 上的 `tokenStore`、`oauthCredential`、`stderr`，以及将来的 `dataDir`——是**可选宿主能力**，走 feature-detect，不是 grants。in-tree 三个后端今天都声明 `grants: []`：现有八条权限没有一条描述后端真正需要的东西（起子进程、读自己的 prefs、联网）。
 
 ## Install surface
