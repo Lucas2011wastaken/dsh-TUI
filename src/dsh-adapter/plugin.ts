@@ -13,7 +13,7 @@ import { createChannel } from './channel.js'
 import { createDshSession } from './backend/session.js'
 import { kernelEntriesOf } from '../components/kernelCatalog.js'
 import { openBackendStartup, probeKernels, installSurfaceFor } from './backends.js'
-import { backendLabel, isBackendIdSyntax, isRegisteredBackend, listBackends, loadBackend, parseBackendChoice, unloadBackends } from './backend-registry.js'
+import { backendLabel, isBackendIdSyntax, isRegisteredBackend, listBackends, listOfferedBackends, loadBackend, parseBackendChoice, unloadBackends } from './backend-registry.js'
 import { formatSessionRef } from '../agent/refs.js'
 import type { AgentSession } from '../agent/session.js'
 import { mountFailureText } from '../sessions/resumeFailure.js'
@@ -2115,8 +2115,9 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
     // /channel: restart with a new session after the connection changed.
     onRestartFreshSession: restartFreshSession,
     // The backend registry as the picker sees it: the UI takes data, not the
-    // registry (P0). dsh first, then the manifest order — picker order.
-    kernelEntries: kernelEntriesOf(listBackends()),
+    // registry (P0). dsh first, then the manifest order — picker order. Entries
+    // that registered without an admission are not offered (B-2).
+    kernelEntries: kernelEntriesOf(listOfferedBackends()),
     onProbeKernels: () => probeKernels(ctx, sessionCwd),
     // The kernel picker's SDK install wizard (a dim row's Enter): the surface of
     // whichever row the user picked, looked up by id — the manifest says what to
