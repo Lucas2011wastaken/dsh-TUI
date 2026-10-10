@@ -447,6 +447,14 @@ const GROUPS = {
   ],
   'session-workspace': [
     ["verify-backend-startup", ['node', '--import', 'tsx/esm', 'scripts/verify-backend-startup.ts']],
+// 启动恢复 fail-closed（roadmap §6 第 11 条，B-2a）：纯函数半边（ResumeTarget 三态与 retry
+// 容错、显式 id 原样透传、裸 flag 走调用方 fallback、`--` 之后不再解析）、启动器半边（裸
+// 请求派生不出目标即报错退出，而不是把 --continue 交给下游；三个重试分支都带
+// RESUME_RETRY_ENV；双语文案；救援 profile 仍丢掉三个会话控制变量），以及 /restart 的替换
+// 进程不再继承一次性标记。四条启动器断言各配一条坏基线（control 先绿 / 逐条注入 / 还原再绿，
+// 照 verify-backend-registry 的手法）。boot 侧的两条拒绝分支由 verify-startup-argv 从编译
+// 产物里切出来真跑，本脚本不重复。
+    ["verify-resume-target", ['node', '--import', 'tsx/esm', 'scripts/verify-resume-target.ts']],
 // 后端注册表回归（P0 Stage A + B-1）：注册闸门（重复 id / 保留 id / 非 inTree 用宿主
 // 词表 / native 越权 / 安装配方缺字段）、**安装面按声明不按 id**（非 inTree 条目声明
 // 宿主执行器即可装、装的是它自己的 specifier；codex 式"没有安装面"是缺省配方；
