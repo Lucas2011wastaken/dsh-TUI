@@ -338,13 +338,17 @@ try {
     // one. Three shapes: the launcher cannot derive a target for a bare request
     // (`launcherError`), the boot revokes a derived target (`refusal`), and the
     // boot refuses a resume aimed at a backend this host does not have
-    // (`refusal`, the id it would have resumed named in the message).
+    // (`refusal`, the id it would have resumed named in the message). A revoked
+    // target's advice has to be executable (PR #1449 review R2): an unregistered
+    // source backend gets the "install it first" sentence instead of a
+    // `--backend <from> --resume` that would hit this same refusal, while a
+    // registered one names both ways back — by id, never by display label.
     { name: 'unknown env with no preference: bare resume is refused, not silently DSH', argv: ['--resume'], envBackend: 'claud', launcherError: 'claud', prompt: '', binOnly: true },
-    { name: 'unknown env with a foreign preference: the foreign marker is refused on dsh', argv: ['--resume'], envBackend: 'missing-agent', refusal: '"missing-agent"', prompt: '', binOnly: true },
+    { name: 'unknown env with a foreign preference: the foreign marker is refused on dsh, with no dead-end advice', argv: ['--resume'], envBackend: 'missing-agent', refusal: '"missing-agent" backend, which is not installed', prompt: '', binOnly: true },
     { name: 'unknown flag: a bare resume it cannot derive is refused before literal input', argv: ['--backend', 'claud', '--resume', '--', '--resume=literal'], launcherError: 'claud', prompt: '--resume=literal', binOnly: true },
     { name: 'bare resume does not consume the following prompt, and is refused', argv: ['--resume', '--backend', 'claud', 'explain'], launcherError: 'claud', prompt: 'explain', binOnly: true },
     { name: 'an explicit final resume wins over a preceding bare one, and is refused on the missing backend', argv: ['--backend', 'missing-agent', '--resume', '--resume', 'explicit-last'], refusal: '"explicit-last"', prompt: '', binOnly: true },
-    { name: 'a bare resume derived from the DSH marker is refused when the remembered kernel is Claude', argv: ['--resume'], memoryBackend: 'claude', refusal: '"dsh"', prompt: '', binOnly: true },
+    { name: 'a bare resume derived from the DSH marker is refused when the remembered kernel is Claude, naming both ways back', argv: ['--resume'], memoryBackend: 'claude', refusal: '--backend dsh --resume.*--backend claude --resume', prompt: '', binOnly: true },
     { name: 'a backend with no resume history is refused, not turned into a fresh launch', argv: ['--backend', 'claude', '--resume'], noClaudeMarker: true, launcherError: 'claude', prompt: '', binOnly: true },
     // The safe-mode "retry normal startup" path is the one exception: its target
     // comes from last-run.json, and the recorded backend may be gone by now. That

@@ -582,9 +582,18 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
     // stderr and exits non-zero after restoring the terminal; the only tolerated
     // case is the safe-mode retry, whose target comes from last-run.json and whose
     // failure would close the user's last way back (RESUME_RETRY_ENV).
-    const refusal = t(resumeTarget.fatal ? 'resume-target-revoked' : 'resume-target-revoked-retry', {
+    // The advice must be executable (PR #1449 review R2): when the source backend
+    // is not registered here, `--backend <from> --resume` would hit this same
+    // refusal, so that branch says the backend is unavailable instead. The other
+    // branch names the id (`kernelId`), never the display label — `--backend`
+    // takes an id.
+    const refusalKey = !resumeTarget.fatal
+      ? 'resume-target-revoked-retry'
+      : isRegisteredBackend(resumeTarget.from) ? 'resume-target-revoked' : 'resume-target-revoked-uninstalled'
+    const refusal = t(refusalKey, {
       from: resumeTarget.from,
       kernel: backendLabel(backendChoice),
+      kernelId: backendChoice,
     })
     if (resumeTarget.fatal) throw new Error(refusal)
     ctx.logger.warn(refusal)
