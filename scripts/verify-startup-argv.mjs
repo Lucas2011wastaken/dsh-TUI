@@ -97,17 +97,17 @@ if (probeMode) {
   if (process.env.DSH_TUI_ARGV_SHAPE === 'args') ctx.cmdlineArgs = { args: program.args }
 
   const { initialPromptFromCmdlineArgs } = await import('../lib/types/dsh-adapter/startup-args.js')
-  const { resumeTargetFromArgv } = await import('../lib/types/sessionHistory.js')
+  const { resumeTargetFromArgv, stripResumeArgs } = await import('../lib/types/sessionHistory.js')
   const { KERNEL_SWITCH_HANDOFF_ENV, RESUME_BACKEND_ENV, RESUME_RETRY_ENV, parseBackendId, readKernelPrefs, resolveRememberedBackend, resolveResumeTarget } = await import('../lib/types/kernelPrefs.js')
   const { backendLabel, isBackendIdSyntax, isRegisteredBackend, listBackends, parseBackendChoice } = await import('../lib/types/dsh-adapter/backend-registry.js')
   const { setLang, t } = await import('../lib/types/i18n.js')
   // Deterministic refusal text: the boot itself sets the language from config,
   // which is not part of the extracted startup statements.
   setLang('en')
-  const { startup, resolution, target, submit } = JSON.parse(readFileSync(process.env.DSH_TUI_ARGV_STARTUP, 'utf8'))
+  const { startup, backendInput, resolution, target, submit } = JSON.parse(readFileSync(process.env.DSH_TUI_ARGV_STARTUP, 'utf8'))
   const submitted = []
   const scope = {
-    ctx, process, initialPromptFromCmdlineArgs, resumeTargetFromArgv,
+    ctx, process, initialPromptFromCmdlineArgs, resumeTargetFromArgv, stripResumeArgs,
     KERNEL_SWITCH_HANDOFF_ENV, RESUME_BACKEND_ENV, RESUME_RETRY_ENV, parseBackendId, readKernelPrefs,
     resolveRememberedBackend, resolveResumeTarget, backendLabel, isBackendIdSyntax,
     isRegisteredBackend, listBackends, parseBackendChoice, t,
@@ -115,7 +115,9 @@ if (probeMode) {
       backend: process.env.DSH_TUI_BACKEND,
       sessionId: process.env.DSH_TUI_RESUME_SESSION,
       workspace: process.env.DSH_TUI_WORKSPACE_TARGET,
+      ...JSON.parse(process.env.DSH_TUI_ARGV_CONFIG ?? '{}'),
     },
+    sessionCwd: process.cwd(),
     shadow: false,
     backendStart: undefined,
     channel: { submit: text => submitted.push(text) },
@@ -125,7 +127,7 @@ if (probeMode) {
   try {
     runInContext([
       ...startup,
-      'globalThis.backendInput = { backend: backendChoice, sessionId: configuredSessionId, argv: cmdlineArgs ?? process.argv.slice(2) }',
+      `globalThis.backendInput = { backend: backendChoice, input: ${backendInput} }`,
     ].join('\n'), context)
   } catch (error) {
     refusal = error
@@ -174,11 +176,7 @@ if (probeMode) {
         dispose: async () => undefined,
       }),
     }
-    scope.backendStart = await openBackendStartup(ctx, backend, {
-      cwd: process.cwd(), stderr: () => undefined,
-      ...(scope.backendInput.sessionId === undefined ? {} : { configuredSessionId: scope.backendInput.sessionId }),
-      argv: scope.backendInput.argv,
-    })
+    scope.backendStart = await openBackendStartup(ctx, backend, scope.backendInput.input)
   }
   runInContext([
     ...resolution, submit,
@@ -206,6 +204,7 @@ async function compiledStartup() {
     'cmdline', 'cmdlineArgs', 'requestedWorkspace', 'launchSessionId', 'submitChannel', 'initialPrompt',
     'rawBackend', 'rawBackendGiven', 'handoffBackendRaw', 'handoffBackend', 'rememberedBackend', 'backendChoice',
     'resumeBackendRaw', 'resumeRetry', 'resumeTarget', 'effectiveSessionId', 'configuredSessionId',
+    ...['configuredBackend', 'startupArgv'].filter(name => declarations.has(name)),
   ]
   // The two refusal branches (a revoked target, and a resume request aimed at a
   // backend this host does not have) run for real: they are top-level statements
@@ -225,7 +224,11 @@ async function compiledStartup() {
   const submit = apply.body.statements.find(node => ts.isIfStatement(node) && node.expression.getText(source) === 'initialPrompt')
   assert.ok(submit, 'compiled initial prompt submission branch exists')
   let target
+  let backendInput
   const visit = node => {
+    if (ts.isCallExpression(node) && node.expression.getText(source) === 'openBackendStartup') {
+      backendInput = node.arguments[2].getText(source)
+    }
     if (ts.isCallExpression(node) && node.expression.getText(source) === 'resolveAgent') {
       assert.ok(ts.isIdentifier(node.arguments[1]), 'DSH startup consumes a named resume target')
       target = node.arguments[1].text
@@ -234,8 +237,9 @@ async function compiledStartup() {
   }
   visit(apply.body)
   assert.ok(target && declarations.has(target), 'compiled resume target passed to resolveAgent exists')
+  assert.ok(backendInput, 'compiled input passed to openBackendStartup exists')
   const resolution = names.includes(target) ? [] : [declarations.get(target).getText(source)]
-  return { startup, resolution, target, submit: submit.getText(source) }
+  return { startup, backendInput, resolution, target, submit: submit.getText(source) }
 }
 
 /** spawnSync's result shape, without blocking the other cases. */
@@ -361,6 +365,34 @@ try {
       envExtra: { DSH_TUI_RESUME_SESSION: 'stale-1', DSH_TUI_RESUME_BACKEND: 'missing-agent', DSH_TUI_RESUME_RETRY: '1' },
       session: null, resumeEnv: 'stale-1', warns: '"missing-agent"', prompt: '', binOnly: true,
     },
+    {
+      name: 'a safe-mode retry drops replayed continue instead of resuming the DSH marker',
+      argv: ['--continue', 'explain'], envBackend: 'missing-agent',
+      envExtra: { DSH_TUI_RESUME_RETRY: '1' },
+      session: null, resumeEnv: 'foreign-session', warns: '"missing-agent"', prompt: 'explain', binOnly: true,
+    },
+    {
+      name: 'a safe-mode retry drops replayed continue instead of resuming the remembered Claude marker',
+      argv: ['--continue', 'explain'], memoryBackend: 'claude', backend: 'claude',
+      envExtra: { DSH_TUI_RESUME_RETRY: '1' },
+      session: null, resumeEnv: 'remembered-session', warns: '"dsh"', prompt: 'explain', binOnly: true,
+    },
+    {
+      name: 'an explicit DSH config resumes despite an overridden unavailable env backend',
+      argv: ['--resume', 'dsh-explicit'], envBackend: 'missing-agent',
+      config: { backend: 'dsh' }, session: 'dsh-explicit', prompt: '',
+    },
+    {
+      name: 'an explicit Claude config resumes despite an overridden unavailable env backend',
+      argv: ['--resume', 'claude-explicit'], envBackend: 'missing-agent',
+      config: { backend: 'claude' }, backend: 'claude', session: 'claude-explicit', prompt: '',
+    },
+    {
+      name: 'a valid handoff resumes despite an overridden unavailable env backend and DSH config',
+      argv: ['--resume', 'claude-explicit'], envBackend: 'missing-agent', config: { backend: 'dsh' },
+      envExtra: { DSH_TUI_BACKEND_HANDOFF: 'claude' },
+      backend: 'claude', session: 'claude-explicit', prompt: '',
+    },
   ]
   // stripResumeArgs: the ONE grammar that decides what a respawned process
   // must not inherit. A kernel switch respawns onto the other backend, where
@@ -422,6 +454,7 @@ try {
               ...env, DSH_TUI_ARGV_SHAPE: shape,
               HOME: caseHome, USERPROFILE: caseHome,
               ...(test.envBackend === undefined ? {} : { DSH_TUI_BACKEND: test.envBackend }),
+              ...(test.config === undefined ? {} : { DSH_TUI_ARGV_CONFIG: JSON.stringify(test.config) }),
               ...test.envExtra,
               ...(route === 'bin' ? { DSH_TUI_NO_DELEGATE: '1' } : {}),
             },

@@ -44,7 +44,7 @@ import { createFreshAgent, isUnstoredFreshSession } from './fresh-agent.js'
 import { ensurePackagedPresets } from './packaged-presets.js'
 import { registerBundledPresets } from './bundled-presets.js'
 import { ensureLegacySessionEventTypes, snapshotLiveSessionEvents } from './compat/index.js'
-import { clearResumeTarget, resumeTargetFromArgv, writeResumeTarget } from '../sessionHistory.js'
+import { clearResumeTarget, resumeTargetFromArgv, stripResumeArgs, writeResumeTarget } from '../sessionHistory.js'
 import { initialPromptFromCmdlineArgs } from './startup-args.js'
 import { readHomePrefs } from '../homePrefs.js'
 import { handoffEventTag, formatHandoffNotice } from '../handoffEvents.js'
@@ -538,10 +538,11 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
   // exactly like an unknown value did before the set was open — dsh plus a
   // warning, never a crashed boot. `envKnown` carries that into the resolver for
   // the one source that arrives raw; the other three are parsed above/beside.
+  const configuredBackend = parseBackendChoice(config.backend)
   const rememberedBackend = readKernelPrefs().backend
   const backendChoice = resolveRememberedBackend({
     ...(handoffBackend === undefined ? {} : { handoff: handoffBackend }),
-    configured: parseBackendChoice(config.backend),
+    configured: configuredBackend,
     envRaw: rawBackend,
     envKnown: isRegisteredBackend,
     memory: isRegisteredBackend(rememberedBackend) ? rememberedBackend : undefined,
@@ -575,6 +576,12 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
   // The non-DSH path below opens `backendChoice`'s own session — a revoked target
   // must not reach it either.
   const configuredSessionId = resumeTarget.kind === 'revoked' ? undefined : config.sessionId
+  // Safe-mode retries replay the original argv. Revocation must also remove its
+  // resume flags, or either startup path can reopen the replacement backend's
+  // own last session after promising a cold start. Prompt parsing keeps raw argv.
+  const startupArgv = resumeTarget.kind === 'revoked'
+    ? stripResumeArgs(cmdlineArgs ?? process.argv.slice(2))
+    : cmdlineArgs ?? process.argv.slice(2)
   if (resumeTarget.kind === 'revoked') {
     // Fail closed (roadmap §6 item 11): the target belongs to another backend, so
     // this boot neither carries it over nor quietly starts a session nobody asked
@@ -598,7 +605,10 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
     if (resumeTarget.fatal) throw new Error(refusal)
     ctx.logger.warn(refusal)
   }
-  if (rawBackendGiven !== '' && !isRegisteredBackend(rawBackendGiven.toLowerCase())) {
+  // Config and handoff outrank env: an ignored env value cannot invalidate the
+  // selected backend's resume target or claim that this boot fell back to DSH.
+  if (handoffBackend === undefined && configuredBackend === undefined
+    && rawBackendGiven !== '' && !isRegisteredBackend(rawBackendGiven.toLowerCase())) {
     // Two cases, two sentences: a typo is not an uninstalled plugin (P0 D1).
     const installed = listBackends().map(entry => entry.manifest.id).join(', ')
     // The plain fallback (no resume request) keeps P0 D1's shape: dsh plus a
@@ -641,7 +651,7 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
           stderrReporter.push(line)
         },
         ...(configuredSessionId === undefined ? {} : { configuredSessionId }),
-        argv: cmdlineArgs ?? process.argv.slice(2),
+        argv: startupArgv,
       })
     } catch (error) {
       if (backendPinned || handoffBackend !== undefined || effectiveSessionId !== undefined) throw error
@@ -653,7 +663,7 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
   // Resolve a surviving bare request on the backend that actually opened.
   // This also covers a remembered backend whose startup fell back to DSH.
   const bootSessionId = backendStart === undefined
-    ? effectiveSessionId ?? resumeTargetFromArgv(cmdlineArgs ?? process.argv.slice(2))
+    ? effectiveSessionId ?? resumeTargetFromArgv(startupArgv)
     : backendStart.resumedSessionId
   // The backend session (and its child process) belongs to this fiber until the
   // channel adopts it: a boot that throws before then disposes the fiber's
