@@ -73,6 +73,9 @@ const GROUPS = {
 // SDK 安装向导（内核选择器「未安装」行进入）：各步骤态的正文与提示行、
 // 手动兜底命令、窄终端截断、en 态文案。
     ['verify-sdk-install-wizard', ['node', '--import', 'tsx/esm', 'scripts/verify-sdk-install-wizard.tsx']],
+// 真实 Chat 安装链：两个可安装后端、鼠标关闭、预检/安装取消与迟到结果隔离；
+// inline/fullscreen × 常规/窄终端，安装动作全为夹具。
+    ['verify-sdk-install-chat', ['node', '--import', 'tsx/esm', 'scripts/verify-sdk-install-chat.tsx']],
 // 带断言的回归：提问面板内联输入（issue #9）+ 工具卡排版
 // （⎿ 缩进、diff 红绿行、信封剥离），失败即非零退出。
     ["repro-askpanel", ['node', '--import', 'tsx/esm', 'scripts/repro-askpanel.tsx']],

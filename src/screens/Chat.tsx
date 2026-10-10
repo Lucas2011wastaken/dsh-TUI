@@ -854,53 +854,51 @@ export function Chat({
   const kernelCurrentOption = kernelOptions.find(option => option.current)
   /**
    * SDK 安装向导的步骤态（异步进程状态，按 chatOverlay 的分工留在 Chat，
-   * 不进 overlay union）。生命周期约定：向导打开时从 idle 初始化，安装
-   * （checking/running）期间面板保持打开——所有异步落地都发生在面板还在
-   * 的窗口内；关闭路径（Esc/Enter 离开）一律重置回 idle，下一次打开重新
-   * 按 id 解析安装面与安装目标。
+   * 不进 overlay union）。每次打开独占安装面与进程句柄；浮层关闭或替换时
+   * 取消安装并重置步骤，旧预检/安装结果不能落进下一次打开的向导。
    */
   const [sdkPhase, setSdkPhase] = React.useState<SdkInstallPhase>({ kind: 'idle' })
-  const sdkInstallerRef = React.useRef<SdkInstaller | undefined>(undefined)
-  /** 本次向导的安装面：打开时按行上的后端 id 解析一次，整个向导生命周期内不变
-   *  （确认面板、预检、安装、失败面板的手动兜底命令读的都是同一份）。 */
-  const sdkSurfaceRef = React.useRef<SdkInstallSurface | undefined>(undefined)
-  // 打开即按 id 解析安装面与安装目标（同步、只读 argv + 文件系统）：profile →
-  // 确认面板；standalone / 无 profile → 直接给手动指引面板。查不到安装面＝
-  // 这一行其实没有安装面（清单改了配方/执行器换人）：收回向导，不留一个
-  // 按什么都不动的死面板。
+  const sdkInstallRef = React.useRef<{ readonly surface: SdkInstallSurface; installer?: SdkInstaller } | undefined>(undefined)
+  const sdkOverlay = overlay.kind === 'sdk-install' ? overlay : undefined
+  // 安装面在这次打开时快照；宿主回调更新不重启正在进行的安装。
   React.useEffect(() => {
-    if (overlay.kind !== 'sdk-install' || sdkPhase.kind !== 'idle' || onResolveSdkInstall === undefined) return
-    const surface = onResolveSdkInstall(overlay.backendId)
+    if (sdkOverlay === undefined) return
+    const surface = onResolveSdkInstall?.(sdkOverlay.backendId)
     if (surface === undefined) {
       dispatchOverlay({ type: 'close' })
       return
     }
-    sdkSurfaceRef.current = surface
+    const installation: NonNullable<typeof sdkInstallRef.current> = { surface }
+    sdkInstallRef.current = installation
     const target = surface.resolveTarget()
     if (target.kind === 'profile') {
       setSdkPhase({ kind: 'confirm', dir: target.dir, version: surface.version, specifier: surface.specifier })
     } else {
       setSdkPhase({ kind: 'no-target', reason: target.kind === 'standalone' ? 'standalone' : 'no-profile' })
     }
-  }, [overlay, sdkPhase.kind, onResolveSdkInstall, dispatchOverlay])
+    return () => {
+      sdkInstallRef.current = undefined
+      installation.installer?.cancel()
+      setSdkPhase({ kind: 'idle' })
+    }
+  }, [sdkOverlay])
   const closeSdkInstallToKernelPicker = (): void => {
-    sdkSurfaceRef.current = undefined
-    setSdkPhase({ kind: 'idle' })
     dispatchOverlay({ type: 'close' })
     openKernelPicker()
   }
   const closeSdkInstall = (): void => {
-    sdkSurfaceRef.current = undefined
-    setSdkPhase({ kind: 'idle' })
     dispatchOverlay({ type: 'close' })
   }
   const runSdkInstall = (dir: string): void => {
-    const surface = sdkSurfaceRef.current
-    if (surface === undefined) return
+    const installation = sdkInstallRef.current
+    if (installation === undefined) return
+    const { surface } = installation
     const installer = surface.start(dir)
-    sdkInstallerRef.current = installer
+    installation.installer = installer
     setSdkPhase({ kind: 'running' })
     void installer.result.then(result => {
+      if (sdkInstallRef.current !== installation) return
+      installation.installer = undefined
       if (result.kind === 'ok') {
         // 装好了：重探内核（灰行变亮，无需重启进程），停在完成面板。
         reprobeKernels()
@@ -915,10 +913,12 @@ export function Chat({
     })
   }
   const confirmSdkInstall = (dir: string): void => {
-    const surface = sdkSurfaceRef.current
-    if (surface === undefined) return
+    const installation = sdkInstallRef.current
+    if (installation === undefined) return
+    const { surface } = installation
     setSdkPhase({ kind: 'checking' })
     void surface.preflight().then(ok => {
+      if (sdkInstallRef.current !== installation) return
       if (!ok) {
         setSdkPhase({ kind: 'pnpm-missing', dir, version: surface.version, specifier: surface.specifier })
         return
@@ -4844,14 +4844,14 @@ export function Chat({
     }
     if (overlay.kind === 'sdk-install') {
       // 向导按键按步骤态分派；checking/running 期间除 Esc（取消安装）外
-      // 全部吞掉——异步落地只发生在面板还在的窗口内（见 sdkPhase 注释）。
+      // 全部吞掉；鼠标关闭/替换浮层由向导的 effect 取消并隔离迟到结果。
       if (sdkPhase.kind === 'confirm') {
         if (plainReturn) confirmSdkInstall(sdkPhase.dir)
         else if (key.escape) closeSdkInstallToKernelPicker()
       } else if (sdkPhase.kind === 'checking') {
         // 亚秒级预检，无键可按。
       } else if (sdkPhase.kind === 'running') {
-        if (key.escape) sdkInstallerRef.current?.cancel()
+        if (key.escape) sdkInstallRef.current?.installer?.cancel()
       } else if (sdkPhase.kind === 'done') {
         if (plainReturn) closeSdkInstallToKernelPicker()
         else if (key.escape) closeSdkInstall()
