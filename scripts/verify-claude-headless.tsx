@@ -38,7 +38,7 @@ pinHaikuOrExit('verify-claude-headless', (await import('../src/utils/paths.js'))
 
 const [{ execFile, execFileSync }, { startWsFixture }] = await Promise.all([import('node:child_process'), import('./lib/ide-ws-fixture.js')])
 
-const [{ Writable, PassThrough }, { mkdtempSync, readFileSync, rmSync, writeFileSync }, { tmpdir }, { join }, React, { Terminal: XTerm }, ui, { Chat }, { QuestionStore }, { ApprovalStore }, { createChannel }, { claudeBackend }, { setLang, t }, { claudeText }, { default: instances }, { settled, sleep, viewportLines }] =
+const [{ Writable, PassThrough }, { mkdtempSync, readFileSync, rmSync, writeFileSync }, { tmpdir }, { join }, React, { Terminal: XTerm }, ui, { Chat }, { QuestionStore }, { ApprovalStore }, { createChannel }, { claudeBackend }, { getLang, setLang, t }, { default: instances }, { settled, sleep, viewportLines }, { claudeText }] =
   await Promise.all([
     import('node:stream'),
     import('node:fs'),

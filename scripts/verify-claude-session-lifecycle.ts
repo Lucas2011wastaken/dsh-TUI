@@ -35,13 +35,17 @@
  *    `allowDangerouslySkipPermissions` rides along on every query, see
  *    options.ts, so the session may enter bypass at runtime; settings-level
  *    bypass still downgrades).
+ *  - backend.open carries the host data directory into the session: channel
+ *    profiles persist across opens and the local model-name cache is read.
  *
  * Run: node --import tsx/esm scripts/verify-claude-session-lifecycle.ts
  */
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { registerHooks } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import type { BackendHost } from '../src/agent/backend.js'
 import type { AgentEvent, AgentEventMeta } from '../src/agent/events.js'
 import type { AgentSession } from '../src/agent/session.js'
 import { buildQueryOptions, OPTION_POLICY, resolveStartPermissionMode } from '../src/backends/claude/options.js'
@@ -710,6 +714,66 @@ const collect = (session: AgentSession) => {
   await tick()
   check('resume: the replay model is kept (the seed only fills an empty one)', resumedSession.capabilities.models.current().model === 'claude-sonnet-4-5')
   await resumedSession.dispose()
+}
+
+// Drive the real backend entry, replacing only the optional SDK. Direct
+// openClaudeSession fixtures cannot catch host fields lost by backend.open.
+{
+  const root = mkdtempSync(join(tmpdir(), 'dsh-tui-claude-host-'))
+  const dataDir = join(root, 'backend-data')
+  mkdirSync(dataDir)
+  const model = 'claude-opus-fixture'
+  const fake = fakeSdk({ init: () => ({ model, capabilities: [] }) })
+  const fixtureKey = Symbol.for('dsh-tui.verify-claude-session-lifecycle.sdk')
+  Object.defineProperty(globalThis, fixtureKey, { value: fake.sdk, configurable: true })
+  const sdkUrl = `data:text/javascript,${encodeURIComponent(`
+    export const query = globalThis[Symbol.for('dsh-tui.verify-claude-session-lifecycle.sdk')].query
+    export const resolveSettings = async () => ({ effective: {} })
+    export const filterEscalatingDefaultMode = () => ({})
+  `)}`
+  const hooks = registerHooks({
+    resolve(specifier, context, nextResolve) {
+      return specifier === '@anthropic-ai/claude-agent-sdk'
+        ? { url: sdkUrl, shortCircuit: true }
+        : nextResolve(specifier, context)
+    },
+  })
+  const savedEnv = { CLAUDE_CODE_EXECUTABLE: process.env.CLAUDE_CODE_EXECUTABLE, CLAUDE_CONFIG_DIR: process.env.CLAUDE_CONFIG_DIR }
+  process.env.CLAUDE_CODE_EXECUTABLE = process.execPath
+  process.env.CLAUDE_CONFIG_DIR = root
+  let session: AgentSession | undefined
+  try {
+    const { claudeBackend } = await import('../src/backends/claude/backend.js')
+    const host: BackendHost = { cwd: root, dataDir, locale: getLang, debug: () => undefined, warn: () => undefined }
+    const channelFile = join(dataDir, 'channels.json')
+    writeFileSync(channelFile, JSON.stringify({ active: 'seed', channels: [
+      { id: 'seed', name: 'Seed', models: { [model]: 'channel-model' } },
+    ] }))
+    writeFileSync(join(dataDir, 'model-names.json'), JSON.stringify({ [model]: 'cached-model' }))
+    session = await claudeBackend.open({ kind: 'create', cwd: root }, host)
+    check('backend.open: existing channels come from host.dataDir',
+      session.capabilities.channels!.list()[0]?.id === 'seed' && session.capabilities.channels!.activeId() === 'seed')
+    check('backend.open: the active channel mapping reaches model display', session.capabilities.models!.display!() === 'channel-model')
+    session.capabilities.channels!.save!({ id: 'saved', name: 'Saved' })
+    session.capabilities.channels!.setActive('saved')
+    const stored = JSON.parse(readFileSync(channelFile, 'utf8')) as { active: string; channels: { id: string }[] }
+    check('backend.open: channel edits persist in the host directory', stored.active === 'saved' && stored.channels.some(row => row.id === 'saved'))
+    await session.dispose()
+    session = await claudeBackend.open({ kind: 'create', cwd: root }, host)
+    check('backend.open: a second session sees the saved channel',
+      session.capabilities.channels!.activeId() === 'saved' && session.capabilities.channels!.list().some(row => row.id === 'saved'))
+    session.capabilities.channels!.remove!('saved')
+    check('backend.open: model display falls back to the host-directory cache', session.capabilities.models!.display!() === 'cached-model')
+  } finally {
+    await session?.dispose()
+    hooks.deregister()
+    Reflect.deleteProperty(globalThis, fixtureKey)
+    for (const [key, value] of Object.entries(savedEnv)) {
+      if (value === undefined) delete process.env[key]
+      else process.env[key] = value
+    }
+    rmSync(root, { recursive: true, force: true })
+  }
 }
 
 console.log(`\nverify-claude-session-lifecycle OK (${passed} checks)`)

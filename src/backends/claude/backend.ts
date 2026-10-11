@@ -340,7 +340,8 @@ export const claudeBackend: AgentBackend = {
         failureNotice: refreshFailedNotice,
       },
       prefs,
-      host: { debug: message => host.debug(message), ...(host.stderr === undefined ? {} : { stderr: (line: string) => host.stderr?.(line) }) },
+      channels,
+      host,
       ...(sdkVersion === undefined ? {} : { sdkVersion }),
       startNotices,
     })
