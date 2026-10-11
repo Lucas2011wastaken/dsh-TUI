@@ -262,7 +262,13 @@ await scenario('skills collision filtering, cache, dynamic refresh and actual sk
   const f = await fixture({ configure: fake => fake.on(CLIENT.skillsList, () => ({ data: [{ cwd: CWD, skills }] })) })
   try {
     const commands = await f.session.capabilities.commands!.list()
-    check('skills local names filtered case-insensitively', commands.some(row => row.name.toLowerCase() === 'init'), false)
+    // A name colliding with a *local* command is no longer filtered here (B-5):
+    // the host drops it when it merges the backend's list after the local ones
+    // ("local names win", dsh-adapter/channel/core/session-controls.ts —
+    // verify-init-capability pins that a backend /init never shows). What this
+    // backend still filters is what it answers itself: its own four plus the
+    // names its own manifest declares.
+    check('a skill colliding with a local name is reported; the host merge drops it', commands.some(row => row.name.toLowerCase() === 'init'), true)
     check('skills backend reserved names not duplicated', commands.filter(row => row.name === 'review').length, 1)
     check('skills capability-owned names not advertised', commands.some(row => row.name === 'permission'), false)
     check('disabled skill omitted', commands.some(row => row.name === 'disabled'), false)

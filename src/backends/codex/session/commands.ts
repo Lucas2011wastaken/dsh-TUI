@@ -1,7 +1,9 @@
-/** Codex-only slash commands. Local TUI names retain precedence. */
+/** Codex-only slash commands. The host's merge drops a name that collides with
+ *  a local command ("local names win"), so this module never has to know the
+ *  host's command table. */
 import type { AgentEvent, CommandInfo } from '../../../agent/events.js'
 import type { AgentInput, SubmitPlacement } from '../../../agent/session.js'
-import { BACKEND_CHANNEL_COMMAND, BACKEND_GOAL_COMMAND, BACKEND_PERMISSION_COMMAND, LOCAL_COMMANDS } from '../../../commands.js'
+import { manifest } from '../manifest.js'
 import { codexText } from '../text.js'
 import { arr, errorText, num, rec, str, type Rec } from '../narrow.js'
 import { CLIENT, NOTIFY, type UserInput } from '../protocol/index.js'
@@ -36,11 +38,28 @@ interface CommandDeps {
   noteTurnStarted(id: string): void
 }
 
+/** The name the host serves for one of this backend's declared capabilities
+ *  (`src/commands.ts`'s three capability-conditional rows, which are not part
+ *  of the public surface a backend may read). */
+const CAPABILITY_COMMANDS: readonly (readonly [capability: string, command: string])[] = [
+  ['goals', 'goal'],
+  ['channels', 'channel'],
+  ['permissions', 'permission'],
+]
+
 export function createCodexCommands(deps: CommandDeps) {
   let skills: Promise<readonly Rec[]> | undefined
   let revision = 0
-  const local = new Set([...LOCAL_COMMANDS, BACKEND_PERMISSION_COMMAND, BACKEND_CHANNEL_COMMAND, BACKEND_GOAL_COMMAND].map(command => command.name.toLowerCase()))
-  const reserved = new Set([...local, 'review', 'diff', 'plan', 'usage'])
+  /** The names this backend answers itself, which a skill of the same name must
+   *  not shadow: its own four plus whatever its own manifest declares (B-5).
+   *  A skill that collides with a *local* command is no longer filtered here —
+   *  the host drops those when it merges the lists
+   *  (`dsh-adapter/channel/core/session-controls.ts`, "local names win"), which
+   *  is all claude relies on. */
+  const reserved = new Set([
+    'review', 'diff', 'plan', 'usage',
+    ...CAPABILITY_COMMANDS.filter(([capability]) => manifest.capabilities?.includes(capability) === true).map(([, command]) => command),
+  ])
   const loadSkills = (): Promise<readonly Rec[]> => {
     if (skills !== undefined) return skills
     const loading = deps.hub.call(CLIENT.skillsList, { cwds: [deps.cwd] }).then(response => {
@@ -146,7 +165,6 @@ export function createCodexCommands(deps: CommandDeps) {
           return { accepted: true }
         }
         default: {
-          if (local.has(name)) return undefined
           const skill = (await loadSkills()).find(row => str(row.name)?.toLowerCase() === name)
           const path = str(skill?.path)
           if (skill === undefined || path === undefined) return undefined

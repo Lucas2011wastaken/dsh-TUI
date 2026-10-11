@@ -171,10 +171,5 @@
       "to": "dsh-adapter/context-occupancy.js"
     }
   ],
-  "backendEntries": [
-    {
-      "from": "backends/codex/session/commands.ts",
-      "to": "commands.js"
-    }
-  ]
+  "backendEntries": []
 }
