@@ -4,13 +4,14 @@
  *
  *   1. verifyRegistry / verifyContractProfiles 全绿（schemaHash 钉死 +
  *      十点完备 + 坐标/权限 parity + securityBoundary:false）；
- *   2. 26 个 validate fixture 逐一过 schema check + 语义校验，pass/fail 与
+ *   2. 27 个 validate fixture 逐一过 schema check + 语义校验，pass/fail 与
  *      run.js 期望逐条相等；
  *   3. 8 个 negotiate 场景与 run.js 期望逐字段 deepEqual；
- *   4. Backend 家族（TUI-BACKEND-001）逐条镜像 run.js:145-212 的期望：两种后端形态的声明形状、
- *      反例（含 roadmap §4.7 点名的 nativeKey）与保留词表都在这里执行。**run.js 的 Backend 段
- *      增例或改期望时，本节必须同改**——那套 profile 套件不在任何自动化里，本节才是它在 CI 的
- *      执行体（B-4 收口修的正是"等价证明"与参考实现漂移这件事）；
+ *   4. Backend 家族（TUI-BACKEND-001）逐条镜像 run.js 的 Backend 段的期望：两种后端形态的声明
+ *      形状、反例（含 roadmap §4.7 点名的 nativeKey）与保留词表都在这里执行，并与
+ *      requirements-v0.15.json 登记的 fixture 清单交叉校验（锚点按段引用——行号会随套件增例漂移）。
+ *      **run.js 的 Backend 段增例或改期望时，本节必须同改**——那套 profile 套件不在任何自动化里，
+ *      本节才是它在 CI 的执行体（B-4 收口修的正是"等价证明"与参考实现漂移这件事）；
  *   5. 篡改任一 contract 文件后 verifyRegistry 必败（fail-closed 自检）。
  *
  * 仓内 TUI Profile（tui-profile/）没有整目录覆盖来源：它是本仓库的纯文件，
@@ -20,7 +21,7 @@
  * Run via `node --import tsx/esm scripts/verify-plugin-spec.ts`.
  */
 import assert from 'node:assert/strict'
-import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -214,7 +215,7 @@ negotiateCase(
 )
 
 // --- 4. Backend 家族（TUI-BACKEND-001）：run.js 期望的仓内执行体 ---------------
-// 参考实现是 profile 套件（tui-profile/conformance/tests/run.js:145-212）。本节与它用**同一套定义**
+// 参考实现是 profile 套件（tui-profile/conformance/tests/run.js 的 Backend 段，TUI-BACKEND-001）。本节与它用**同一套定义**
 // （dsh-std 的 ManifestDefinitionCatalog + profile 自己的扩展定义）跑**同一条期望表**：那套 suite 不在
 // 任何自动化里（实测：run-verify-build 的 91 个 gate 无一含它），而本节在 `verify:build` 里。
 // **run.js 的 Backend 段增例或改期望时，这里必须同改**——否则这份"等价证明"会再次漂移。
@@ -256,7 +257,10 @@ const expectBackend = (name: string, body: () => unknown, pass: boolean): void =
     if (errors.length > 0) throw new Error(errors.map(issue => issue.message).join('; '))
   }
 
-  for (const [name, fileName, pass] of [
+  // 期望表：profile 套件 Backend 段的 fixture 例逐条镜像（与 run.js 同一份定义、同一条期望）。
+  // requirements 登记的清单在下面交叉校验：两侧任何一侧增删而另一侧没跟都会红；存在性检查堵住
+  // "反例 fixture 缺失 → readFileSync 抛 ENOENT → pass=false 的用例把 ENOENT 当如期被拒记绿"。
+  const BACKEND_FIXTURES = [
     ['valid Backend contribution (SDK peer shape)', 'valid-backend-contribution.json', true],
     ['valid Backend contribution (system CLI shape: no install recipe, pool hook)', 'valid-backend-contribution-cli.json', true],
     // 这条就是 roadmap §4.7 / §6 第 7 条点名的 nativeKey 反例：fixture 形状是 unknown-field，
@@ -268,9 +272,18 @@ const expectBackend = (name: string, body: () => unknown, pass: boolean): void =
     ['Backend install recipe incomplete rejected', 'invalid-backend-install-incomplete.json', false],
     ['Backend confirmation policy rejected', 'invalid-backend-confirmation-policy.json', false],
     ['Backend grants shape rejected', 'invalid-backend-grants-shape.json', false],
-  ] as const) {
+  ] as const
+  for (const [name, fileName, pass] of BACKEND_FIXTURES) {
     expectBackend(name, () => backendManifestVerdict(fileName), pass)
   }
+  const requiredFixtures = (load('conformance/requirements-v0.15.json') as {
+    requirements: Array<{ id: string; fixtures?: readonly string[] }>
+  }).requirements.find(requirement => requirement.id === 'TUI-BACKEND-001')?.fixtures ?? []
+  const mirroredFixtures = BACKEND_FIXTURES.map(([, fileName]) => fileName)
+  const missingFixtures = requiredFixtures.filter(fixture => !existsSync(join(specDir, 'conformance', 'fixtures', fixture)))
+  expect('the Backend fixture table is exactly TUI-BACKEND-001, and every listed fixture exists on disk',
+    [...requiredFixtures].sort().join(',') === [...mirroredFixtures].sort().join(',') && missingFixtures.length === 0,
+    `mirror=${[...mirroredFixtures].sort().join(',')} required=${[...requiredFixtures].sort().join(',')} missing=${missingFixtures.join(',')}`)
 
   // 坏基线：把正例的安装配方拆残，同一条链必须改判为拒绝——证明上面的 pass 不是空转。
   const brokenContribution = fixture('valid-backend-contribution.json') as {
@@ -291,6 +304,10 @@ const expectBackend = (name: string, body: () => unknown, pass: boolean): void =
   }
   expectBackend('Backend declaration accepts unknown capability names (degraded, not refused)',
     () => validateBackendSpec(spec), true)
+  // 与 run.js 同一用例的深比较：未知能力名必须**原样留在**返回的声明里——admission 要在那里
+  // 看到它才能把它记成 missingOptional；只验"不抛错"挡不住 validator 未来静默丢名字。
+  expect('the declaration keeps every declared capability name, known or not',
+    [...validateBackendSpec(spec).capabilities].join(',') === spec.capabilities.join(','))
   expectBackend('Backend native channel is refused in a declaration too',
     () => validateBackendSpec({ ...spec, nativeKey: 'example' }), false)
   expectBackend('Backend confirmation policy refused when it is not one this host implements',
