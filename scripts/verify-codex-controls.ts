@@ -5,7 +5,7 @@
  */
 import assert from 'node:assert/strict'
 import type { AgentEvent } from '../src/agent/events.js'
-import { setLang } from '../src/i18n.js'
+import { getLang, setLang } from '../src/i18n.js'
 import { memoryCodexPrefs } from '../src/backends/codex/prefs.js'
 import { CLIENT, NOTIFY } from '../src/backends/codex/protocol/index.js'
 import { resolve } from 'node:path'
@@ -55,7 +55,7 @@ async function fixture(options: { answer?: Rec; configure?(fake: ReturnType<type
   options.configure?.(fake)
   let session: Awaited<ReturnType<typeof openCodexSession>>
   try {
-    session = await openCodexSession({ hub, release: hub.retain(), target: { kind: 'create', cwd: CWD }, cwd: CWD, prefs, executable: { path: '/fake/codex', source: 'env', version: '0.160.1' }, host: { debug: line => debug.push(line) }, clock })
+    session = await openCodexSession({ hub, release: hub.retain(), target: { kind: 'create', cwd: CWD }, cwd: CWD, prefs, executable: { path: '/fake/codex', source: 'env', version: '0.160.1' }, host: { debug: line => debug.push(line), locale: getLang }, clock })
   } catch (error) { await hub.close(); throw error }
   session.subscribe(batch => events.push(...batch))
   await settle()

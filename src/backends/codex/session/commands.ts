@@ -2,7 +2,7 @@
 import type { AgentEvent, CommandInfo } from '../../../agent/events.js'
 import type { AgentInput, SubmitPlacement } from '../../../agent/session.js'
 import { BACKEND_CHANNEL_COMMAND, BACKEND_GOAL_COMMAND, BACKEND_PERMISSION_COMMAND, LOCAL_COMMANDS } from '../../../commands.js'
-import { t } from '../../../i18n.js'
+import { codexText } from '../text.js'
 import { arr, errorText, num, rec, str, type Rec } from '../narrow.js'
 import { CLIENT, NOTIFY, type UserInput } from '../protocol/index.js'
 import type { CodexHub } from '../rpc/hub.js'
@@ -63,10 +63,10 @@ export function createCodexCommands(deps: CommandDeps) {
     deps.emit([{ type: 'user.message', id: `codex-local-${seq}`, anchor: `codex-local-${seq}`, seq, time: deps.ctx.now(), source: 'command-output', text, blocks: [{ type: 'text', text }] }])
   }
   const list = async (): Promise<readonly CommandInfo[]> => [
-    { name: 'review', description: t('codex-command-review') },
-    { name: 'diff', description: t('codex-command-diff') },
-    ...(deps.planSupported() ? [{ name: 'plan', description: t('codex-command-plan') }] : []),
-    { name: 'usage', description: t('codex-command-usage') },
+    { name: 'review', description: codexText('codex-command-review') },
+    { name: 'diff', description: codexText('codex-command-diff') },
+    ...(deps.planSupported() ? [{ name: 'plan', description: codexText('codex-command-plan') }] : []),
+    { name: 'usage', description: codexText('codex-command-usage') },
     ...(await loadSkills()).map(skill => ({ name: str(skill.name)!, description: str(skill.shortDescription) ?? str(skill.description) })),
   ]
 
@@ -74,7 +74,7 @@ export function createCodexCommands(deps: CommandDeps) {
     skills = undefined
     const current = ++revision
     void list().then(commands => { if (current === revision) deps.emit([{ type: 'commands.changed', commands }]) }, error => {
-      if (current === revision) deps.emit([{ type: 'notice', level: 'warning', key: 'codex-skills', text: t('capability-failed', { name: 'skills', err: errorText(error) }) }])
+      if (current === revision) deps.emit([{ type: 'notice', level: 'warning', key: 'codex-skills', text: codexText('capability-failed', { name: 'skills', err: errorText(error) }) }])
     })
   }
   return {
@@ -87,7 +87,7 @@ export function createCodexCommands(deps: CommandDeps) {
       const args = match[2] ?? ''
       switch (name) {
         case 'review': {
-          if (deps.busy()) return { accepted: false, reason: t('codex-command-idle') }
+          if (deps.busy()) return { accepted: false, reason: codexText('codex-command-idle') }
           const result = rec(await deps.hub.call(CLIENT.reviewStart, { threadId: deps.threadId(), target: reviewTarget(args), delivery: 'inline' }))
           const id = str(rec(result?.turn)?.id)
           if (id !== undefined) deps.noteTurnStarted(id)
@@ -120,7 +120,7 @@ export function createCodexCommands(deps: CommandDeps) {
               if (rpcCode(error) !== RPC_ERROR.methodNotFound && rpcCode(error) !== RPC_ERROR.invalidParams) throw error
             }
           }
-          output(diff === undefined || diff === '' ? t('codex-diff-empty') : diff)
+          output(diff === undefined || diff === '' ? codexText('codex-diff-empty') : diff)
           return { accepted: true }
         }
         case 'usage': {
@@ -134,14 +134,14 @@ export function createCodexCommands(deps: CommandDeps) {
           const lines = buckets.flatMap(({ id, snapshot }) => {
             const windows = rateLimitOf({ rateLimits: snapshot }).view?.windows ?? []
             const rows = windows.map(window => {
-              const name = window.name === 'five_hour' ? t('status-rate-limit-five-hour') : window.name === 'seven_day' ? t('status-rate-limit-seven-day') : window.name
-              return t('codex-usage-window', { name, used: Math.round(window.utilization * 100), reset: window.resetsAt === undefined ? t('doctor-unknown') : new Date(window.resetsAt).toLocaleString() })
+              const name = window.name === 'five_hour' ? codexText('status-rate-limit-five-hour') : window.name === 'seven_day' ? codexText('status-rate-limit-seven-day') : window.name
+              return codexText('codex-usage-window', { name, used: Math.round(window.utilization * 100), reset: window.resetsAt === undefined ? codexText('doctor-unknown') : new Date(window.resetsAt).toLocaleString() })
             })
             const credits = rec(snapshot.credits)
-            if (credits !== undefined) rows.push(t('codex-usage-credits', { balance: str(credits.balance) ?? num(credits.balance) ?? t('doctor-unknown'), unlimited: credits.unlimited === true ? t('codex-yes') : t('codex-no') }))
+            if (credits !== undefined) rows.push(codexText('codex-usage-credits', { balance: str(credits.balance) ?? num(credits.balance) ?? codexText('doctor-unknown'), unlimited: credits.unlimited === true ? codexText('codex-yes') : codexText('codex-no') }))
             return rows.length > 0 && id !== '' ? [str(snapshot.limitName) ?? id, ...rows] : rows
           })
-          output(lines.length === 0 ? t('codex-usage-unavailable') : lines.join('\n'))
+          output(lines.length === 0 ? codexText('codex-usage-unavailable') : lines.join('\n'))
           if (view !== undefined) deps.emit([{ type: 'rate-limit', info: view }])
           return { accepted: true }
         }
