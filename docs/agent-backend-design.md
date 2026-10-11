@@ -225,7 +225,9 @@ SDK `settings` 选项把路由钉回 `https://api.anthropic.com`。CLI 拒绝令
   npm 包。协议类型从 codex-cli 0.160.1 生成并入库，最低 0.144.0；`contract.ts` 与
   `verify:codex-contract` 守住摘要/方法名/版本策略，生成类型不扩大运行时信任边界。
 - **进程与环境**：`rpc/hub.ts` 按运行设置/路由指纹复用子进程和连接，多 thread 路由；
-  退出漏斗关闭全部 hub。保留用户 `CODEX_HOME`、证书与原生 provider 环境，只清除父级
+  退出漏斗关闭全部 hub——manifest 用 `unloadExport: 'closeAllCodexHubs'` 把这个**模块级/
+  进程级**资源池登记给注册表（宿主只对**真的加载过的条目**记账并调用，会话级资源归
+  `session.dispose()`）。保留用户 `CODEX_HOME`、证书与原生 provider 环境，只清除父级
   Codex 会话专用变量；Windows 解析真 `codex.exe`。不写官方 `config.toml`。
 - **凭据与渠道**：激活连接 > 第一方路由允许的 dsh-auth `openai-codex` 外部托管令牌 >
   Codex 自己的登录/API key。配置不可读时禁止托管注入；令牌不进 argv/事件/日志，失败
@@ -260,7 +262,11 @@ SDK `settings` 选项把路由钉回 `https://api.anthropic.com`。CLI 拒绝令
 `Backend` 是 `tui.dsh/v1alpha1` 的第三个贡献族（继设置区块、全屏场景之后），当前状态是
 **`alpha`、不承诺**：类型面、definition、contract profile 与 conformance 已可用，第三方
 bundle 的真实准入接线（清单 → registry → picker）留到 C 段（W-1）。接入一个后端 = 按公开
-面写一份声明 + 实现 `AgentBackend` 与 `AgentSession`；仓内的 `manifest.ts` 是这份声明的
+面写一份声明 + 实现 `AgentBackend` 与 `AgentSession`；**协议不依赖任何单个后端的特殊性**：
+claude（SDK peer + 安装向导）与 codex（系统 CLI + 进程池）必须都能用同一份声明面表达，
+两者的差异只落在 `install?`、`unloadExport?` 这类字段上——conformance 的两个正例
+（`valid-backend-contribution.json` 与 `valid-backend-contribution-cli.json`）与常驻假后端
+夹具钉的就是这条。仓内的 `manifest.ts` 是这份声明的
 **超集**，私有项不投影出去。完整口径见
 [tui-profile 说明 0009](../tui-profile/notes/0009-backend-contribution.md)，其中
 「Public surface（α）」一节是**承诺 / 不承诺清单**（导出面只增不删、破坏性变更怎么被发现）。
@@ -326,6 +332,12 @@ bundle 的真实准入接线（清单 → registry → picker）留到 C 段（W
     一律明确报错并**非零退出**，不回落、不恢复别的后端的上次会话、不自动新建。
 11. 回归用假 SDK/假进程驱动（参考 `scripts/lib/claude-fake-sdk.ts`），翻译器用脱敏
     fixture 测；登记进 `scripts/run-ci-group.mjs`。
+12. **驱动系统 CLI 的后端**（codex 那种形态）走另一条一等公民路径：**不声明** `install`
+    ——声明了等于长出一个装不出任何东西的按钮——改为在 `detect()` 里报告 `installed` /
+    `version` 与"缺什么、怎么补"的 hint；进程池照旧用 `unloadExport` 登记给注册表。
+    这条形态与 SDK peer 形态（claude）由 conformance 的两个正例对照钉住（见上），宿主侧
+    由 `scripts/fixtures/probe-backend/` 的两种安装面夹具与
+    `scripts/verify-backend-contribution.ts` 的执行体覆盖。
 
 ## 验证
 
