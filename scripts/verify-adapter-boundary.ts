@@ -418,7 +418,20 @@ for (const file of files) {
       violations.push(`${where} imports '${ref.specifier}'; src/${SHARED_BACKEND_DIR} must stay backend-neutral (no scoped vendor package)`)
     }
     const target = resolveInternal(file, ref.specifier)
-    if (target === undefined) continue
+    if (target === undefined) {
+      // undefined means a bare specifier (node builtins, manifest-declared
+      // vendor packages — not this gate's business) or a relative import that
+      // escapes src/ entirely. The island whitelist is exhaustive, so the
+      // latter is a violation by definition; without this check the continue
+      // below would skip the island rule and let a backend import e.g.
+      // ../../../scripts/… pass unscanned.
+      if ((ref.specifier.startsWith('./') || ref.specifier.startsWith('../'))
+        && under(path, 'backends/') && !under(path, SHARED_BACKEND_DIR)) {
+        const own = path.split('/')[1]
+        violations.push(`${where} imports '${ref.specifier}' (outside src/); src/backends/${own}/ may import only its own directory, src/agent/ and src/backends/shared/ (the backend is an island)`)
+      }
+      continue
+    }
     if (under(path, SHARED_BACKEND_DIR) && (under(target, 'dsh-adapter/') || (under(target, 'backends/') && !under(target, SHARED_BACKEND_DIR)))) {
       violations.push(`${where} imports src/${target}; src/${SHARED_BACKEND_DIR} must not depend on a concrete backend`)
     }
