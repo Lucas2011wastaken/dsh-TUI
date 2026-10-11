@@ -82,7 +82,9 @@ Contract profile：[`registry/contracts/backend-v1alpha1.json`](../registry/cont
 
 Conformance requirement 是 `TUI-BACKEND-001`（记在 `conformance/requirements-v0.15.json`），由**九个 fixtures**承载。两个正例覆盖**两种后端形态**：`valid-backend-contribution.json`（SDK peer：安装配方 + 池钩子）与 `valid-backend-contribution-cli.json`（系统 CLI：**没有**安装配方、仍有池钩子——"用户自己的二进制就是依赖"是一条一等公民声明，不是缺字段）。七个反例是 `invalid-backend-{unknown-field,bad-id,key-label,capability-shape,install-incomplete,confirmation-policy,grants-shape}.json`；其中 **`invalid-backend-unknown-field.json` 就是"凭空补 `nativeKey` 必须红"那条**（它的拒绝理由逐字含 `nativeKey`），名字写作 unknown field 是因为形状校验看到的就是未知字段。
 
-**注意这个 requirement 文件本身没有消费者**（全仓没有代码读它）：fixture 登记了却没进 `conformance/tests/run.js` 的用例表，就等于**零证据且不报错**。执行体也有两层，别只记一层——profile 套件（`conformance/tests/run.js` 的 Backend 段）是参考实现，但它**不在任何自动化里**；仓内 `scripts/verify-plugin-spec.ts` 的 Backend 段是它在 CI（`verify:build`）里的执行体，**两边期望必须同改**。宿主侧的两条不变量（"未加载即不关池"、"只关真的加载过的条目"）**不在这一层**：它们是宿主行为、无法用 manifest fixture 表达，只能由 `scripts/verify-backend-contribution.ts` 与 `scripts/verify-backend-registry.ts` 的 probe 夹具钉住。
+`conformance/requirements-v0.15.json` 中 `TUI-BACKEND-001` 的 fixture 清单由 `scripts/verify-plugin-spec.ts` 读取：门禁要求它与仓内 Backend 用例表完全一致，且每个列出的文件都存在。只改 requirement 登记、不改仓内用例表，或删除任一列出的 fixture，都会使门禁失败。
+
+执行体有两层：profile 套件（`conformance/tests/run.js` 的 Backend 段）是参考实现，但它**不在任何自动化里**；仓内 `scripts/verify-plugin-spec.ts` 的 Backend 段是它在 CI（`verify:build`）里的执行体，**两边期望必须同改**。清单交叉校验不读取 `run.js` 的用例表，不能自动发现两边期望的差异。宿主侧的两条不变量（"未加载即不关池"、"只关真的加载过的条目"）**不在这一层**：它们是宿主行为、无法用 manifest fixture 表达，只能由 `scripts/verify-backend-contribution.ts` 与 `scripts/verify-backend-registry.ts` 的 probe 夹具钉住。
 
 宿主侧门禁是 `scripts/verify-backend-contribution.ts`：内建 manifest 的投影 dogfood、两份词表的单一真源、准入判定、`scripts/fixtures/probe-backend/` 这个假后端的资源不变量与安装面两态、坏声明必须红，以及末节的范围守卫。
 
@@ -115,7 +117,9 @@ Conformance requirement 是 `TUI-BACKEND-001`（记在 `conformance/requirements
 
 ### 破坏性变更怎么被发现
 
-坐标（`apiVersion + kind`）不变就不得改语义；改了正文却不换坐标 ⇒ contract profile digest 变而坐标不变，`verify:contract` / `verify-protocol-single-source` / `verify-backend-contribution` / `verify-public-config-types` 逐层会红。conformance fixtures 与本清单是同一份承诺的两种写法。
+坐标（`apiVersion + kind`）不变就不得改已承诺的语义；**当前门禁只覆盖各自断言的范围，并不能自动发现所有 Backend 语义变更**。`verify-plugin-spec` 检查声明形状与 fixture 期望；`verify-backend-contribution` 检查内建投影、词表、准入与 probe 资源不变量；`verify-public-config-types` 检查消费者使用已发布类型与导出的写法。`verify-protocol-single-source` 检查协议来源与派生常量一致性；`verify:contract` 检查 DSH 上游版本与独立入口宿主契约。
+
+Backend contract profile 尚无 registry 条目，**不在现有 `profileHash` 校验范围内**。例如，仅修改 `registry/contracts/backend-v1alpha1.json` 的 `cleanup` 正文、保持坐标不变，上述门禁仍可通过。Backend 的 digest 钉住与旧坐标语义保护需在 Stage C 发布第一版 apiVersion 前补齐；不能把现有 conformance 例通过当作这项保护已经生效的证据。
 
 ### 已知缺口（诚实清单，别当成已解决）
 
@@ -123,6 +127,7 @@ Conformance requirement 是 `TUI-BACKEND-001`（记在 `conformance/requirements
 2. **profile 套件不在 CI**：Backend 的 conformance 例由仓内镜像门（`scripts/verify-plugin-spec.ts`）在 `verify:build` 里代跑，**两边期望必须同改**；
 3. **共用平台文案的副本没有跨字典门禁**：`verify-i18n` 只查各自字典的完整性，不跨字典比字面量；
 4. **"宿主只对真的加载过的条目记账并调用 `unloadExport`"是宿主的**不变量，第三方无法用声明表达它——它由 probe 夹具与 registry 的池台账钉住，不在 conformance fixture 层。
+5. **Backend contract 的 digest 与坐标语义保护尚未接线**：contract profile 尚未进入 registry 的 digest 校验范围，当前门禁也不比较历史坐标的语义；这项保护需在 Stage C 发布第一版 apiVersion 前补齐。
 
 ## Not yet wired (W-1) — the C stage's entry condition
 
