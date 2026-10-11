@@ -60,8 +60,9 @@
   `AgentSession.capabilities` 实际返回的键集,后者只取宿主权限词表
   (`registry/permissions-0.1.json`);两者的未知名字一律**降级不拒绝**,判定是
   `src/dsh-adapter/backend-admission.ts` 的 `backendAdmission()`(已知权限名无授权 →
-  注册但不进 picker)。声明文本按不可信输入净化。族语义见
-  [说明 0009](tui-profile/notes/0009-backend-contribution.md)。
+  注册但不进 picker)。声明文本按不可信输入净化。族语义与**公开面承诺清单**(承诺什么、
+  明确不承诺什么、破坏性变更怎么被发现)见
+  [说明 0009](tui-profile/notes/0009-backend-contribution.md) 的「Public surface（α）」一节。
 - **恢复语义(B-2a fail-closed)**:后端自己的 `lastSession()` 只归自己。启动恢复只
   针对所选后端,恢复目标绑定后端身份,裸 `--resume` 只查**该后端自己的** `lastSession`;
   后端不可用、没有上次会话、指定会话不存在一律明确报错并**非零退出**

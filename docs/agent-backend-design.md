@@ -262,7 +262,8 @@ SDK `settings` 选项把路由钉回 `https://api.anthropic.com`。CLI 拒绝令
 bundle 的真实准入接线（清单 → registry → picker）留到 C 段（W-1）。接入一个后端 = 按公开
 面写一份声明 + 实现 `AgentBackend` 与 `AgentSession`；仓内的 `manifest.ts` 是这份声明的
 **超集**，私有项不投影出去。完整口径见
-[tui-profile 说明 0009](../tui-profile/notes/0009-backend-contribution.md)。
+[tui-profile 说明 0009](../tui-profile/notes/0009-backend-contribution.md)，其中
+「Public surface（α）」一节是**承诺 / 不承诺清单**（导出面只增不删、破坏性变更怎么被发现）。
 
 1. 写 `src/backends/<id>/manifest.ts`——它投影出的**公开声明**（`tui.dsh/v1alpha1#Backend`）
    字段是 `id`、`label`（**只收字面量**，宿主 i18n 键进不来）、`shortLabel`、`product?`、`capabilities`、`grants`、`install?`、

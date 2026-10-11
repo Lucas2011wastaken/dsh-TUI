@@ -86,6 +86,44 @@ Conformance requirement 是 `TUI-BACKEND-001`（记在 `conformance/requirements
 
 宿主侧门禁是 `scripts/verify-backend-contribution.ts`：内建 manifest 的投影 dogfood、两份词表的单一真源、准入判定、`scripts/fixtures/probe-backend/` 这个假后端的资源不变量与安装面两态、坏声明必须红，以及末节的范围守卫。
 
+## Public surface（α）：承诺什么、不承诺什么
+
+**状态**：本贡献族是 `alpha`，**正式冻结在 Stage C 发布第一版 apiVersion 时**（roadmap §6 第 5 条）。本节只把"α 期已经成立的承诺"清点成一份可引用的清单——**冻结这个动作不在 B 段**。
+
+### 承诺（今天就可以依赖）
+
+| # | 承诺 | 由什么钉住 |
+|---|---|---|
+| 1 | **公开导出面只增不删，自 B-2 起算**：`BACKEND`、`BACKEND_CAPABILITY_NAMES`、`BACKEND_RESERVED_IDS`、`validateBackendSpec`、类型 `BackendInstallRecipe` / `BackendSpec`、`backendAdmission`（+ `BackendAdmission` / `BackendAdmissionHost`）、`backendContributionOf` | 包入口 `src/dsh-adapter/index.ts` 的 Backend 段；删其中任何一个都是 breaking |
+| 2 | 声明字段与语义以本文档与 definition 正文为准（`id` / `label`（**只收字面量**）/ `shortLabel` / `product?` / `capabilities` / `grants` / `install?` / `unloadExport?` / `confirmation?`） | `validateBackendSpec()`；`verify-backend-contribution.ts` 的 dogfood 段（三个内建 manifest 投影后过同一 validator） |
+| 3 | 能力词表的真源是宿主的 `SessionCapabilities`，**双向**比对：发明一个名字会红，删掉一个成员也会红 | `verify-backend-contribution.ts` 的 TS AST 双向比对 |
+| 4 | `grants` fail-closed：未知权限名**降级不拒绝**（记为待决项），已知权限名而没有授权 → 注册但不进 picker | `backendAdmission()` 的五态判定 + 门禁用例 |
+| 5 | 安装面是**声明 + 执行器查表**：宿主不认识的执行器读作"没有安装面"（**不是**拒绝）；`install` 缺省是一等公民（系统 CLI 形态） | 注册表派生的 `installable`；probe 夹具两种形态各自的断言 |
+| 6 | **加取值不算 breaking**：`confirmation` 的未知取值今天一律拒，将来豁免嫡系只是加一个取值；执行器表同理（首版只有 `pnpm-profile-add`） | definition 的取值集合 + 门禁 |
+
+### 明确不承诺
+
+| # | 不承诺 | 现状锚点 |
+|---|---|---|
+| 1 | **registry / loader / picker**：第三方 bundle 今天**过不了准入**——这不是 bug，是范围（W-1） | 下节 |
+| 2 | `native.*` 与 DSH 的 specialist 能力**始终留首方侧**；`nativeKey` 缺省即"不使用 native 通道"，宿主**不得凭空补规则** | `ADAPTER.md` 的派生规则 + 边界门禁的 `EXPECTED_NATIVE_RULES` |
+| 3 | `BackendHandler.catalog` 的**方法签名**（协议侧是 `object`；`SessionCatalog` 的形状会随主线演进） | `protocols/tui-contributions.d.ts` |
+| 4 | `lastSession` 的接口与恢复目标的传递方式（含 `DSH_TUI_RESUME_BACKEND` 这个 env 名）：**语义进协议，接口不进** | 「Resume semantics」节 |
+| 5 | 会话记录 / transcript 的真源归属；`SessionCatalog.snapshotKey()` 只用于首屏快照，**永不作为 transcript 权威** | `src/agent/backend.ts` |
+| 6 | `BACKEND_CONFIRMATION_POLICIES` 的**取值集合**（字段形状是承诺、取值只增；该常量今天也不在公开导出面上） | definition |
+| 7 | 后端自带文案的**字面量**：与宿主共用的几条平台文案各存一份副本，两边都可能漂 | 「文案与公开面」见 `docs/agent-backend-design.md` |
+
+### 破坏性变更怎么被发现
+
+坐标（`apiVersion + kind`）不变就不得改语义；改了正文却不换坐标 ⇒ contract profile digest 变而坐标不变，`verify:contract` / `verify-protocol-single-source` / `verify-backend-contribution` / `verify-public-config-types` 逐层会红。conformance fixtures 与本清单是同一份承诺的两种写法。
+
+### 已知缺口（诚实清单，别当成已解决）
+
+1. **"只增不删从 B-2 起算"需要一个版本锚**：本文件此前没有本贡献族的 CHANGELOG 条目（B-4 已补），而 `package.json` 的 0.14.0 与 `tui-profile/package.json` 的 0.1.0-experimental 并不挂钩；
+2. **profile 套件不在 CI**：Backend 的 conformance 例由仓内镜像门（`scripts/verify-plugin-spec.ts`）在 `verify:build` 里代跑，**两边期望必须同改**；
+3. **共用平台文案的副本没有跨字典门禁**：`verify-i18n` 只查各自字典的完整性，不跨字典比字面量；
+4. **"宿主只对真的加载过的条目记账并调用 `unloadExport`"是宿主的**不变量，第三方无法用声明表达它——它由 probe 夹具与 registry 的池台账钉住，不在 conformance fixture 层。
+
 ## Not yet wired (W-1) — the C stage's entry condition
 
 **第三方 bundle 现在还过不了准入。这不是 bug，是范围。** definition、validator、handler assertion、contract profile 与 conformance 都已可用，断掉的是**接线**：
