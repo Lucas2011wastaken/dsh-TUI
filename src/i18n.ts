@@ -1309,6 +1309,7 @@ const dict = {
 
   // ── dsh-adapter/plugin.ts（/settings 渲染设置）───────────────────────
   'settings-fullscreen-restart': { zh: '全屏设置已保存，重启 dsh-tui 后生效', en: 'Fullscreen preference saved — restart dsh-tui to apply' },
+  'settings-launchpad-restart': { zh: '启动页设置已保存，重启 dsh-tui 后生效', en: 'Launchpad preference saved — restart dsh-tui to apply' },
   'settings-terminal-images-restart': { zh: '图片预览设置已保存，使用 /restart 重启 TUI 后生效', en: 'Image preview preference saved — use /restart to apply' },
   'settings-fullscreen-migrated': { zh: '全屏已是出厂默认（已清除更新前的 inline 选择）；偏好 inline 可在 /settings 改回', en: 'Fullscreen is now the factory default (pre-update inline choice cleared); prefer inline? Switch back in /settings' },
 
@@ -2322,9 +2323,8 @@ const dict = {
   'kernel-label-dsh': { zh: 'DeepSeek Harness', en: 'DeepSeek Harness' },
   'kernel-label-claude': { zh: 'Claude Agent', en: 'Claude Agent' },
   'kernel-label-codex': { zh: 'Codex', en: 'Codex' },
-  'kernel-login-in-session': { zh: '未登录 · 启动后用 /login 登录', en: 'Not signed in · sign in with /login after start' },
+  'kernel-login-in-session': { zh: '未登录', en: 'Not signed in' },
   'kernel-unavailable-not-installed': { zh: '未安装', en: 'Not installed' },
-  'kernel-unavailable-auth-missing': { zh: '未登录', en: 'Not signed in' },
   'kernel-unavailable-too-old': { zh: '版本过旧 · 需升级', en: 'Too old · upgrade needed' },
   'kernel-switch-restarting': { zh: '正在以 {{name}} 内核重启…', en: 'Restarting on the {{name}} kernel…' },
   // 切换内核时的过场行。failed/crashed 由旧进程报告新进程的结局；安全模式

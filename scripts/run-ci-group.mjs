@@ -886,6 +886,9 @@ const GROUPS = {
 // 刷新（文件锁内落盘）、认证失败刷新后同会话 resume 一次、再失败引导 /login；事件、
 // 提示和日志里都不出现令牌。
     ["verify-claude-auth", ['node', '--import', 'tsx/esm', 'scripts/verify-claude-auth.ts']],
+// Claude 内核检测：未装凭证也返回 loginInSession（选择器不拦切换，行带「启动后用
+// /login 登录」注记）；环境变量凭据照常判 ok，检测本身不变。
+    ["verify-claude-detect", ['node', '--import', 'tsx/esm', 'scripts/verify-claude-detect.ts']],
 // Claude 控制面（假 Query）：model/effort/mode/compact/commands/mcp/context/account 的委托
 // 与持久化、channel 侧模式标签与命令合并、/mcp、/context、订阅用量、/login 及其无头渲染；
 // effort 在 open/resume、init 帧与 message_start 变化时都按后端声明的档位收敛。
@@ -977,7 +980,7 @@ const GROUPS = {
     ["verify-backend-logout", ['node', '--import', 'tsx/esm', 'scripts/verify-backend-logout.ts']],
     ["verify-codex-chat-controls", ['node', '--import', 'tsx/esm', 'scripts/verify-codex-chat-controls.tsx']],
     ["verify-session-archive", ['node', '--import', 'tsx/esm', 'scripts/verify-session-archive.tsx']],
-// 内核目录（N7）：三内核、未探测/未安装/未登录置灰、loginInSession 仍可选并提示、
+// 内核目录（N7）：三内核、未探测/未安装置灰（登录态不再置灰）、loginInSession 可选并提示、
 // 只有可一键安装的内核给安装向导、版本产品前缀、--backend 接受 codex。
     ["verify-kernel-catalog", ['node', '--import', 'tsx/esm', 'scripts/verify-kernel-catalog.ts']],
 // IDE 选区通道回归（PR #562）：纯函数（env 直连/lock 扫描与 workspace
