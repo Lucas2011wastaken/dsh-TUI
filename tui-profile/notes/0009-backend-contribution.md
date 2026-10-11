@@ -80,7 +80,9 @@ Definition、validator 与 handler assertion 位于 [`protocols/tui-contribution
 
 Contract profile：[`registry/contracts/backend-v1alpha1.json`](../registry/contracts/backend-v1alpha1.json)，与 Scene / SettingsSection 同一份 12 个必需键的形状，`securityBoundary: false`，`operations` 列出 `declare`、`detect`、`open`、`catalog`、`resume`。
 
-Conformance requirement 是 `TUI-BACKEND-001`（记在 `conformance/requirements-v0.15.json`，测试文案 "Backend contribution shape, capability/grants declaration and resume binding semantics"），由五个 fixtures 承载：`valid-backend-contribution.json` 与四个 `invalid-backend-*`（未知字段、非法 id、宿主 i18n 键标签、capability 形状）。
+Conformance requirement 是 `TUI-BACKEND-001`（记在 `conformance/requirements-v0.15.json`），由**九个 fixtures**承载。两个正例覆盖**两种后端形态**：`valid-backend-contribution.json`（SDK peer：安装配方 + 池钩子）与 `valid-backend-contribution-cli.json`（系统 CLI：**没有**安装配方、仍有池钩子——"用户自己的二进制就是依赖"是一条一等公民声明，不是缺字段）。七个反例是 `invalid-backend-{unknown-field,bad-id,key-label,capability-shape,install-incomplete,confirmation-policy,grants-shape}.json`；其中 **`invalid-backend-unknown-field.json` 就是"凭空补 `nativeKey` 必须红"那条**（它的拒绝理由逐字含 `nativeKey`），名字写作 unknown field 是因为形状校验看到的就是未知字段。
+
+**注意这个 requirement 文件本身没有消费者**（全仓没有代码读它）：fixture 登记了却没进 `conformance/tests/run.js` 的用例表，就等于**零证据且不报错**。执行体也有两层，别只记一层——profile 套件（`conformance/tests/run.js` 的 Backend 段）是参考实现，但它**不在任何自动化里**；仓内 `scripts/verify-plugin-spec.ts` 的 Backend 段是它在 CI（`verify:build`）里的执行体，**两边期望必须同改**。宿主侧的两条不变量（"未加载即不关池"、"只关真的加载过的条目"）**不在这一层**：它们是宿主行为、无法用 manifest fixture 表达，只能由 `scripts/verify-backend-contribution.ts` 与 `scripts/verify-backend-registry.ts` 的 probe 夹具钉住。
 
 宿主侧门禁是 `scripts/verify-backend-contribution.ts`：内建 manifest 的投影 dogfood、两份词表的单一真源、准入判定、`scripts/fixtures/probe-backend/` 这个假后端的资源不变量与安装面两态、坏声明必须红，以及末节的范围守卫。
 

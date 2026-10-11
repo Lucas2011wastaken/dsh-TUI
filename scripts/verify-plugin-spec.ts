@@ -257,13 +257,17 @@ const expectBackend = (name: string, body: () => unknown, pass: boolean): void =
   }
 
   for (const [name, fileName, pass] of [
-    ['valid Backend contribution', 'valid-backend-contribution.json', true],
+    ['valid Backend contribution (SDK peer shape)', 'valid-backend-contribution.json', true],
+    ['valid Backend contribution (system CLI shape: no install recipe, pool hook)', 'valid-backend-contribution-cli.json', true],
     // 这条就是 roadmap §4.7 / §6 第 7 条点名的 nativeKey 反例：fixture 形状是 unknown-field，
     // 拒绝理由逐字是 `Backend content contains unknown field "nativeKey"`（实测）。
     ['Backend native channel rejected (unknown field)', 'invalid-backend-unknown-field.json', false],
     ['Backend bad id rejected', 'invalid-backend-bad-id.json', false],
     ['Backend host label key rejected', 'invalid-backend-key-label.json', false],
     ['Backend capability shape rejected', 'invalid-backend-capability-shape.json', false],
+    ['Backend install recipe incomplete rejected', 'invalid-backend-install-incomplete.json', false],
+    ['Backend confirmation policy rejected', 'invalid-backend-confirmation-policy.json', false],
+    ['Backend grants shape rejected', 'invalid-backend-grants-shape.json', false],
   ] as const) {
     expectBackend(name, () => backendManifestVerdict(fileName), pass)
   }
