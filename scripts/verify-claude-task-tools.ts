@@ -12,10 +12,13 @@ import { claudeToolRole } from '../src/backends/claude/tools.js'
 import { createClaudeTranslator } from '../src/backends/claude/translate.js'
 import { replayClaudeTranscript } from '../src/backends/claude/replay.js'
 import { buildQueryOptions, OPTION_POLICY } from '../src/backends/claude/options.js'
-import { setLang, t } from '../src/i18n.js'
-import { claudeText } from '../src/backends/claude/text.js'
+import { getLang, setLang, t } from '../src/i18n.js'
+import { claudeText, installClaudeLocale } from '../src/backends/claude/text.js'
 import { createProjectorHarness } from './lib/projector-harness.js'
 
+// No session here (the translator is driven directly), so the backend's copy
+// takes its language straight from the host, exactly as `open()` wires it.
+installClaudeLocale(getLang)
 setLang('en')
 let passed = 0
 const check = (label: string, ok: boolean, detail?: unknown): void => {

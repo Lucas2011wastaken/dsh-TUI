@@ -202,10 +202,9 @@ const texts = {
   'elicit-url-complete': { zh: 'MCP 服务器 {{server}} 确认已完成', en: 'The MCP server {{server}} confirmed it is done' },
   'elicit-url-missing': { zh: 'MCP 服务器 {{server}} 请求打开链接却没有给出网址，已拒绝', en: 'The MCP server {{server}} asked to open a link but gave none; declined' },
   'elicit-unsupported': { zh: 'MCP 服务器 {{server}} 的请求（{{mode}}）无法在此显示，已拒绝', en: 'The request of the MCP server {{server}} ({{mode}}) cannot be shown here; declined' },
-  // ── Strings this backend shares with platform surfaces the host also
-  //    renders (the status line's rate-limit window, /doctor, rename and
-  //    rewind outcomes). The host keeps its own entries for DSH sessions and
-  //    codex; a backend cannot read them (D2), so the copy is repeated here. ──
+  // ── Channel-connection notices this backend owns alone: the host keeps no
+  //    copy (claude's `backend.ts` is their only renderer), so they are not
+  //    part of the platform copy below. ──
   'channel-conn-settings-mismatch': {
     zh: 'settings.json 的 ANTHROPIC_BASE_URL 与当前渠道 {{name}} 不一致；本会话按渠道配置连接（settings.json 不改，直接运行 claude 时仍按它）',
     en: 'The ANTHROPIC_BASE_URL in settings.json differs from the active channel {{name}}; this session connects as the channel says (settings.json is left as is for running claude directly)',
@@ -214,6 +213,10 @@ const texts = {
     zh: '本会话使用渠道凭据，settings.json 里的 {{keys}} 本次不生效（settings.json 不改，直接运行 claude 时仍会用到）',
     en: 'This session uses the channel credential; {{keys}} from settings.json do not apply (settings.json is left as is for running claude directly)',
   },
+  // ── Strings this backend shares with platform surfaces the host also
+  //    renders (the status line's rate-limit window, /doctor, rename and
+  //    rewind outcomes). The host keeps its own entries for DSH sessions and
+  //    codex; a backend cannot read them (D2), so the copy is repeated here. ──
   'doctor-unknown': { zh: '未知', en: 'unknown' },
   'rewind-first-message': { zh: '不能回退到第一条消息之前', en: 'Cannot rewind past the very first message' },
   'rename-failed': { zh: '重命名失败 · {{err}}', en: 'Rename failed · {{err}}' },
@@ -252,15 +255,17 @@ export function claudeLocale(): BackendLocale {
  * the elicitation flow fills its own placeholders
  * (see {@link claudeElicitationText}). A key with no text in this language
  * renders as the key itself, so a typo is visible rather than blank.
+ * `params.count` still picks the plural form: whoever passes it is the one
+ * that knows the number (the elicitation callers pass none).
  */
-export function claudeTemplate(key: ClaudeTextKey): string {
+export function claudeTemplate(key: ClaudeTextKey, params: ClaudeTextParams = {}): string {
   const locale = localeSource()
-  return pickLocalizedText(texts[key][locale], locale, {}) ?? key
+  return pickLocalizedText(texts[key][locale], locale, params) ?? key
 }
 
 /** One string of this backend in the active language. */
 export function claudeText(key: ClaudeTextKey, params: ClaudeTextParams = {}): string {
-  return fillTemplate(claudeTemplate(key), params)
+  return fillTemplate(claudeTemplate(key, params), params)
 }
 
 /**

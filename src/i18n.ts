@@ -193,10 +193,6 @@ const dict = {
   'cost-source-backend': { zh: '内核上报的会话费用', en: 'session cost reported by the kernel' },
   'capability-unavailable-backend': { zh: '当前内核不支持：{{name}}', en: 'Not supported by this kernel: {{name}}' },
   'capability-failed': { zh: '{{name}} 失败 · {{err}}', en: '{{name}} failed · {{err}}' },
-  // ── MCP elicitation → questionnaire ────────────────────────────────
-  // The flow is backend-neutral (`src/backends/shared/elicitation.ts`); these
-  // entries are the copy codex still reads from here (its own module arrives
-  // with B-5). Claude carries its own copy in `src/backends/claude/text.ts`.
   'effort-tier-low': { zh: '低', en: 'Low' },
   'effort-tier-medium': { zh: '中', en: 'Medium' },
   'effort-tier-high': { zh: '高', en: 'High' },
@@ -225,6 +221,10 @@ const dict = {
   'status-rate-limit-seven-day': { zh: '7天', en: '7d' },
   'interrupt-failed': { zh: '打断请求失败：排队消息没有撤回，仍会在下一回合发送；已取消暂存，避免重复发送', en: 'The interrupt request failed: the queued messages were not withdrawn and will still run next turn; they are no longer held, so nothing is sent twice' },
   'interrupt-unconfirmed': { zh: '无法确认排队消息已撤回：它们仍会在下一回合发送，不再暂存', en: 'Could not confirm the queued messages were withdrawn: they will still run next turn and are no longer held' },
+  // ── MCP elicitation → questionnaire ────────────────────────────────
+  // The flow is backend-neutral (`src/backends/shared/elicitation.ts`); these
+  // entries are the copy codex still reads from here (its own module arrives
+  // with B-5). Claude carries its own copy in `src/backends/claude/text.ts`.
   'elicit-skip': { zh: '跳过', en: 'Skip' },
   'elicit-skip-desc': { zh: '这一项不填', en: 'Leave this field empty' },
   'elicit-optional': { zh: '{{title}}（可选）', en: '{{title}} (optional)' },

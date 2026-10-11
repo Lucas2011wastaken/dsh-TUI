@@ -25,10 +25,13 @@ import type { WorkingActivityView } from '../src/adapter/ports/channel-view.js'
 import { activityDetail, createClaudeActivityPublisher } from '../src/backends/claude/activity.js'
 import { createClaudeTranslator, type ClaudeActivityState } from '../src/backends/claude/translate.js'
 import { openClaudeSession } from '../src/backends/claude/session.js'
-import { setLang, t } from '../src/i18n.js'
-import { claudeText } from '../src/backends/claude/text.js'
+import { getLang, setLang, t } from '../src/i18n.js'
+import { claudeText, installClaudeLocale } from '../src/backends/claude/text.js'
 import { claudeDeps, fakeClaudeSdk } from './lib/claude-fake-sdk.js'
 
+// No session here (the fold is driven directly), so the backend's copy takes
+// its language straight from the host, exactly as `open()` wires it.
+installClaudeLocale(getLang)
 setLang('en')
 let passed = 0
 const check = (label: string, ok: boolean, detail?: unknown): void => {
@@ -132,6 +135,9 @@ const settle = async (rounds = 4): Promise<void> => { for (let i = 0; i < rounds
   check('turn end parks on the done card',
     done.phase === 'done' && done.live === false && done.line === claudeText('claude-activity-done-tools', { count: 2 }) && done.toolCount === 2,
     lines())
+  check('the done card renders one tool in the singular (the count picks the form)',
+    claudeText('claude-activity-done-tools', { count: 1 }) === 'Done · 1 tool',
+    claudeText('claude-activity-done-tools', { count: 1 }))
   check('the done card is not republished while idle', (feed({ type: 'system', subtype: 'status', status: 'ready' }), published.length) === published.length || published.at(-1) === done, lines())
 
   // The next turn revives the line from done.

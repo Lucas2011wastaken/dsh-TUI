@@ -111,6 +111,9 @@ const only = (events: readonly AgentEvent[]): Notice | undefined => notices(even
   check('auth_status progress → nothing', run('auth_status_progress').length === 0)
   const memory = only(run('memory_recall'))
   check('memory_recall → a row with the count', memory?.level === 'info' && memory.key === 'memory-recall' && memory.text === claudeText('claude-memory-recalled', { count: 2 }))
+  check('one recalled memory renders in the singular (the count picks the form)',
+    claudeText('claude-memory-recalled', { count: 1 }) === 'Recalled 1 memory',
+    claudeText('claude-memory-recalled', { count: 1 }))
   const synthesized = only(run('memory_recall_synthesize'))
   check('memory_recall (synthesize) → a row saying it was distilled', synthesized?.level === 'info' && synthesized.text === claudeText('claude-memory-synthesized'))
   const reset = run('conversation_reset')
