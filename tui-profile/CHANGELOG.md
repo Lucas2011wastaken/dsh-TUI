@@ -47,11 +47,13 @@
   共用的那批平台文案（10 条）；宿主字典
   （`src/i18n.ts`）与两个后端的字典都从它取，副本不再各存一份。`scripts/verify-i18n.ts`
   新增**跨字典一致性**断言：任一侧重新写回一份不同的副本即红。
-- **中立缝补一条边界规则**：`src/backends/shared/` 是后端栈的**地板**——只许 node 内建、
-  `src/agent/` 与自己目录，堵住"后端经缝间接读到宿主字典"的传递性漏洞（边界门禁只看直接
-  specifier）。`ADAPTER.md` 的规则表同改，唯一一条既有例外被**钉住**而不是放宽
-  （`channel-tokens.ts` → `src/utils/credentials.ts`，实测只 import node 内建的路径助手）；
-  `verify-backend-registry` 的拷贝树注入多一条常驻 probe（58 → 59），规则因此承重。
+- **中立缝补一条边界规则**：`src/backends/shared/` 是后端栈的**地板**——不 import scoped
+  （厂商）包；在 `src/` 内只 resolve 到 `src/agent/` 与自己目录；相对 import 不得逃出 `src/`。
+  堵住"后端经缝间接读到宿主字典"的传递性漏洞（边界门禁只看直接 specifier）。**非 scoped 的
+  运行时依赖不归这条管**（`channel-tokens.ts` 的 `yaml` 即一例），归依赖门禁。`ADAPTER.md`
+  的规则表同改，唯一一条既有例外被**钉住**而不是放宽（`channel-tokens.ts` →
+  `src/utils/credentials.ts`，实测只 import node 内建的路径助手）；`verify-backend-registry`
+  的拷贝树注入多两条常驻 probe（58 → 60：缝读宿主字典、缝逃出 `src/`），规则因此承重。
 - **`unloadExport` 与 `nativeKey` 两条的 C 半**（第三方说明 + 执行强度）：`notes/0009`
   与 `docs/plugin-admission-and-development.md` 写明池不变量由**宿主门禁**表达
   （probe 夹具的池台账，conformance fixture 层故意不承载），`nativeKey` 的三处执行体

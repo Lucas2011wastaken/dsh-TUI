@@ -435,31 +435,38 @@ for (const file of files) {
     }
     const target = resolveInternal(file, ref.specifier)
     if (target === undefined) {
-      // undefined means a bare specifier (node builtins, manifest-declared
-      // vendor packages — not this gate's business) or a relative import that
-      // escapes src/ entirely. The island whitelist is exhaustive, so the
-      // latter is a violation by definition; without this check the continue
-      // below would skip the island rule and let a backend import e.g.
-      // ../../../scripts/… pass unscanned.
-      if ((ref.specifier.startsWith('./') || ref.specifier.startsWith('../'))
-        && under(path, 'backends/') && !under(path, SHARED_BACKEND_DIR)) {
-        const own = path.split('/')[1]
-        violations.push(`${where} imports '${ref.specifier}' (outside src/); src/backends/${own}/ may import only its own directory, src/agent/ and src/backends/shared/ (the backend is an island)`)
+      // undefined means a bare specifier — node builtins, manifest-declared
+      // vendor packages, non-scoped runtime dependencies: not this gate's
+      // business, in either direction — or a relative import that escapes src/
+      // entirely. The island whitelist *and* the seam rule below are
+      // exhaustive, so the latter is a violation by definition; without this
+      // check the continue below would skip both and let a backend — or the
+      // seam itself — import e.g. ../../../scripts/… pass unscanned.
+      if ((ref.specifier.startsWith('./') || ref.specifier.startsWith('../')) && under(path, 'backends/')) {
+        if (under(path, SHARED_BACKEND_DIR)) {
+          violations.push(`${where} imports '${ref.specifier}' (outside src/); src/${SHARED_BACKEND_DIR} may resolve to src/agent/ and its own directory only (the seam sits below every backend)`)
+        } else {
+          const own = path.split('/')[1]
+          violations.push(`${where} imports '${ref.specifier}' (outside src/); src/backends/${own}/ may import only its own directory, src/agent/ and src/backends/shared/ (the backend is an island)`)
+        }
       }
       continue
     }
-    // The neutral seam is the floor of the backend stack (D15): node builtins,
+    // The neutral seam is the floor of the backend stack (D15): inside `src/`,
     // `src/agent/` (the domain every backend implements) and its own directory
-    // — nothing else under `src/`. Deliberately an allowlist rather than a deny
-    // list, so a *new* host module does not become reachable from the seam by
-    // default: if the seam could read `src/i18n.ts` (the host dictionary),
-    // `src/channel/**` (the host's projection) or `src/utils/**` (host
-    // tooling), every backend would reach the host's own copy through it —
-    // `BACKEND_ALLOWED_DIRS` is the same pair of directories a concrete backend
-    // may read, so the seam can never be a wider door than its readers.
+    // — nothing else. Deliberately an allowlist rather than a deny list, so a
+    // *new* host module does not become reachable from the seam by default: if
+    // the seam could read `src/i18n.ts` (the host dictionary), `src/channel/**`
+    // (the host's projection) or `src/utils/**` (host tooling), every backend
+    // would reach the host's own copy through it — `BACKEND_ALLOWED_DIRS` is
+    // the same pair of directories a concrete backend may read, so the seam can
+    // never be a wider door than its readers. What this rule does *not* cover
+    // is bare specifiers: scoped packages are refused above, the rest (node
+    // builtins, declared vendor packages, non-scoped runtime dependencies such
+    // as `yaml`) are out of its scope and belong to the dependency gates.
     if (under(path, SHARED_BACKEND_DIR) && !BACKEND_ALLOWED_DIRS.some(dir => under(target, dir))
       && !SHARED_PURE_LEAF_EDGES.includes(`${path} -> ${target.replace(/\.js$/u, '.ts')}`)) {
-      violations.push(`${where} imports src/${target}; src/${SHARED_BACKEND_DIR} may import only node builtins, src/agent/ and its own directory (the seam sits below every backend, so the host dictionary, src/channel/ and src/utils/ must stay out of reach)`)
+      violations.push(`${where} imports src/${target}; src/${SHARED_BACKEND_DIR} may resolve to src/agent/ and its own directory only inside src/ (the seam sits below every backend, so the host dictionary, src/channel/ and src/utils/ must stay out of reach)`)
     }
     for (const layer of LAYER_RULES) {
       if (!under(path, layer.dir)) continue

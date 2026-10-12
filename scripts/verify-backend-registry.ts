@@ -453,8 +453,11 @@ check('and opens a backend in exactly one place, inside the "not dsh" branch (D1
     // The seam's own rule (C-2): `src/backends/shared/` sits *below* every backend, so
     // it may not read the host dictionary either — otherwise a backend would reach the
     // host's copy through a module the island rule above never looks at (the boundary
-    // gate sees direct specifiers only). Same shape, one layer down.
+    // gate sees direct specifiers only). Same shape, one layer down. The second probe
+    // is the other half of that rule: the seam's allowlist holds inside `src/` only, so
+    // a relative import out of the tree (scripts/, vendor/) must be refused as well.
     { name: 'the neutral seam reads the host dictionary', file: 'src/backends/shared/probe.ts', source: "import { t } from '../../i18n.js'\nexport const s = t('doctor-unknown')\n" },
+    { name: 'the neutral seam escapes src/', file: 'src/backends/shared/probe.ts', source: "import { runVerifyI18n } from '../../../scripts/verify-i18n.js'\nexport const s = runVerifyI18n\n" },
   ]
   const probeFile = join(tree, 'src', 'agent', 'probe.ts')
   for (const probe of probes) {
