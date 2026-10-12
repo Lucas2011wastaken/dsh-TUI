@@ -2042,6 +2042,11 @@ const dict = {
   'sugg-panel-focus-desc': { zh: '聚焦侧栏面板', en: 'Focus the side panel' },
   'sugg-panel-zoom-desc': { zh: '缩放当前面板', en: 'Zoom the active panel' },
   'sugg-panel-id-desc': { zh: '打开该面板', en: 'Open this panel' },
+  // /plugin 的子命令提示（补全树；动态实参见 plugin-completions.ts）
+  'sugg-plugin-list-desc': { zh: '列出你装的额外插件', en: 'List the plugins this profile added' },
+  'sugg-plugin-info-desc': { zh: '查单个条目或待装 spec', en: 'Describe an installed plugin or an install spec' },
+  'sugg-plugin-registries-desc': { zh: '查看安装源', en: 'Show where installations ask' },
+  'sugg-plugin-check-desc': { zh: '校验清单，不安装', en: 'Validate a manifest without installing it' },
   'panel-unavailable-hint': { zh: '侧栏需要全屏且内容区 ≥93 列；该面板没有整屏形态', en: 'Sidebar needs fullscreen and ≥93 content columns; this panel has no fullscreen form' },
   // Model / display
   'cmd-desc-activity': { zh: '切换工作状态指示器预设' },

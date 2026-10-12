@@ -39,6 +39,7 @@ import { createDshSession } from '../backend/session.js'
 import { createDshTranslator, dshPricingWindow } from '../backend/translate.js'
 import { getHostMessageObserver, type TuiMessageObserverRuntime } from '../message-observer.js'
 import { createForeignBrowser } from '../migrate/browse.js'
+import { createPluginCompletionCatalog } from '../plugin-completions.js'
 import type { JobsRuntime } from '../jobs.js'
 import { listSummaries, noteBranch, type SessionSource, type SessionSummary } from '../sessions/index.js'
 import type { ChannelActionDelegates } from './action-readiness.js'
@@ -431,6 +432,9 @@ export function attachDshExtensions(
     grantStore: host.currentGrantStore,
   })
   const foreignBrowser = createForeignBrowser(() => ctx.get('sessionPersistence'), owner.signal)
+  // `/plugin info <name>` reads the same host service the report does (an
+  // absent service answers an empty popup, never a throw).
+  const pluginCompletions = createPluginCompletionCatalog(ctx, { owner, emit: () => state.emit() })
   const sessionMetadataActions = createSessionMetadataActions(ctx, {
     owner,
     binding,
@@ -750,7 +754,7 @@ export function attachDshExtensions(
   } satisfies Omit<ChannelActionDelegates, CoreServedAction>
 
   core.extend({
-    completions: { workspaceCommands: () => workspaceService.commands(), model: modelActions },
+    completions: { workspaceCommands: () => workspaceService.commands(), model: modelActions, plugin: pluginCompletions },
     bind: {
       ...bindingEvents.hooks,
       // Re-anchor the job projection after every bind: its event

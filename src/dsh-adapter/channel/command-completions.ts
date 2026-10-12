@@ -16,6 +16,11 @@ export function createCommandCompletions(deps: {
   /** The bound backend's MCP server names when it controls them
    *  (`/mcp reconnect|toggle`); undefined = `/mcp` takes no arguments. */
   mcpServers?(): readonly string[] | undefined
+  /** `/plugin info <name>`: the profile's added bundles, warm-and-read. */
+  plugin?: {
+    warmPluginNames(): void
+    pluginNames(): readonly CommandCompletionNode[]
+  }
   model: {
     warmModelNodes(): void
     modelNodes(): readonly CommandCompletionNode[]
@@ -32,6 +37,7 @@ export function createCommandCompletions(deps: {
       if ('model'.startsWith(head)) model.warmModelNodes()
       if ('preset'.startsWith(head)) model.warmPresetOptions()
       if ('effort'.startsWith(head)) model.warmEffortLevels()
+      if ('plugin'.startsWith(head)) deps.plugin?.warmPluginNames()
     }
     return completeCommands(input, state.commandList, path => {
       if (path.length === 1 && path[0] === 'model') {
@@ -126,6 +132,19 @@ export function createCommandCompletions(deps: {
         { name: 'on', description: 'Enter plan mode: read-only, plan before acting', descriptionKey: 'plan-mode-on-desc' },
         { name: 'off', description: 'Exit plan mode, back to normal execution', descriptionKey: 'plan-mode-off-desc' },
       ]
+      // `/plugin`'s own forms. The subcommand list is static — it is what the
+      // command accepts — while `info`'s argument is whatever the profile
+      // actually holds (an absent service answers an empty list, never a throw).
+      if (path.length === 1 && path[0] === 'plugin') return [
+        { name: 'list', description: 'List the plugins this profile added', descriptionKey: 'sugg-plugin-list-desc' },
+        { name: 'info', description: 'Describe an installed plugin or an install spec', descriptionKey: 'sugg-plugin-info-desc' },
+        { name: 'registries', description: 'Show where installations ask', descriptionKey: 'sugg-plugin-registries-desc' },
+        { name: 'check', description: 'Validate a plugin manifest without installing it', descriptionKey: 'sugg-plugin-check-desc' },
+      ]
+      if (path.length === 2 && path[0] === 'plugin' && path[1] === 'info') {
+        deps.plugin?.warmPluginNames()
+        return deps.plugin?.pluginNames() ?? []
+      }
       return commandTrees?.children(path) ?? []
     })
   }

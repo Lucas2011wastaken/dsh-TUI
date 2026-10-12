@@ -151,10 +151,13 @@ for (const [fullscreen, columns, service] of [
   })
   const screen = (): string => viewportLines(term, ROWS).join('\n')
   const hasText = (text: string): boolean => screen().replaceAll(/\s+/gu, '').includes(text.replaceAll(/\s+/gu, ''))
-  const run = async (line: string): Promise<void> => {
+  const type = async (line: string): Promise<void> => {
     for (const char of line) stdin.write(char)
     // 固定窗:pacing the prompt applies typed characters on its own render tick.
     await sleep(60)
+  }
+  const run = async (line: string): Promise<void> => {
+    await type(line)
     stdin.write('\r')
   }
   const clear = async (): Promise<void> => {
@@ -184,17 +187,41 @@ for (const [fullscreen, columns, service] of [
       // installation's own bundles), and the transcript keeps every earlier
       // report's lines on screen.
       await run('/plugin list')
+      // Settle on the block's tail, then assert the exclusion FIRST: it is the
+      // reason `list` exists, and it is the assertion a wrong predicate must
+      // break before the header count hides it.
       check(`${tag}: list answers`,
-        await settled(() => hasText(t('plugins-list-header', { count: '2' }))), screen())
-      check(`${tag}: list leads with the trust banner`,
-        above('C-070', t('plugins-list-header', { count: '2' })), screen())
+        await settled(() => hasText('/plugin info') && hasText('/plugin registries')), screen())
+      check(`${tag}: list leaves the installation's own bundles out`,
+        !hasText('@deepseek-ai/dsh-base') && !hasText('@deepseek-harness-tui/dsh-tui'), screen())
       check(`${tag}: list names the plugins the person added`,
         hasText(`verify-plugin-undeclared 3.1.4 · off · ${t('plugins-tag-undeclared')}`) &&
         hasText('verify-plugin-locked 4.0.0 · on · not removable'), screen())
-      check(`${tag}: list leaves the installation's own bundles out`,
-        !hasText('@deepseek-ai/dsh-base') && !hasText('@deepseek-harness-tui/dsh-tui'), screen())
+      check(`${tag}: list leads with the trust banner`,
+        above('C-070', t('plugins-list-header', { count: '2' })), screen())
       check(`${tag}: list points at the detail forms`,
         hasText('/plugin info') && hasText('/plugin registries'), screen())
+      await clear()
+
+      // The completion tree: the static subcommand hints first, then whatever
+      // names the service holds. The popup shows the path WITHOUT a leading
+      // slash and the composer with one, so the Tab assertion below reads the
+      // composer alone.
+      await type('/plugin ')
+      check(`${tag}: the popup offers the list and registries forms`,
+        await settled(() => hasText('plugin list') && hasText('plugin registries')), screen())
+      if (columns >= 100) {
+        check(`${tag}: the popup describes the forms`,
+          hasText(t('sugg-plugin-list-desc')) && hasText(t('sugg-plugin-registries-desc')), screen())
+      }
+      await type('info ')
+      check(`${tag}: info completes the names the profile added`,
+        await settled(() => hasText('plugin info verify-plugin-undeclared')), screen())
+      check(`${tag}: the popup leaves the installation's own bundles out`,
+        !hasText('@deepseek-ai/dsh-base'), screen())
+      stdin.write('\t')
+      check(`${tag}: Tab accepts the completed name into the composer`,
+        await settled(() => hasText('/plugin info verify-plugin-undeclared')), screen())
       await clear()
     }
 

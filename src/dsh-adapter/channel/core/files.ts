@@ -28,6 +28,11 @@ export interface CompletionCatalog {
     presetOptions(): readonly { id: string; description?: string; name?: string; isDefault?: boolean }[]
     warmEffortLevels(): void
   }
+  /** `/plugin info <name>`: the bundles the profile added (absent = no service). */
+  plugin?: {
+    warmPluginNames(): void
+    pluginNames(): readonly CommandCompletionNode[]
+  }
 }
 
 /** No argument catalogs: the tree offers its static nodes only. */
@@ -77,6 +82,7 @@ export function createCoreFiles(ctx: ServiceLookup, deps: {
         workspaceCommands: catalog.workspaceCommands,
         ...(deps.mcpServers === undefined ? {} : { mcpServers: deps.mcpServers }),
         model: catalog.model,
+        ...(catalog.plugin === undefined ? {} : { plugin: catalog.plugin }),
       })
     },
   }
