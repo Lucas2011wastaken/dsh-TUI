@@ -328,15 +328,29 @@ const expectBackend = (name: string, body: () => unknown, pass: boolean): void =
 }
 
 // --- 5. 篡改必败（fail-closed 自检） ---------------------------------------
+// 两个 section 的 profile 都在 digest 钉住范围内：协议定义（definitions）与
+// TUI 自己的扩展定义（extensions）——W-2 之后 `Backend` 的 contract profile 也在此列，
+// 这正是 stage C「改正文不换坐标 = digest 漂移必红」那条承诺的执行体，不是纸面断言。
 const tamperedRoot = mkdtempSync(join(tmpdir(), 'dsh-plugin-spec-tamper-'))
 try {
   copySpec(join(tamperedRoot, 'tui-profile'))
-  const privateEntry = data.registry.definitions[0]
-  const target = join(tamperedRoot, 'tui-profile', privateEntry.profile)
-  writeFileSync(target, `${readFileSync(target, 'utf8')}\n`)
-  const tampered = loadSpecData(join(tamperedRoot, 'tui-profile'))
-  const drift = tampered ? verifyRegistry(tampered) : ['tampered copy unreadable']
-  expect('tampered private profile detected', drift.length === 1 && drift[0].includes(privateEntry.name), drift.join(' | '))
+  const pinned = [
+    data.registry.definitions[0],
+    data.registry.extensions.find(entry => entry.name === 'tui.backend'),
+  ]
+  for (const privateEntry of pinned) {
+    if (privateEntry === undefined || !('profile' in privateEntry)) {
+      throw new Error('a pinned private profile entry is missing from the registry')
+    }
+    const target = join(tamperedRoot, 'tui-profile', privateEntry.profile)
+    const original = readFileSync(target)
+    writeFileSync(target, `${original.toString('utf8')}\n`)
+    const tampered = loadSpecData(join(tamperedRoot, 'tui-profile'))
+    const drift = tampered ? verifyRegistry(tampered) : ['tampered copy unreadable']
+    expect(`tampered private profile detected (${privateEntry.name})`,
+      drift.length === 1 && drift[0].includes(privateEntry.name), drift.join(' | '))
+    writeFileSync(target, original)
+  }
 } finally {
   rmSync(tamperedRoot, { recursive: true, force: true })
 }
