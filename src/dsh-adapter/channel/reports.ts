@@ -13,7 +13,9 @@ import { sessionsRoots } from '../compat/index.js'
 import { snapshotLiveSessionEvents } from '../compat/liveSession.js'
 import { getHostGrantStore } from '../host-grants.js'
 import { getHostFacade } from '../plugin-host.js'
-import { pluginsInfoLines } from '../plugins-info.js'
+import { pluginDeclarationOf } from '../plugin-declaration.js'
+import { pluginManagerOf } from '../plugin-manager.js'
+import { pluginReport } from '../plugins-info.js'
 import type { ChannelOwner } from './owner.js'
 import { toolResultText } from './transcript.js'
 
@@ -160,9 +162,15 @@ export function createReportActions(ctx: Context, deps: {
     return lines
   }
 
-  const pluginsInfo = (args: string): string[] => {
+  const pluginsInfo = async (args: string): Promise<string[]> => {
     const host = ctx.get('tuiPluginHost')
-    return pluginsInfoLines(args, { grants: getHostGrantStore(host) ?? deps.grantStore(), host: host?.describe() })
+    // The profile plugin service is host-provided and optional (#183): the
+    // report answers with the diagnostics plus a reason when it is absent.
+    return pluginReport(args, {
+      grants: getHostGrantStore(host) ?? deps.grantStore(),
+      host: host?.describe(),
+      declaration: packageName => pluginDeclarationOf(ctx, packageName),
+    }, pluginManagerOf(ctx))
   }
 
   return { balanceInfo, mcpStatus, exportSession, initWorkspace, doctorInfo, pluginsInfo }

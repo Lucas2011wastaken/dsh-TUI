@@ -58,6 +58,18 @@ export const HOST_TYPE_PACKAGES = [
   '@deepseek-ai/dsh-launch-environment',
 ] as const
 
+/**
+ * The packages the adapter takes types from for host services it reaches
+ * through `ctx` rather than through the entry's host boot; each is an
+ * optional peer + dev dependency and blessed. Unlike {@link HOST_TYPE_PACKAGES}
+ * these are read by the running profile's own composition, and the host CLI
+ * supplies the package (a profile has no copy) — so absence at run time is
+ * valid and the consumer degrades instead of failing.
+ */
+export const ADAPTER_TYPE_PACKAGES = [
+  '@deepseek-ai/dsh-plugin-manager',
+] as const
+
 /** One upstream body the entry reproduces (fingerprinted by verify:contract). */
 export interface HostReplica {
   readonly id: string

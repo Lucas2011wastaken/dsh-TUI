@@ -25,15 +25,18 @@
 
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
+import type { BundleInfo, PluginInfo } from '@deepseek-ai/dsh-plugin-manager/types'
 import { parseManifest, projectManifest } from '../adapter/standard/protocols.js'
 import { DATA_DIR } from '../utils/paths.js'
-import { t } from '../i18n.js'
+import { getLang, t } from '../i18n.js'
 import { loadSpecData } from '../adapter/standard/registry.js'
 import { createContractIndex, validatePlugin, negotiate } from '../adapter/standard/admission.js'
 import type { NegotiationDecision } from '../adapter/standard/types.js'
 import { cleanScalarText } from './sanitize.js'
 import type { GrantStore } from '../adapter/standard/grants.js'
 import type { HostDescriptorBuild } from '../adapter/standard/descriptor.js'
+import { isCompositionOwned, type PluginDeclaration } from './plugin-declaration.js'
+import type { PluginManagerView } from './plugin-manager.js'
 import { PLUGIN_STORAGE_DIR } from './plugin-storage.js'
 import { EFFECT_LEDGER_FILE } from './effect-ledger.js'
 
@@ -49,6 +52,8 @@ export interface PluginsInfoDeps {
   grants: GrantStore
   /** The plugin-host row's descriptor build; undefined → row not mounted. */
   host?: HostDescriptorBuild
+  /** A package's declaration, resolved from the running composition. */
+  declaration?: (packageName: string) => PluginDeclaration | undefined
   /** Test overrides; default under DATA_DIR. */
   dataDir?: string
   ledgerFile?: string
@@ -199,47 +204,59 @@ function checkManifestLines(pathArg: string, deps: PluginsInfoDeps): string[] {
   return lines
 }
 
-function decisionLines(decision: NegotiationDecision): string[] {
+/** The five-state vocabulary as one cell (shared by `check` and the list tags). */
+function stateText(decision: NegotiationDecision): string {
   switch (decision.decision) {
     case 'compatible':
-      return [t('plugins-check-state', { state: 'compatible' })]
+      return 'compatible'
     case 'compatible_degraded':
-      return [t('plugins-check-state', {
-        state: `compatible_degraded (missingOptional: ${cell(decision.missingOptional.join(', '))})`,
-      })]
+      return `compatible_degraded (missingOptional: ${cell(decision.missingOptional.join(', '))})`
     case 'waiting_authorization':
-      return [t('plugins-check-state', {
-        state: `waiting_authorization (${cell(decision.reasonCode)}: ${cell(decision.deniedPermissions.join(', '))})`,
-      })]
+      return `waiting_authorization (${cell(decision.reasonCode)}: ${cell(decision.deniedPermissions.join(', '))})`
     case 'rejected': {
       const detail = decision.missingRequired !== undefined
         ? `${cell(decision.reasonCode)}: ${cell(decision.missingRequired.join(', '))}`
         : `${cell(decision.reasonCode)}: facet ${cell(decision.facetApiVersion)} vs host [${cell((decision.hostFacetApiVersions ?? []).join(', '))}]`
-      return [t('plugins-check-state', { state: `rejected (${detail})` })]
+      return `rejected (${detail})`
     }
     case 'unknown':
-      return [t('plugins-check-state', {
-        state: `unknown (${cell(decision.reasonCode)}: ${cell(decision.unknownContracts.join(', '))})`,
-      })]
+      return `unknown (${cell(decision.reasonCode)}: ${cell(decision.unknownContracts.join(', '))})`
   }
+}
+
+function decisionLines(decision: NegotiationDecision): string[] {
+  return [t('plugins-check-state', { state: stateText(decision) })]
+}
+
+/** Which form of the command the raw argument text asks for. */
+export type PluginArgs =
+  | { readonly kind: 'overview' }
+  | { readonly kind: 'check'; readonly path: string }
+  | { readonly kind: 'unknown'; readonly sub: string }
+
+/** Route `/plugin`'s argument text: one parser, so both halves of the report agree. */
+export function parsePluginArgs(args: string): PluginArgs {
+  const trimmed = args.trim()
+  if (trimmed === '') return { kind: 'overview' }
+  const [sub, ...rest] = trimmed.split(/\s+/)
+  if (sub === 'check') return { kind: 'check', path: rest.join(' ') }
+  return { kind: 'unknown', sub: sub ?? '' }
 }
 
 /** The `/plugin` overview lines (banner always first). */
 export function pluginsInfoLines(args: string, deps: PluginsInfoDeps): string[] {
   const lines: string[] = [t('plugins-trust-banner')]
-  const trimmed = args.trim()
-  if (trimmed !== '') {
-    const [sub, ...rest] = trimmed.split(/\s+/)
-    if (sub === 'check') {
-      const pathArg = rest.join(' ')
-      if (pathArg === '') {
-        lines.push(t('plugins-check-usage'))
-        return lines
-      }
-      lines.push(...checkManifestLines(pathArg, deps))
+  const parsed = parsePluginArgs(args)
+  if (parsed.kind === 'check') {
+    if (parsed.path === '') {
+      lines.push(t('plugins-check-usage'))
       return lines
     }
-    lines.push(t('plugins-unknown-subcommand', { sub: cell(sub) }))
+    lines.push(...checkManifestLines(parsed.path, deps))
+    return lines
+  }
+  if (parsed.kind === 'unknown') {
+    lines.push(t('plugins-unknown-subcommand', { sub: cell(parsed.sub) }))
     return lines
   }
 
@@ -311,4 +328,136 @@ export function pluginsInfoLines(args: string, deps: PluginsInfoDeps): string[] 
     }
   }
   return lines
+}
+
+/**
+ * What a listed package says about itself (gate 1's evidence): no declaration
+ * at all, a declaration this profile cannot read, or the negotiated decision.
+ */
+type DeclarationVerdict =
+  | { readonly kind: 'undeclared' }
+  | { readonly kind: 'invalid'; readonly error: string }
+  | { readonly kind: 'decided'; readonly decision: NegotiationDecision }
+
+/** Evaluate a package's declaration exactly as `check <path>` does. */
+function declarationVerdict(deps: PluginsInfoDeps, packageName: string): DeclarationVerdict {
+  const declaration = deps.declaration?.(packageName)
+  if (declaration === undefined) return { kind: 'undeclared' }
+  const data = loadSpecData()
+  if (data === undefined) return { kind: 'invalid', error: t('plugins-check-spec-unavailable') }
+  let manifest
+  try {
+    manifest = parseManifest(declaration.source, { source: declaration.path })
+    projectManifest(manifest)
+  } catch (error) {
+    return { kind: 'invalid', error: cell(error instanceof Error ? error.message : String(error)) }
+  }
+  const index = createContractIndex(data.registry, data.permissions)
+  try {
+    validatePlugin(index, manifest)
+  } catch (error) {
+    return { kind: 'invalid', error: cell(error instanceof Error ? error.message : String(error)) }
+  }
+  const host = deps.host
+  if (host === undefined) return { kind: 'invalid', error: t('plugins-check-host-unavailable') }
+  const granted = manifest.permissions.map(request => ({
+    name: request.name,
+    scope: request.scope,
+    granted: deps.grants.allows({ componentId: manifest.id }, request.name, request.scope),
+  }))
+  return { kind: 'decided', decision: negotiate(index, manifest, host.descriptor, granted) }
+}
+
+/**
+ * The gate-1 tag for one listed package, or `undefined` when it needs none.
+ * The composition's own rows are not plugins a person installed, so an absent
+ * declaration there is the normal state rather than a finding.
+ */
+function declarationTag(deps: PluginsInfoDeps, packageName: string): string | undefined {
+  const verdict = declarationVerdict(deps, packageName)
+  switch (verdict.kind) {
+    case 'undeclared':
+      return isCompositionOwned(packageName) ? undefined : t('plugins-tag-undeclared')
+    case 'invalid':
+      return t('plugins-tag-invalid', { err: verdict.error })
+    case 'decided':
+      return t('plugins-tag-declared', { state: stateText(verdict.decision) })
+  }
+}
+
+/** Pick a display string out of the host's localized metadata. */
+function localizedText(value: string | { readonly en: string; readonly [locale: string]: string } | undefined, fallback: string): string {
+  if (value === undefined) return fallback
+  if (typeof value === 'string') return value
+  return value[getLang()] ?? value.en ?? fallback
+}
+
+/** One bundle row: what the profile holds, how it is controlled, what it says. */
+function bundleLine(deps: PluginsInfoDeps, bundle: BundleInfo): string {
+  const flags: string[] = [bundle.enabled ? t('plugins-bundle-on') : t('plugins-bundle-off')]
+  if (!bundle.removable) flags.push(t('plugins-bundle-kept'))
+  if (bundle.readOnlyReason !== undefined) flags.push(t('plugins-bundle-locked', { reason: cell(bundle.readOnlyReason) }))
+  if (bundle.error !== undefined) flags.push(t('plugins-bundle-problem', { code: cell(bundle.error.code) }))
+  const tag = declarationTag(deps, bundle.name)
+  if (tag !== undefined) flags.push(tag)
+  const title = cell(localizedText(bundle.meta?.title, bundle.name))
+  const version = bundle.version === undefined ? '' : ` ${cell(bundle.version)}`
+  const rows = t('plugins-bundle-rows', { rows: String(bundle.rows.length), overrides: String(bundle.overrides.length) })
+  return `  ${title}${version} · ${flags.join(' · ')} · ${rows}`
+}
+
+/** Official (installation-supplied) bundles first, then the profile's own. */
+function bundleSectionLines(deps: PluginsInfoDeps, bundles: readonly BundleInfo[]): string[] {
+  if (bundles.length === 0) return [t('plugins-bundles-empty')]
+  const lines: string[] = [t('plugins-bundles-header')]
+  const group = (label: string, group: readonly BundleInfo[]): void => {
+    if (group.length === 0) return
+    lines.push(` ${label}:`)
+    for (const bundle of group) lines.push(bundleLine(deps, bundle))
+  }
+  group(t('plugins-bundles-official'), bundles.filter(bundle => bundle.optional))
+  group(t('plugins-bundles-installed'), bundles.filter(bundle => !bundle.optional))
+  // The tag is explained once per report, next to the rows it qualifies: this
+  // surface is a transcript, so there is nothing to click open (C-3).
+  if (bundles.some(bundle => !isCompositionOwned(bundle.name) && deps.declaration?.(bundle.name) === undefined)) {
+    lines.push(t('plugins-tag-undeclared-hint'))
+  }
+  return lines
+}
+
+/** Loader entries the profile cannot address through a patch row. */
+function pluginRowLines(plugins: readonly PluginInfo[]): string[] {
+  const unaddressable = plugins.filter(plugin => !('patchId' in plugin))
+  if (unaddressable.length === 0) return []
+  return [
+    t('plugins-rows-header'),
+    ...unaddressable.map(plugin => {
+      const title = cell(localizedText(plugin.meta?.title, plugin.moduleName))
+      const reason = plugin.readOnlyReason === undefined ? '' : cell(plugin.readOnlyReason)
+      return `  ${title} · ${reason} · ${cell(plugin.entryId)}`
+    }),
+  ]
+}
+
+/** The service-backed half of the report (empty for a form that needs no service). */
+export async function pluginServiceLines(
+  args: string,
+  deps: PluginsInfoDeps,
+  manager: PluginManagerView | undefined,
+): Promise<string[]> {
+  const parsed = parsePluginArgs(args)
+  if (parsed.kind === 'check' || parsed.kind === 'unknown') return []
+  if (manager === undefined) return [t('plugins-service-unavailable')]
+  const bundles = await manager.listBundles()
+  const plugins = await manager.listPlugins()
+  return [...bundleSectionLines(deps, bundles), ...pluginRowLines(plugins)]
+}
+
+/** `/plugin`: the diagnostics half plus the profile's own bundles and rows. */
+export async function pluginReport(
+  args: string,
+  deps: PluginsInfoDeps,
+  manager: PluginManagerView | undefined,
+): Promise<string[]> {
+  return [...pluginsInfoLines(args, deps), ...await pluginServiceLines(args, deps, manager)]
 }

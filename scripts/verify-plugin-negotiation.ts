@@ -354,7 +354,7 @@ const overview = () => pluginsInfoLines('', { grants, host })
   const chat = readFileSync(join(root, 'src/screens/Chat.tsx'), 'utf8')
   check1("Chat.tsx dispatches canonical 'plugin' and the 'plugins' alias to channel.pluginsInfo(rawInput)",
     /case 'plugin':\s*\n\s*\/\/[^\n]*\n\s*case 'plugins':/.test(chat) && chat.includes('channel.pluginsInfo(rawInput)'))
-  check1('channel interface declares pluginsInfo(args)', readFileSync(join(root, 'src/adapter/ports/channel-ui.ts'), 'utf8').includes('pluginsInfo(args: string): string[]'))
+  check1('channel interface declares pluginsInfo(args)', readFileSync(join(root, 'src/adapter/ports/channel-ui.ts'), 'utf8').includes('pluginsInfo(args: string): Promise<string[]>'))
   // Reports were extracted from channel.ts. Exercise their live ctx lookup
   // instead of pinning an implementation location with root-source regexes.
   let reportHost: { generationId: string; selfCheck(): readonly string[]; describe(): ReturnType<typeof liveHostDescriptor> } | undefined
@@ -375,13 +375,17 @@ const overview = () => pluginsInfoLines('', { grants, host })
   const missingDoctor = reportActions.doctorInfo()
   check1('reports handles a missing plugin host',
     missingDoctor.some(line => line.includes('未挂载')))
-  check1('reports handles a missing plugin host for /plugins',
-    reportActions.pluginsInfo('').some(line => line.includes('plugin-host 行未挂载')))
+  check1('reports handles a missing plugin host for /plugin',
+    (await reportActions.pluginsInfo('')).some(line => line.includes('plugin-host 行未挂载')))
   reportHost = { generationId: 'late-host-generation', selfCheck: () => [], describe: () => host }
   const liveDoctor = reportActions.doctorInfo()
   check1('reports observes a host mounted after action construction',
     liveDoctor.some(line => line.includes('late-host-generation')) &&
-    reportActions.pluginsInfo('').some(line => line.includes('generation negotiation-battery')))
+    (await reportActions.pluginsInfo('')).some(line => line.includes('generation negotiation-battery')))
+  // The profile plugin service is absent in this composition: the report says
+  // so instead of failing, and the diagnostics half is unchanged.
+  check1('reports explains an absent profile plugin service',
+    (await reportActions.pluginsInfo('')).some(line => line.includes('ctx.pluginManager')))
   check1('reports exposes a clean live registry self-check',
     liveDoctor.some(line => line.includes('自检') && line.includes('✓')))
   reportHost = { ...reportHost, selfCheck: () => ['late registry violation'] }

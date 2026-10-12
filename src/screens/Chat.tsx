@@ -3511,7 +3511,11 @@ export function Chat({
         // grant matrix / ledger tail — or validate+negotiate for
         // `/plugin check <path>` (rawInput carries the subcommand).
         setHelpOpen(false)
-        channel.pushLocal('/plugin', channel.pluginsInfo(rawInput))
+        // The bundle/row half comes from the host plugin service, so the
+        // report is async (the `/agents` case reads the same way).
+        void channel.pluginsInfo(rawInput).then((lines) => {
+          channel.pushLocal('/plugin', lines)
+        })
         return true
       case 'export': {
         const target = channel.exportSession()

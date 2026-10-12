@@ -16,7 +16,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSy
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { delimiter, dirname, join, resolve } from 'node:path'
-import { HOST_MODULES, HOST_PACKAGE, HOST_REPLICA_VERSION, HOST_REPLICAS, HOST_TYPE_PACKAGES } from '../src/dsh-adapter/host-contract.js'
+import { ADAPTER_TYPE_PACKAGES, HOST_MODULES, HOST_PACKAGE, HOST_REPLICA_VERSION, HOST_REPLICAS, HOST_TYPE_PACKAGES } from '../src/dsh-adapter/host-contract.js'
 import { UPSTREAM_BLESSED_PACKAGES, UPSTREAM_VALIDATED_VERSION, upstreamDriftSummary } from '../src/dsh-adapter/contract.js'
 import { findHostDsh, loadHostDsh } from '../src/dsh-adapter/host-dsh.js'
 import { fingerprintReplica } from './lib/host-replicas.js'
@@ -33,7 +33,7 @@ const packageOf = (specifier: string): string => specifier.split('/').slice(0, 2
 
 // ── 1. the contract's own consistency ──────────────────────────────────
 const blessed = new Set<string>(UPSTREAM_BLESSED_PACKAGES)
-for (const name of HOST_TYPE_PACKAGES) check(`${name} is blessed`, blessed.has(name))
+for (const name of [...HOST_TYPE_PACKAGES, ...ADAPTER_TYPE_PACKAGES]) check(`${name} is blessed`, blessed.has(name))
 for (const spec of HOST_MODULES) {
   const name = packageOf(spec.specifier)
   check(`${spec.specifier} belongs to a declared package`, blessed.has(name) || name === HOST_PACKAGE || name === '@deepseek-ai/cordis-plugin-loader', name)
