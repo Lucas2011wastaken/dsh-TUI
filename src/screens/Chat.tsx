@@ -3505,8 +3505,6 @@ export function Chat({
         return true
       }
       case 'plugin':
-      // Deprecated alias, one release cycle (`/quit` + `/q` stack the same way).
-      case 'plugins':
         // Plugin diagnostics (C-070): trust banner first, then descriptor /
         // grant matrix / ledger tail — or validate+negotiate for
         // `/plugin check <path>` (rawInput carries the subcommand).

@@ -1,8 +1,8 @@
 /**
  * `/plugin` in real Chat (Stage C-3): the diagnostics half, the profile's
  * bundles and rows from the host plugin service, gate 1's tag, `info`,
- * `registries`, the deprecated `/plugins` alias, and what happens when the
- * service is absent.
+ * `registries`, the removed old name, and what happens when the service is
+ * absent.
  *
  * The service is a fake: nothing here installs, removes, or enables anything.
  * The declared-and-supported branch of the tag goes through the same
@@ -207,9 +207,13 @@ for (const [fullscreen, columns, servicePresent] of [
       hasText(t('plugins-info-registries-resolved', { registry: t('plugins-info-registries-none') })), screen())
     await clear()
 
-    await run('/plugins')
-    check(`${tag}: the deprecated alias answers the same way`,
-      await settled(() => hasText('Installed bundles') && hasText(t('plugins-tag-undeclared'))), screen())
+    // The rename shipped without a deprecation cycle: nothing was released
+    // under the old name, so the merged catalog — the list dispatch and the
+    // root completion both match `name` against — must no longer carry it.
+    // (A screen-level absence check would read the transcript, which still
+    // holds the previous report's lines.)
+    check(`${tag}: the removed old name is not a command`,
+      !channel.commandList.some(command => command.name === 'plugins'), channel.commandList.map(command => command.name).join(','))
     await clear()
 
     await run('/plugin bogus')
