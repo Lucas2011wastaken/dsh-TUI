@@ -15,7 +15,7 @@
  * - controls: permission modes and presets, model / preset / effort, manual
  *   compaction, the model-selection waterfalls and the child-route fill;
  * - reports: `/doctor`, `/export` (from the log), `/mcp`, `/init`, `/balance`,
- *   `/plugins`, `/login` credential descriptions.
+ *   `/plugin`, `/login` credential descriptions.
  *
  * Construction order matters where it is observable: the job feed and
  * pricing are installed before the seed replay, the replay runs before the

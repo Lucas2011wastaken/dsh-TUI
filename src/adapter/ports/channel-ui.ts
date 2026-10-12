@@ -752,7 +752,7 @@ export interface ChannelUi {
   initWorkspace(): string | null
   /** Environment diagnostics for `/doctor`. */
   doctorInfo(): string[]
-  /** Plugin contract/grant/ledger diagnostics for `/plugins` (C-070 trust
+  /** Plugin contract/grant/ledger diagnostics for `/plugin` (C-070 trust
    *  banner first line; `check <path>` runs validatePlugin + negotiate). */
   pluginsInfo(args: string): string[]
   /** Subagent rows for `/agents` (DSH subagent service; empty message when

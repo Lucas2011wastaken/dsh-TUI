@@ -346,10 +346,14 @@ const overview = () => pluginsInfoLines('', { grants, host })
 // ── F. 接线断言 ───────────────────────────────────────────────────────────
 {
   const commands = readFileSync(join(root, 'src/commands.ts'), 'utf8')
-  check1("LOCAL_COMMANDS carries 'plugins'", /\{ name: 'plugins', description: /.test(commands))
+  check1("LOCAL_COMMANDS carries 'plugin'", /\{ name: 'plugin', description: /.test(commands))
+  // The deprecated alias is a second row, not an `aliases` field: the root
+  // completion candidates and the dispatch both match `name` only.
+  check1("LOCAL_COMMANDS carries the deprecated 'plugins' alias",
+    /\{ name: 'plugins', description: .*deprecated/i.test(commands) && commands.includes("tag: 'deprecated alias of /plugin'"))
   const chat = readFileSync(join(root, 'src/screens/Chat.tsx'), 'utf8')
-  check1("Chat.tsx dispatches case 'plugins' to channel.pluginsInfo(rawInput)",
-    chat.includes("case 'plugins':") && chat.includes('channel.pluginsInfo(rawInput)'))
+  check1("Chat.tsx dispatches canonical 'plugin' and the 'plugins' alias to channel.pluginsInfo(rawInput)",
+    /case 'plugin':\s*\n\s*\/\/[^\n]*\n\s*case 'plugins':/.test(chat) && chat.includes('channel.pluginsInfo(rawInput)'))
   check1('channel interface declares pluginsInfo(args)', readFileSync(join(root, 'src/adapter/ports/channel-ui.ts'), 'utf8').includes('pluginsInfo(args: string): string[]'))
   // Reports were extracted from channel.ts. Exercise their live ctx lookup
   // instead of pinning an implementation location with root-source regexes.
@@ -386,7 +390,8 @@ const overview = () => pluginsInfoLines('', { grants, host })
   const i18n = readFileSync(join(root, 'src/i18n.ts'), 'utf8')
   check1('trust banner exists in both languages',
     i18n.includes("'plugins-trust-banner'") && i18n.includes('同进程运行') && i18n.includes('in-process with the host'))
-  check1("cmd-desc-plugins exists", i18n.includes("'cmd-desc-plugins'"))
+  check1("cmd-desc-plugin and the alias's cmd-desc-plugins exist",
+    i18n.includes("'cmd-desc-plugin'") && i18n.includes("'cmd-desc-plugins'") && i18n.includes('已弃用'))
   check1('doctor plugin keys exist in both languages',
     i18n.includes("'doctor-plugin-generation'") && i18n.includes('Plugin runtime generation') &&
     i18n.includes("'doctor-plugin-registry'") && i18n.includes('Plugin-spec registry self-check'))

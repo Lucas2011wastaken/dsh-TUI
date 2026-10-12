@@ -1,6 +1,6 @@
 /**
- * /plugins diagnostics surface (C-070 trust disclosure + C-030 negotiation
- * diagnostics): assembles the lines behind the `/plugins` command.
+ * /plugin diagnostics surface (C-070 trust disclosure + C-030 negotiation
+ * diagnostics): assembles the lines behind the `/plugin` command.
  *
  * Sections (overview):
  *
@@ -16,7 +16,7 @@
  *    Loader). The header says so honestly.
  * 4. LEDGER TAIL — the last 5 effect-ledger records.
  *
- * `/plugins check <path>` uses the parser and projection from the pinned
+ * `/plugin check <path>` uses the parser and projection from the pinned
  * @dsh-std/manifest revision, then evaluates every public/private protocol
  * through one ProtocolCatalog. Manifests and on-disk files are UNTRUSTED input:
  * every derived line passes cleanScalarText before it reaches the
@@ -124,7 +124,7 @@ function footprintPlugins(deps: PluginsInfoDeps, dataDir: string, ledgerFile: st
   return [...found].sort()
 }
 
-/** `/plugins check <path>`: official parse/projection + profile validation + negotiation. */
+/** `/plugin check <path>`: official parse/projection + profile validation + negotiation. */
 function checkManifestLines(pathArg: string, deps: PluginsInfoDeps): string[] {
   const lines: string[] = []
   const target = resolve(pathArg)
@@ -177,7 +177,7 @@ function checkManifestLines(pathArg: string, deps: PluginsInfoDeps): string[] {
     .map(request => ({
       name: request.name,
       scope: request.scope,
-      // `/plugins check` has no live activation instance. Passing an
+      // `/plugin check` has no live activation instance. Passing an
       // activation-less principal makes GrantStore fail closed when policy
       // contains activation-scoped rules instead of treating them as global.
       granted: deps.grants.allows({ componentId: manifest.id }, request.name, request.scope),
@@ -224,7 +224,7 @@ function decisionLines(decision: NegotiationDecision): string[] {
   }
 }
 
-/** The `/plugins` overview lines (banner always first). */
+/** The `/plugin` overview lines (banner always first). */
 export function pluginsInfoLines(args: string, deps: PluginsInfoDeps): string[] {
   const lines: string[] = [t('plugins-trust-banner')]
   const trimmed = args.trim()

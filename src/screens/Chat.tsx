@@ -3504,12 +3504,14 @@ export function Chat({
         void collectMigrateRows().then(setMigrateRows)
         return true
       }
+      case 'plugin':
+      // Deprecated alias, one release cycle (`/quit` + `/q` stack the same way).
       case 'plugins':
         // Plugin diagnostics (C-070): trust banner first, then descriptor /
         // grant matrix / ledger tail — or validate+negotiate for
-        // `/plugins check <path>` (rawInput carries the subcommand).
+        // `/plugin check <path>` (rawInput carries the subcommand).
         setHelpOpen(false)
-        channel.pushLocal('/plugins', channel.pluginsInfo(rawInput))
+        channel.pushLocal('/plugin', channel.pluginsInfo(rawInput))
         return true
       case 'export': {
         const target = channel.exportSession()

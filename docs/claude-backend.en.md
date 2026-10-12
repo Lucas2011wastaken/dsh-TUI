@@ -116,7 +116,7 @@ Works, served by Claude:
 Not available (hidden from completion; typing one shows a notice and nothing is
 sent to the model): `/tree`, `/agentview`, `/bg`, `/home`, `/workspace`,
 `/preset`, `/provider`, `/balance`, `/config`, `/reload`,
-`/setup`, `/migrate`, `/skills`, `/plugins`, `/hooks`, `/add-dir`,
+`/setup`, `/migrate`, `/skills`, `/plugin`, `/hooks`, `/add-dir`,
 `/goal` (Claude has no goal capability). Other commands the DSH composition
 registers (such as `/plan`) do not appear either.
 

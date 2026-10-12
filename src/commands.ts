@@ -93,7 +93,8 @@ export const LOCAL_COMMANDS: LocalCommand[] = [
   { name: 'hooks', description: 'Show hooks status' },
   { name: 'mcp', description: 'Show MCP status' },
   { name: 'skills', description: 'List available skills' },
-  { name: 'plugins', description: 'Show plugin contract, grant, and ledger diagnostics' },
+  { name: 'plugin', description: 'Show plugin diagnostics and the profile bundles and rows' },
+  { name: 'plugins', description: 'Deprecated alias of /plugin (plugin diagnostics)', tag: 'deprecated alias of /plugin' },
   { name: 'update', description: 'Update dsh-tui and restart' },
   // Skills are discovered through the DSH registry and added at runtime.
   // A local entry of the same name would win the collision filter.

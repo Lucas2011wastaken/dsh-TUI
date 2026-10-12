@@ -1045,7 +1045,7 @@ catalog 的 `snapshotKey` 走 codex 自己的家目录（`codexHomeDir()` + `COD
 | 后端命令（§5.16） | `/review` · `/diff` · `/plan` · `/usage` · 各 skill |
 | 由 dsh-TUI 自己的设置/交互承担，不转发 | `/theme` · `/statusline` · `/title` · `/vim` · `/keymap` · `/tui` · `/raw` · `/copy`（复制交互）· `/archive`（浏览器"归档"，D13）· `/warnings`（通知行） |
 | 后期评估 | `/ps`、`/stop`（后台终端无生命周期通知，V14；C4 评估轮询后接 jobs 面板） |
-| 不支持（非目标） | `/voice` · `/app`/`/apps` · `/plugins` · `/worktree` · `/daemon` · `/pets` · `/experimental` · `/memories` · `/import` · `/feedback` · `/rollout` · `/cd`/`/pwd` · `/debug-config` · `/elevate-sandbox` · `/auto-review` · `/delete`（只提供归档）· `/ide` · `/test-approval` |
+| 不支持（非目标） | `/voice` · `/app`/`/apps` · `/plugin` · `/worktree` · `/daemon` · `/pets` · `/experimental` · `/memories` · `/import` · `/feedback` · `/rollout` · `/cd`/`/pwd` · `/debug-config` · `/elevate-sandbox` · `/auto-review` · `/delete`（只提供归档）· `/ide` · `/test-approval` |
 
 实现者在 C2 用 `LOCAL_COMMANDS` 逐项核对上表（本地名字优先），差异写进施工日志。
 

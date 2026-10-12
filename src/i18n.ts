@@ -1324,7 +1324,7 @@ const dict = {
     zh: '命令 "/{{name}}" 的调用已被拒绝——注册它的插件 "{{owner}}" 已被撤销 commands.invoke',
     en: 'Command "/{{name}}" invocation denied — its owner plugin "{{owner}}" lost commands.invoke',
   },
-  // /plugins 诊断面（C-070 信任披露 + 协商诊断）
+  // /plugin 诊断面（C-070 信任披露 + 协商诊断）
   'plugins-trust-banner': {
     zh: '插件与宿主同进程运行：授权是行为约束而非安全隔离；通过校验 ≠ 插件安全（C-070）。',
     en: 'Plugins run in-process with the host: grants are behavioral constraints, not a security boundary; passing validation ≠ a safe plugin (C-070).',
@@ -2006,7 +2006,8 @@ const dict = {
   'cmd-desc-hooks': { zh: '查看 hooks 状态' },
   'cmd-desc-mcp': { zh: '查看 MCP 状态' },
   'cmd-desc-skills': { zh: '列出所有可用技能' },
-  'cmd-desc-plugins': { zh: '显示插件契约、授权与台账诊断' },
+  'cmd-desc-plugin': { zh: '显示插件诊断与 profile 的 bundle / 行列表' },
+  'cmd-desc-plugins': { zh: '插件诊断（已弃用：改用 /plugin）' },
   'cmd-desc-update': { zh: '更新 dsh-tui 并重启' },
   // Misc
   'cmd-desc-vim': { zh: '切换 vim 模式' },

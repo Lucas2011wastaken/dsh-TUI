@@ -403,7 +403,7 @@ The command menu = built-in commands (aliases included) + DSH registry commands 
 | `/hooks` | none | placeholder: notes when DSH hooks aren't mounted in the composition |
 | `/mcp` | none | MCP connection state (tools grouped as `mcp__服务器__工具`); shows a `cordis.patch.yml` snippet when unconfigured |
 | `/skills` | none | skill-catalog selector (name+source+blurb); Enter fills a direct-call skill as `/name ` |
-| `/plugins` | `check <dsh-plugin.json 路径>` | plugin diagnostics: trust banner + host descriptor + authorization matrix + ledger; `check` validates a manifest and reports compatibility |
+| `/plugin` | `check <dsh-plugin.json 路径>` | plugin diagnostics: trust banner + host descriptor + authorization matrix + ledger (`/plugins` is a deprecated alias); `check` validates a manifest and reports compatibility |
 | `/update` | none | update the TUI and auto-restart to resume the session (only via `dsh --profile`; rejected mid-turn) |
 | `/terminal-setup` | none | terminal setup advice (Windows Terminal ≥110 columns, paste keys) |
 

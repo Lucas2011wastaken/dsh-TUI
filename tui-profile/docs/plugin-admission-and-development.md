@@ -146,7 +146,7 @@ Loader）负责，**加载时强制不在 dsh-TUI**。dsh-TUI 提供的是校验
 
 当前对齐进度：校验/协商库、vendored 数据、统一授权存储、Host
 Descriptor 构建、`storage.local` 与 `messages.observe` 契约面、
-commands 错误码对齐、效果台账与 `/plugins` 诊断面已全部落地。
+commands 错误码对齐、效果台账与 `/plugin` 诊断面已全部落地。
 
 授权存储（`~/.dsh-tui/extension-grants.json`）统一回答全部 8 个注册
 权限：默认值由 vendored 权限注册表驱动（7 个默认拒绝；
@@ -226,7 +226,7 @@ image block（单图 192 KiB 预算，不可读/超大/坏媒体型即弃并打
 明确 timeout 与队列上限，超时关闭该 subscription。每个订阅者收到独立且
 冻结的 envelope 副本，不能篡改其他订阅者的 payload。订阅成立与
 释放（disposer、卸载、撤销三条路径汇一处）都会落效果台账
-（bind/release subscription），/plugins 可反查活跃订阅。listener
+（bind/release subscription），/plugin 可反查活跃订阅。listener
 抛错被隔离续投；at-most-once、无重放；broker 零持久化（contract
 retention）。
 
@@ -259,12 +259,12 @@ schema 缺失时全部写入被抑制（fail closed）。四个托管服务
 方法带可选末参 `identity?: Context`——传自己的 ctx 即让台账归属
 正确，省略记 `'undeclared'`，不传也完全可用（非破坏）。
 
-`/plugins` 诊断面（C-070 + C-030）：首行固定为信任披露 banner（同进程
+`/plugin` 诊断面（C-070 + C-030）：首行固定为信任披露 banner（同进程
 运行、授权非安全隔离、通过校验 ≠ 插件安全）；随后是 Host Descriptor
 摘要（坐标、generation、漂移剔除项）、授权矩阵（8 个注册权限的有效
 值；插件集合 = 授权文件键 ∪ 台账 pluginId ∪ 存储目录名的**足迹并
 集**，标头如实声明——宿主无法枚举已安装插件，那是 dsh CLI Loader 的
-知识）与台账尾 5 条。`/plugins check <path>` 先用固定 revision 的
+知识）与台账尾 5 条。`/plugin check <path>` 先用固定 revision 的
 `@dsh-std/manifest.parseManifest` 与 `projectManifest` 解析，再用统一
 `ProtocolCatalog`、profile 语义校验与五态 negotiate；没有 activation
 identity 时，activation-scoped grant 按 fail-closed 诊断。manifest 是
