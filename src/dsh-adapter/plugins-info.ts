@@ -25,7 +25,7 @@
 
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
-import type { BundleInfo, PluginInfo } from '@deepseek-ai/dsh-plugin-manager/types'
+import type { BundleInfo, PluginInfo, PluginRegistries, PluginSpecInspection } from '@deepseek-ai/dsh-plugin-manager/types'
 import { parseManifest, projectManifest } from '../adapter/standard/protocols.js'
 import { DATA_DIR } from '../utils/paths.js'
 import { getLang, t } from '../i18n.js'
@@ -232,6 +232,8 @@ function decisionLines(decision: NegotiationDecision): string[] {
 export type PluginArgs =
   | { readonly kind: 'overview' }
   | { readonly kind: 'check'; readonly path: string }
+  | { readonly kind: 'info'; readonly spec: string }
+  | { readonly kind: 'registries' }
   | { readonly kind: 'unknown'; readonly sub: string }
 
 /** Route `/plugin`'s argument text: one parser, so both halves of the report agree. */
@@ -240,6 +242,8 @@ export function parsePluginArgs(args: string): PluginArgs {
   if (trimmed === '') return { kind: 'overview' }
   const [sub, ...rest] = trimmed.split(/\s+/)
   if (sub === 'check') return { kind: 'check', path: rest.join(' ') }
+  if (sub === 'info') return { kind: 'info', spec: rest.join(' ') }
+  if (sub === 'registries') return { kind: 'registries' }
   return { kind: 'unknown', sub: sub ?? '' }
 }
 
@@ -259,6 +263,13 @@ export function pluginsInfoLines(args: string, deps: PluginsInfoDeps): string[] 
     lines.push(t('plugins-unknown-subcommand', { sub: cell(parsed.sub) }))
     return lines
   }
+  // `info <spec>` names what it is looking for, so a bare one is a usage error
+  // the sync half can already answer; both service forms render below.
+  if (parsed.kind === 'info') {
+    if (parsed.spec === '') lines.push(t('plugins-info-usage'))
+    return lines
+  }
+  if (parsed.kind === 'registries') return lines
 
   const dataDir = deps.dataDir ?? DATA_DIR
   const ledgerFile = deps.ledgerFile ?? EFFECT_LEDGER_FILE
@@ -439,6 +450,67 @@ function pluginRowLines(plugins: readonly PluginInfo[]): string[] {
   ]
 }
 
+/** Everything a listed installed bundle carries, in full. */
+function installedBundleLines(deps: PluginsInfoDeps, bundle: BundleInfo): string[] {
+  const lines = [t('plugins-info-bundle', { name: cell(bundle.name) }), bundleLine(deps, bundle)]
+  if (bundle.rows.length > 0) {
+    lines.push(t('plugins-info-rows-label'))
+    for (const row of bundle.rows) {
+      const entry = row.entryId === undefined ? '' : ` · ${cell(row.entryId)}`
+      lines.push(`    ${cell(row.rowId)} → ${cell(row.moduleName)}${entry}`)
+    }
+  }
+  if (bundle.overrides.length > 0) {
+    lines.push(t('plugins-info-overrides-label', { list: cell(bundle.overrides.join(', ')) }))
+  }
+  if (bundle.error !== undefined) {
+    const diagnostic = bundle.error.diagnostic === undefined ? '' : ` — ${cell(bundle.error.diagnostic)}`
+    lines.push(t('plugins-info-problem', { code: cell(bundle.error.code), diagnostic }))
+  }
+  return lines
+}
+
+/** What an installation spec names, before anything installs it. */
+function inspectionLines(spec: string, inspection: PluginSpecInspection): string[] {
+  if (inspection.status === 'refused') {
+    return [t('plugins-info-inspect-refused', { problem: cell(inspection.problem), reason: cell(inspection.reason) })]
+  }
+  const lines = [t('plugins-info-inspect-accepted', {
+    name: cell(inspection.name ?? spec),
+    version: cell(inspection.version ?? ''),
+    kind: cell(inspection.kind),
+    bundle: inspection.bundle === null ? '?' : String(inspection.bundle),
+    registry: cell(inspection.registry ?? ''),
+  })]
+  if (inspection.description !== undefined) {
+    lines.push(t('plugins-info-inspect-description', { description: cell(inspection.description) }))
+  }
+  if (inspection.host !== undefined) lines.push(t('plugins-info-inspect-host', { host: cell(inspection.host) }))
+  return lines
+}
+
+/** `/plugin info <spec>`: the installed bundle when one matches, else inspect. */
+async function infoLines(deps: PluginsInfoDeps, manager: PluginManagerView, spec: string): Promise<string[]> {
+  const installed = (await manager.listBundles()).find(bundle => bundle.name === spec)
+  if (installed !== undefined) return installedBundleLines(deps, installed)
+  return inspectionLines(spec, await manager.inspect(spec))
+}
+
+/** `/plugin registries`: the registries an installation asks, in order. */
+function registriesLines(registries: PluginRegistries): string[] {
+  const none = t('plugins-info-registries-none')
+  const asCell = (value: string | null): string => value === null ? none : cell(value)
+  const fallbacks = registries.fallbackRegistries.length === 0
+    ? none
+    : cell(registries.fallbackRegistries.map(value => value ?? 'null').join(', '))
+  return [
+    t('plugins-info-registries-header'),
+    t('plugins-info-registries-first', { registry: asCell(registries.registry) }),
+    t('plugins-info-registries-fallbacks', { list: fallbacks }),
+    t('plugins-info-registries-resolved', { registry: asCell(registries.resolved) }),
+  ]
+}
+
 /** The service-backed half of the report (empty for a form that needs no service). */
 export async function pluginServiceLines(
   args: string,
@@ -447,7 +519,10 @@ export async function pluginServiceLines(
 ): Promise<string[]> {
   const parsed = parsePluginArgs(args)
   if (parsed.kind === 'check' || parsed.kind === 'unknown') return []
+  if (parsed.kind === 'info' && parsed.spec === '') return []
   if (manager === undefined) return [t('plugins-service-unavailable')]
+  if (parsed.kind === 'registries') return registriesLines(await manager.registries())
+  if (parsed.kind === 'info') return infoLines(deps, manager, parsed.spec)
   const bundles = await manager.listBundles()
   const plugins = await manager.listPlugins()
   return [...bundleSectionLines(deps, bundles), ...pluginRowLines(plugins)]

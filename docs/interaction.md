@@ -804,7 +804,7 @@ Claude 后端的审批来自 CLI：CLI 给出建议时多一个「始终允许�
 
 - `/provider`、`/login`、`/logout`、`/permission`、`/add-dir`、`/hooks`、`/mcp`。
 - `/auth login deepseek-account` 或 `/provider` 完成 DeepSeek 登录后，若 Platform 返回尚未展示的登录赠金，鲸鱼女仆娘弹窗会显示“鲸鱼券”的金额与到期时间；按 Enter/Esc 关闭。
-- `/plugin`：`check <路径>` 校验插件清单（`/plugins` 是弃用别名）。
+- `/plugin`：`check <路径>` 校验插件清单、`info <id>` 查已装条目或待装 spec、`registries` 列安装源（`/plugins` 是弃用别名）。
 
 **Skills**
 
