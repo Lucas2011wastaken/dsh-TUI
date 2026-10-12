@@ -541,11 +541,19 @@ export async function pluginServiceLines(
   if (parsed.kind === 'check' || parsed.kind === 'unknown') return []
   if (parsed.kind === 'info' && parsed.spec === '') return []
   if (manager === undefined) return [t('plugins-service-unavailable')]
-  if (parsed.kind === 'registries') return registriesLines(await manager.registries())
-  if (parsed.kind === 'info') return infoLines(deps, manager, parsed.spec)
-  const bundles = await manager.listBundles()
-  const plugins = await manager.listPlugins()
-  return [...bundleSectionLines(deps, bundles), ...pluginRowLines(plugins)]
+  // The service belongs to the host: a refusal or a crash there must not take
+  // the diagnostics half down with it. Every call funnels into one line, so a
+  // rejected promise still leaves a readable report instead of an unhandled
+  // rejection and an empty screen.
+  try {
+    if (parsed.kind === 'registries') return registriesLines(await manager.registries())
+    if (parsed.kind === 'info') return await infoLines(deps, manager, parsed.spec)
+    const bundles = await manager.listBundles()
+    const plugins = await manager.listPlugins()
+    return [...bundleSectionLines(deps, bundles), ...pluginRowLines(plugins)]
+  } catch (error) {
+    return [t('plugins-service-error', { err: cell(error instanceof Error ? error.message : String(error)) })]
+  }
 }
 
 /** `/plugin`: the diagnostics half plus the profile's own bundles and rows. */

@@ -1360,6 +1360,10 @@ const dict = {
     zh: '当前内核没有 profile 插件服务（ctx.pluginManager）：bundle/行列表不可用。装/卸/启用请从命令行运行 `dsh plugin --profile dsh-tui …`，或以 `dsh --profile dsh-tui` 启动本应用。',
     en: 'This kernel provides no profile plugin service (ctx.pluginManager): the bundle/row list is unavailable. Install, remove, or enable from the CLI with `dsh plugin --profile dsh-tui …`, or start this app through `dsh --profile dsh-tui`.',
   },
+  'plugins-service-error': {
+    zh: '插件服务调用失败：{{err}}（上面的诊断部分照常显示。重试一次；仍失败请用 `dsh plugin --profile dsh-tui` 查看 CLI 侧的报错。）',
+    en: 'The plugin service call failed: {{err}} (the diagnostics above are unaffected. Retry once; if it keeps failing, read the CLI-side error with `dsh plugin --profile dsh-tui`.)',
+  },
   'plugins-bundles-header': { zh: '已装 bundle（数据来自 profile 插件服务）：', en: 'Installed bundles (from the profile plugin service):' },
   'plugins-bundles-official': { zh: '安装自带', en: 'Official (installation-supplied)' },
   'plugins-bundles-installed': { zh: 'profile 依赖', en: 'Profile dependencies' },

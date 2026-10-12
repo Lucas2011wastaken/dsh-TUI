@@ -2,7 +2,7 @@
  * `/plugin` in real Chat (Stage C-3): the diagnostics half, the profile's
  * bundles and rows from the host plugin service, gate 1's tag, `info`,
  * `registries`, the removed old name, and what happens when the service is
- * absent.
+ * absent or refuses every call.
  *
  * The service is a fake: nothing here installs, removes, or enables anything.
  * The declared-and-supported branch of the tag goes through the same
@@ -78,6 +78,15 @@ const manager: PluginManagerView = {
       }),
 }
 
+/** The same service, refusing every call: the report must survive it. */
+const SERVICE_FAILURE = 'the plugin service is gone'
+const failingManager: PluginManagerView = {
+  listBundles: () => Promise.reject(new Error(SERVICE_FAILURE)),
+  listPlugins: () => Promise.reject(new Error(SERVICE_FAILURE)),
+  registries: () => Promise.reject(new Error(SERVICE_FAILURE)),
+  inspect: () => Promise.reject(new Error(SERVICE_FAILURE)),
+}
+
 let passed = 0
 function check(label: string, ok: boolean, detail = ''): void {
   if (!ok) throw new Error(`${label}\n${detail}`)
@@ -85,13 +94,14 @@ function check(label: string, ok: boolean, detail = ''): void {
   console.log(`PASS ${label}`)
 }
 
-for (const [fullscreen, columns, servicePresent] of [
-  [false, 100, true],
-  [false, 50, true],
-  [true, 100, true],
-  [false, 100, false],
+for (const [fullscreen, columns, service] of [
+  [false, 100, 'present'],
+  [false, 50, 'present'],
+  [true, 100, 'present'],
+  [false, 100, 'absent'],
+  [false, 100, 'failing'],
 ] as const) {
-  const tag = `${fullscreen ? 'fullscreen' : 'inline'} ${columns}${servicePresent ? '' : ' no-service'}`
+  const tag = `${fullscreen ? 'fullscreen' : 'inline'} ${columns}${service === 'present' ? '' : ` ${service}`}`
   const term = new XTerm({ cols: columns, rows: ROWS, scrollback: 0, allowProposedApi: true })
   class Out extends Writable {
     columns = columns
@@ -117,7 +127,9 @@ for (const [fullscreen, columns, servicePresent] of [
   }
   const ctx = {
     on: () => () => undefined,
-    get: (name: string) => name === 'pluginManager' && servicePresent ? manager : undefined,
+    get: (name: string) => name === 'pluginManager' && service !== 'absent'
+      ? (service === 'failing' ? failingManager : manager)
+      : undefined,
     logger: { warn: () => undefined, info: () => undefined, debug: () => undefined },
   } as never
   const channel = createChannel(ctx, agent as never, { model: 'fake-model', provider: '', cwd: process.cwd(), activity: false })
@@ -154,12 +166,21 @@ for (const [fullscreen, columns, servicePresent] of [
     await sleep(300)
 
     await run('/plugin')
+    if (service === 'failing') {
+      // The service rejects: the diagnostics half is intact and the failure is
+      // one line of its own, not a lost report (and not an unhandled rejection).
+      check(`${tag}: a failing service keeps the diagnostics and reports itself`,
+        await settled(() => hasText(t('plugins-host-unavailable')) &&
+          hasText(t('plugins-service-error', { err: SERVICE_FAILURE }))), screen())
+      await clear()
+      continue
+    }
     // Land on a marker at the END of the report: in a narrow viewport the
     // diagnostics half wraps past what the screen can hold, so the block's own
     // tail is the only anchor that is always on screen.
     check(`${tag}: the overview answers`,
       await settled(() => hasText('Orphan row') || hasText('ctx.pluginManager')), screen())
-    if (!servicePresent) {
+    if (service === 'absent') {
       check(`${tag}: absent service keeps the diagnostics and explains itself`,
         hasText(t('plugins-matrix-note')) && hasText('ctx.pluginManager'), screen())
       continue
