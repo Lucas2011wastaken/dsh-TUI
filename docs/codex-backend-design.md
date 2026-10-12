@@ -782,8 +782,11 @@ thread 时 `thread/resume` 返回 `-32600`，message `thread <id> already has an
 `codexText()` 按当前语言取值。其中 169 条 `codex-*`、42 条 `elicit-*`（MCP elicitation →
 问卷的表单文案，表单机本身在 `backends/shared/elicitation.ts`，是后端无关的纯函数）、
 7 条与平台共用（`capability-failed`、`doctor-unknown`、`effort-invalid`、
-`status-rate-limit-{five-hour,seven-day}`、`tool-name-{bash,edit}`）。键名逐字沿用宿主
-字典的旧键名，所以这次搬迁在 diff 里可以逐条核对；宿主字典里的两段（`codex-*`、
+`status-rate-limit-{five-hour,seven-day}`、`tool-name-{bash,edit}`）——**这 7 条自 C-2 起不再
+是本后端自己的一份副本**：它们住在 `src/backends/shared/platform-text.ts`，是宿主与内置后端
+共用的**单一数据源**（宿主字典展开同一份），本后端用 `pickPlatformText()` 取自己渲染的那几条，
+`verify-i18n` 的跨字典段盯着"有没有人又写回一份副本"。键名逐字沿用宿主
+字典的旧键名，所以 B-5 那次搬迁在 diff 里可以逐条核对；宿主字典里的两段（`codex-*`、
 `elicit-*`）同时删除，`kernel-label-codex` 除外——那是 manifest 的 `label` 键，走 inTree
 特权通道，不归字典迁移管。两条规则（`{{name}}` 占位、`count` 复数）的**机制**在
 `src/backends/shared/localized-text.ts`；codex 没有任何一条文案带复数形（实测没有一处
