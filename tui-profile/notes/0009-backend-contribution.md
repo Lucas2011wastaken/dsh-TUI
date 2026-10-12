@@ -163,7 +163,7 @@ Backend contract profile 自 W-2 起**已在 `profileHash` 校验范围内**（`
 3. ~~**共用平台文案的副本没有跨字典门禁**：`verify-i18n` 只查各自字典的完整性，不跨字典比字面量；~~ —— **C-2 已关闭**：与宿主共用的那批平台文案（10 条）收口为**单一数据源** `src/backends/shared/platform-text.ts`——宿主字典（`src/i18n.ts`）展开它，两个内置后端用 `pickPlatformText()` 各取自己渲染的那几条，**副本不再各存一份**；`scripts/verify-i18n.ts` 新增「跨字典一致性」段逐字比对（并断言每个后端实际携带的平台键集合与其登记清单相等），任一侧把一份不同的内联副本写回去即红。**残留**：文案的**机制**仍是两份实现（`backends/shared/localized-text.ts` 与宿主 `i18n.ts` 的 `pickText` / `substitute`），今天只保证行为一致、不共享代码。
 4. **"宿主只对真的加载过的条目记账并调用 `unloadExport`"是宿主的**不变量，第三方无法用声明表达它——它由 probe 夹具与 registry 的池台账钉住，不在 conformance fixture 层。
 5. ~~**Backend contract 的 digest 与坐标语义保护尚未接线**~~ —— **W-2 已关闭**：contract profile 已进 registry 的 digest 校验范围（见「破坏性变更怎么被发现」）。仍不覆盖的是**历史坐标的语义比较**（旧坐标正文是否被改过只能靠 digest，没有语义 diff）；那属于 D 段生态治理，不是本族的接入条件。
-6. **profile 套件与仓内镜像在 `extensions` 段上有一处口径差（已知，未关闭）**：`conformance/tests/admission-core.js` 的坐标索引仍只由 `imports + definitions` 构成（所以它遇到 `requires.contracts` 里的扩展坐标会按"未知 kind"抛错），而生产侧 `registryEntries()` 自 W-2 起把 `extensions` 一并纳入（于是同一个请求在仓内落成 `rejected`/`REQUIRED_PROTOCOL_UNAVAILABLE`）。两者对**已实现的用例**期望一致（套件 45 例全绿、镜像门同绿），差异只在"扩展坐标作为 requires 引用"这一条路径上；要不要把参考实现也扩到 `extensions`，留到 C 段后续（`docs/plugins.md` 的兼容承诺不受影响）。
+6. **profile 套件与仓内镜像在 `extensions` 段上有一处口径差（已知，未关闭）**：`conformance/tests/admission-core.js` 的坐标索引仍只由 `imports + definitions` 构成（所以它遇到 `requires.contracts` 里的扩展坐标会按"未知 kind"抛错），而生产侧 `registryEntries()` 自 W-2 起把 `extensions` 一并纳入（于是同一个请求在仓内落成 `rejected`/`REQUIRED_PROTOCOL_UNAVAILABLE`）。两者对**已实现的用例**期望一致（套件 46 例全绿、镜像门同绿），差异只在"扩展坐标作为 requires 引用"这一条路径上；要不要把参考实现也扩到 `extensions`，留到 C 段后续（`docs/plugins.md` 的兼容承诺不受影响）。
 
 ## Wired (W-2) — what stage C connected, and what is still open
 
