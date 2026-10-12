@@ -193,6 +193,10 @@ const LOCAL_COMMAND_REQUIREMENTS: ReadonlyMap<string, LocalCommandRequirement> =
   // /trace opens on every backend; one without trajectory data shows the
   // unsupported state (channel.trajectorySource() decides, not this table).
   ['trace', 'any'],
+  // /plugin reads DSH-side services (the plugin-host row and the profile
+  // plugin service), so both names stay on the `dsh` default. Listed here so
+  // the deprecated alias's reach is stated rather than inherited.
+  ['plugin', 'dsh'], ['plugins', 'dsh'],
 ])
 
 /** The requirement of one built-in command name (unlisted → `dsh`). */

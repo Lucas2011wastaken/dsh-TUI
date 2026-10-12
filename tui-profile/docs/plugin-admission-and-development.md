@@ -263,8 +263,9 @@ schema 缺失时全部写入被抑制（fail closed）。四个托管服务
 运行、授权非安全隔离、通过校验 ≠ 插件安全）；随后是 Host Descriptor
 摘要（坐标、generation、漂移剔除项）、授权矩阵（8 个注册权限的有效
 值；插件集合 = 授权文件键 ∪ 台账 pluginId ∪ 存储目录名的**足迹并
-集**，标头如实声明——宿主无法枚举已安装插件，那是 dsh CLI Loader 的
-知识）与台账尾 5 条。`/plugin check <path>` 先用固定 revision 的
+集**，标头如实声明这是足迹视图——profile 实际组合了哪些 bundle 与行是
+另一个问题，由宿主的 profile 插件服务（`ctx.pluginManager`）回答，
+`/plugin` 在诊断总览之后列出它）与台账尾 5 条。`/plugin check <path>` 先用固定 revision 的
 `@dsh-std/manifest.parseManifest` 与 `projectManifest` 解析，再用统一
 `ProtocolCatalog`、profile 语义校验与五态 negotiate；没有 activation
 identity 时，activation-scoped grant 按 fail-closed 诊断。manifest 是

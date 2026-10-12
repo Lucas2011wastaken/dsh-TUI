@@ -11,10 +11,17 @@
  *    (coordinates + generation), including drift-dropped contracts.
  * 3. GRANT MATRIX — plugins × the registered permissions. The plugin set is
  *    the union of FOOTPRINTS ONLY: keys of the grants file, pluginIds seen
- *    in the effect ledger, and storage namespaces on disk (the host cannot
- *    enumerate installed plugins — that knowledge lives in the dsh CLI
- *    Loader). The header says so honestly.
+ *    in the effect ledger, and storage namespaces on disk. The header says so
+ *    honestly. (The profile's own bundles and rows are a different question
+ *    and come from the host plugin service, below — this matrix stays the
+ *    footprint view it has always been.)
  * 4. LEDGER TAIL — the last 5 effect-ledger records.
+ * 5. BUNDLES AND ROWS — what the profile composes, from `ctx.pluginManager`
+ *    (`./plugin-manager.ts`): official installation-supplied bundles first,
+ *    then the profile's own, each with gate 1's tag from its declaration
+ *    (`./plugin-declaration.ts`), plus the loader entries no patch row can
+ *    address. Absent service → every line above is unchanged and one line
+ *    says why the half is missing.
  *
  * `/plugin check <path>` uses the parser and projection from the pinned
  * @dsh-std/manifest revision, then evaluates every public/private protocol
