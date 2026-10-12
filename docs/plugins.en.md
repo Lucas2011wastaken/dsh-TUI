@@ -55,9 +55,11 @@ Also an experimental public surface:
 - **The backend contribution family (`tui.dsh/v1alpha1` `Backend`, seam XIV) is
   `alpha` and not promised**: the type surface (`BackendSpec`,
   `validateBackendSpec`, `backendAdmission`) and conformance
-  (`TUI-BACKEND-001`) are usable, but the real admission wiring (bundle →
-  registry → picker) is stage C work, so a third-party backend cannot pass
-  admission today (W-1).
+  (`TUI-BACKEND-001`) are usable, and the **admission chain (manifest →
+  registry → descriptor) is wired**; what is still missing is the step that
+  reads a mounted bundle's declaration into the registry and the kernel picker
+  (the install chain), so "install a third-party backend, restart, see it in the
+  picker" does not hold end to end yet.
 - `grants` is now the narrower `HostGrantFacade`; see that PR for migration
   details.
 - On `TuiSceneProps.channel` (`ChannelUi`), `minimal` / `setMinimal()` were

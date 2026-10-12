@@ -271,8 +271,9 @@ SDK `settings` 选项把路由钉回 `https://api.anthropic.com`。CLI 拒绝令
 ## 接入新后端
 
 `Backend` 是 `tui.dsh/v1alpha1` 的第三个贡献族（继设置区块、全屏场景之后），当前状态是
-**`alpha`、不承诺**：类型面、definition、contract profile 与 conformance 已可用，第三方
-bundle 的真实准入接线（清单 → registry → picker）留到 C 段（W-1）。接入一个后端 = 按公开
+**`alpha`、不承诺**：类型面、definition、contract profile、conformance 与**准入链路**
+（清单 → registry → descriptor，W-2 已接线）都可用；还没做的是把已挂载 bundle 的声明读进
+`registerBackend()` / picker 的那一步，它随 Stage C 的装链路落地。接入一个后端 = 按公开
 面写一份声明 + 实现 `AgentBackend` 与 `AgentSession`；**协议不依赖任何单个后端的特殊性**：
 claude（SDK peer + 安装向导）与 codex（系统 CLI + 进程池）必须都能用同一份声明面表达，
 两者的差异只落在 `install?`、`unloadExport?` 这类字段上——conformance 的两个正例

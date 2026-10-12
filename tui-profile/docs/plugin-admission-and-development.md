@@ -992,9 +992,9 @@ ctx.effect(() => () => dispose?.())
 发生在 profile 的准入层。字段语义、词表与恢复语义的完整口径见
 [说明 0009](../notes/0009-backend-contribution.md)。
 
-**当前状态：`alpha`，不承诺。** 类型面、definition、contract profile 与 conformance
-已可用，但真实准入接线（清单 → registry → picker）是 C 段的工作，**第三方 bundle
-今天还过不了准入**（W-1 范围，见本节末）。
+**当前状态：`alpha`，不承诺。** 类型面、definition、contract profile、conformance
+与**准入链路**（清单 → registry → descriptor）都已可用，第三方 bundle 的声明过得了准入；
+仍未做的是把**已挂载 bundle** 的声明接进注册表与 picker 的那一步（装链路，见本节末）。
 
 ### 声明形状
 
@@ -1041,7 +1041,7 @@ ctx.effect(() => () => dispose?.())
 | `compatible_degraded` | 能力名或权限名不在宿主词表内 | 注册，记为待决项（`capability:<name>` / `permission:<name>`），**不拒绝** |
 | `waiting_authorization` | 权限名已知但没有授权（`PERMISSION_NOT_GRANTED`） | 注册但**不进 picker** |
 | `rejected` | 声明了宿主保留的 id（`BACKEND_ID_RESERVED`） | 抛错，内建 manifest 走到这里必须是响亮的构建期错误 |
-| `unknown` | 保留给将来的协议版本协商 | W-1 不产生 |
+| `unknown` | 保留给将来的协议版本协商 | 今天不产生（W-2 只接线，不引入版本协商） |
 
 ### `unloadExport` 的池语义
 
@@ -1058,14 +1058,29 @@ ctx.effect(() => () => dispose?.())
 与恢复目标的传递方式不在协议内。安全模式的「重试正常启动」是唯一例外（一次性 env
 `DSH_TUI_RESUME_RETRY`，撤销降级为告警 + 冷启动），它同样不进协议。
 
-### W-1：尚未接线（C 段的入口条件）
+### W-2：准入链路已接线，装链路未做
 
-**第三方 bundle 现在还过不了准入。这不是 bug，是范围。** `registry-0.15.json` 的
-`extensions` 段没有生产代码读，`Backend` 不在 `HOST_SUPPORTED_CONTRACTS` 里、
-descriptor 只发布有 live probe 证据的契约，contract profile 也还没有 registry 条目。
-宿主侧门禁 `scripts/verify-backend-contribution.ts` 的最后三条断言故意钉住这个状态；
-C 段做 W-2 时应当有意识地改掉它们。在那之前，本节只描述**将来可用的形状**，
-不代表今天可以提交一个第三方后端。
+**声明过得了准入。** 前五道接缝之外，`Backend` 这一族在 W-2（Stage C 第一段）里接完了
+它的准入链路：
+
+- `registry-0.15.json` 的 `extensions` 段有 `tui.backend` 条目（sha256 钉住
+  `registry/contracts/backend-v1alpha1.json`），注册表读者、descriptor 的 supported
+  contracts 派生、准入 index 三处都读它；
+- `Backend` 是宿主发布的契约坐标（与 `DecisionEvents` 同一个 provider 形状），bundle 可以在
+  `requires.contracts` 里引用它；
+- 贡献定义由生产准入 catalog 注册（`src/adapter/standard/tui-extension.ts`），所以
+  `x-dsh-tui` 声明在准入时有定义可解析；
+- descriptor **只在真探针证据上**发布该坐标（`ctx.tuiPluginHost.probeBackendAdmission()`，
+  只读、无副作用）：new 内核路径按 live lifecycle 证据，默认的 `legacy` 路径按挂载拓扑里的同一
+  个探针；探针缺席或答不出"可准入"就不发布并说明原因。
+
+**仍未做**：把**已挂载 bundle** 的 `x-dsh-tui` 声明读出来接进 `registerBackend()` 与
+picker——今天注册表只有内置种子，所以"装一个第三方后端 bundle，重启后它出现在 kernel
+picker 里"这条端到端流程仍要等 `/plugin` 的装链路落地。在那之前，本节描述的形状可以被
+准入，但还进不了 picker。
+
+完整口径与逐条门禁见
+[说明 0009](../notes/0009-backend-contribution.md) 的「Wired (W-2)」节。
 
 ## 命名与发布规范
 
@@ -1117,7 +1132,7 @@ C 段做 W-2 时应当有意识地改掉它们。在那之前，本节只描述*
 - [ ] 不在 activation 时缓存单一 Presentation
 - [ ] 声明 remote attach 时通过对应 profile 测试
 - [ ] `TUI-BACKEND-001`：`Backend` 贡献声明通过 `validateBackendSpec` 与宿主准入，
-      fixtures 按预期通过/拒绝（**W-1 尚未接线**，真实准入路径见接缝十四）
+      fixtures 按预期通过/拒绝（准入链路已接线；真实装链路见接缝十四）
 
 ### D. 运行时行为
 

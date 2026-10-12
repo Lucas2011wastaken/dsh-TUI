@@ -5,6 +5,39 @@
 口径见 [`governance/rules.md`](governance/rules.md)），因此没有单独的审批或晋级流程，
 登记的是 profile 的变化而不是 dsh-TUI 产品的全部变更。
 
+## 2026-10-12（Backend 贡献族接线 W-2：registry 条目、descriptor 发布与扩展 catalog 装配）
+
+> 这一段只做**接线**（Stage C 的第一段）：贡献**声明**的形状与语义一字未改，
+> 正式冻结仍在 Stage C 发布第一版 apiVersion 时。逐条口径见
+> [`notes/0009`](notes/0009-backend-contribution.md) 的「Wired (W-2)」节。
+
+### Added
+
+- **`extensions` 段进入注册表读者**：`registry-0.15.json` 新增 `tui.backend` 条目
+  （`authority: 'dsh-tui'`、`kind: 'extension'`、**sha256 钉住** `registry/contracts/backend-v1alpha1.json`）；
+  `registryEntries()` 读 `imports + definitions + extensions`，`verifyRegistry()` /
+  `verifyContractProfiles()` 对私有扩展条目做与协议定义同样的坐标、权限、十点完备与 digest 校验。
+  导入型扩展条目（`authority: 'dsh-std'`，今天是 `workspace.provider`）不受"本机必须注册它的定义"
+  这条约束——它指向的包不是本仓依赖，宿主既不发布也不读它。
+- **`Backend` 成为宿主发布的契约坐标**：`protocols/profile-definitions.js` 新增
+  `backendDefinition`（与 `DecisionEvents` 同一个 provider 形状），bundle 因此可以在
+  `requires.contracts` 里引用它，宿主 descriptor 也能发布它——**且只在真探针证据上**：
+  new 内核路径按 lifecycle 的 live 证据、**默认的 `legacy` 路径**按挂载拓扑里的同一个只读探针
+  （`ctx.tuiPluginHost.probeBackendAdmission()`，不注册任何东西）。两条路径都发布，接线才在
+  默认启动下成立。
+- **说明 0009 新增「Wired (W-2)」节**：接线逐条、探针语义（只读、无副作用、不注册任何东西、
+  "探针缺席即不发布"），以及**仍未做**的那一步（把已挂载 bundle 的声明接进 `registerBackend()` / picker）。
+
+### Changed
+
+- **状态口径**：`notes/0009` 与 `docs/plugin-admission-and-development.md`（接缝十四 +
+  发布前检查清单）由「尚未接线（W-1）」改为「准入链路已接线（W-2）、装链路未做」。
+- **已知缺口 5 关闭**：Backend contract profile 自本条起在 `profileHash` 校验范围内——
+  "改正文不换坐标"在 `verifyRegistry()` 处必红。新增**已知缺口 6**：参考实现
+  （`conformance/tests/admission-core.js`）的坐标索引尚未含 `extensions`，与仓内读者有一处
+  口径差，只影响「扩展坐标作为 `requires.contracts` 引用」这一条路径（45 例套件与仓内镜像门
+  对已实现用例仍逐条一致）。
+
 ## 2026-10-11（Backend 贡献族：两种后端形态、反例与公开面承诺清单）
 
 ### Added

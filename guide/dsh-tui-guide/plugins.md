@@ -48,8 +48,9 @@
   `ctx.tuiPluginHost.grants.corrupt` 已随 adapter 分层重构（#705）移除。
 - **后端贡献族（`tui.dsh/v1alpha1` `Backend`，接缝十四）为 `alpha`，不承诺**：类型面
   （`BackendSpec`、`validateBackendSpec`、`backendAdmission`）与 conformance
-  （`TUI-BACKEND-001`）已可用，但真实准入接线（bundle → registry → picker）是 C 段的
-  工作，第三方后端今天还过不了准入（W-1）。
+  （`TUI-BACKEND-001`）已可用，**准入链路（清单 → registry → descriptor）已接线**；
+  仍未做的是把已挂载 bundle 的声明接进注册表与 kernel picker（装链路），所以
+  「装一个第三方后端、重启后出现在 picker 里」这条端到端流程尚未成立。
 - `grants` 收窄为 `HostGrantFacade`，迁移细节见该 PR。
 - `TuiSceneProps.channel`（`ChannelUi`）上的 `minimal` / `setMinimal()` 已更名为
   `minimalUi` / `setMinimalUi()`；旧名保留为 **deprecated 别名**，读写同一个

@@ -10,7 +10,7 @@
 
 `Backend` 是继 `SettingsSection` 与 `Scene` 之后的第三个贡献族，与它们同处一个 manifest extension catalog：它声明**一个后端在宿主里长什么样**——身份、标签、它运行期答话的会话能力、它索要的宿主权限、它的安装面与卸载出口。声明是数据，不是权威：后端在本进程内运行，见「Grants and the trust model」。
 
-贡献族今天的准入状态是**尚未接线（W-1）**：definition、validator、handler assertion、contract profile、conformance requirement 与宿主侧门禁都已就位，但第三方 bundle 还不能真的过准入，断在哪条链路上见末节。
+贡献族今天的准入状态是**已接线（W-2，Stage C）**：definition、validator、handler assertion、contract profile、conformance requirement、宿主侧门禁，以及"清单 → registry → descriptor"这条链路都已就位——`Backend` 是宿主发布的契约坐标，第三方 bundle 的 `x-dsh-tui` 声明由生产准入 catalog 里的同一份扩展定义校验。仍未做的是把**已挂载 bundle 的声明接进注册表与 picker** 的那一步（装链路，见末节）。
 
 ## Declaration fields
 
@@ -107,7 +107,7 @@ Conformance requirement 是 `TUI-BACKEND-001`（记在 `conformance/requirements
 
 | # | 不承诺 | 现状锚点 |
 |---|---|---|
-| 1 | **registry / loader / picker**：第三方 bundle 今天**过不了准入**——这不是 bug，是范围（W-1） | 下节 |
+| 1 | **把 bundle 的声明接进 registry / picker 的那一步**（装链路，Stage C 的后续工作）：准入链路本身已接线 | 末节 |
 | 2 | `native.*` 与 DSH 的 specialist 能力**始终留首方侧**；`nativeKey` 缺省即"不使用 native 通道"，宿主**不得凭空补规则** | `ADAPTER.md` 的派生规则 + 边界门禁的 `EXPECTED_NATIVE_RULES` |
 | 3 | `BackendHandler.catalog` 的**方法签名**（协议侧是 `object`；`SessionCatalog` 的形状会随主线演进） | `protocols/tui-contributions.d.ts` |
 | 4 | `lastSession` 的接口与恢复目标的传递方式（含 `DSH_TUI_RESUME_BACKEND` 这个 env 名）：**语义进协议，接口不进** | 「Resume semantics」节 |
@@ -117,9 +117,9 @@ Conformance requirement 是 `TUI-BACKEND-001`（记在 `conformance/requirements
 
 ### 破坏性变更怎么被发现
 
-坐标（`apiVersion + kind`）不变就不得改已承诺的语义；**当前门禁只覆盖各自断言的范围，并不能自动发现所有 Backend 语义变更**。`verify-plugin-spec` 检查声明形状与 fixture 期望；`verify-backend-contribution` 检查内建投影、词表、准入与 probe 资源不变量；`verify-public-config-types` 检查消费者使用已发布类型与导出的写法。`verify-protocol-single-source` 检查协议来源与派生常量一致性；`verify:contract` 检查 DSH 上游版本与独立入口宿主契约。
+坐标（`apiVersion + kind`）不变就不得改已承诺的语义；**当前门禁只覆盖各自断言的范围，并不能自动发现所有 Backend 语义变更**。`verify-plugin-spec` 检查声明形状与 fixture 期望；`verify-backend-contribution` 检查内建投影、词表、准入、probe 资源不变量与 **W-2 的接线正断言**；`verify-public-config-types` 检查消费者使用已发布类型与导出的写法。`verify-protocol-single-source` 检查协议来源与派生常量一致性；`verify:contract` 检查 DSH 上游版本与独立入口宿主契约。
 
-Backend contract profile 尚无 registry 条目，**不在现有 `profileHash` 校验范围内**。例如，仅修改 `registry/contracts/backend-v1alpha1.json` 的 `cleanup` 正文、保持坐标不变，上述门禁仍可通过。Backend 的 digest 钉住与旧坐标语义保护需在 Stage C 发布第一版 apiVersion 前补齐；不能把现有 conformance 例通过当作这项保护已经生效的证据。
+Backend contract profile 自 W-2 起**已在 `profileHash` 校验范围内**（`registry/registry-0.15.json` 的 `tui.backend` 条目 + `registry/contracts/backend-v1alpha1.json`）：仅修改 profile 正文、保持坐标不变，`verifyRegistry()` 会报 `profileHash drifted`，descriptor 也随之丢弃该契约——"改正文不换坐标"因此是红的。
 
 ### 已知缺口（诚实清单，别当成已解决）
 
@@ -127,14 +127,17 @@ Backend contract profile 尚无 registry 条目，**不在现有 `profileHash` �
 2. **profile 套件不在 CI**：Backend 的 conformance 例由仓内镜像门（`scripts/verify-plugin-spec.ts`）在 `verify:build` 里代跑，**两边期望必须同改**；
 3. **共用平台文案的副本没有跨字典门禁**：`verify-i18n` 只查各自字典的完整性，不跨字典比字面量；
 4. **"宿主只对真的加载过的条目记账并调用 `unloadExport`"是宿主的**不变量，第三方无法用声明表达它——它由 probe 夹具与 registry 的池台账钉住，不在 conformance fixture 层。
-5. **Backend contract 的 digest 与坐标语义保护尚未接线**：contract profile 尚未进入 registry 的 digest 校验范围，当前门禁也不比较历史坐标的语义；这项保护需在 Stage C 发布第一版 apiVersion 前补齐。
+5. ~~**Backend contract 的 digest 与坐标语义保护尚未接线**~~ —— **W-2 已关闭**：contract profile 已进 registry 的 digest 校验范围（见「破坏性变更怎么被发现」）。仍不覆盖的是**历史坐标的语义比较**（旧坐标正文是否被改过只能靠 digest，没有语义 diff）；那属于 D 段生态治理，不是本族的接入条件。
+6. **profile 套件与仓内镜像在 `extensions` 段上有一处口径差（已知，未关闭）**：`conformance/tests/admission-core.js` 的坐标索引仍只由 `imports + definitions` 构成（所以它遇到 `requires.contracts` 里的扩展坐标会按"未知 kind"抛错），而生产侧 `registryEntries()` 自 W-2 起把 `extensions` 一并纳入（于是同一个请求在仓内落成 `rejected`/`REQUIRED_PROTOCOL_UNAVAILABLE`）。两者对**已实现的用例**期望一致（套件 45 例全绿、镜像门同绿），差异只在"扩展坐标作为 requires 引用"这一条路径上；要不要把参考实现也扩到 `extensions`，留到 C 段后续（`docs/plugins.md` 的兼容承诺不受影响）。
 
-## Not yet wired (W-1) — the C stage's entry condition
+## Wired (W-2) — what stage C connected, and what is still open
 
-**第三方 bundle 现在还过不了准入。这不是 bug，是范围。** definition、validator、handler assertion、contract profile 与 conformance 都已可用，断掉的是**接线**：
+**准入链路已接线。** 家族不再是"声明得出来、宿主兑现不了"：`Backend` 是宿主 published 的契约坐标，第三方 bundle 的 `x-dsh-tui` 声明由生产准入 catalog 里的同一份定义校验。逐条（前四条取代了 B 段故意留下的范围守卫，第五条是它们的前提）：
 
-- `registry/registry-0.15.json` 的 `extensions` 段（`tui.settings-section`、`tui.scene` …）没有任何生产代码读；`registryEntries()` 只读 `imports` + `definitions`，`Backend` 的 contract profile 也没有对应的 registry 条目。
-- 宿主 descriptor 只发布有 **live probe 证据**的契约，`Backend` 不在 `HOST_SUPPORTED_CONTRACTS` 里，因此不会出现在 descriptor 的契约面上。
-- 两处硬编码白名单把这件事钉住：`src/adapter/spec/protocol-constants.ts` 里 `HOST_SUPPORTED_CONTRACTS` 的 `supported` 集合（`commands` / `storage.local` / `messages.observe` / `tui.decision-events`），以及 `scripts/verify-protocol-single-source.ts` 的 `expectedHostContracts`。
+- `registry/registry-0.15.json` 的 **`extensions` 段有 `tui.backend` 条目**（`authority: 'dsh-tui'`、`kind: 'extension'`、**sha256 pin 住 `registry/contracts/backend-v1alpha1.json`**），`registryEntries()` 读 `imports + definitions + extensions`，`verifyRegistry()` / `verifyContractProfiles()` 对私有扩展条目做与协议定义同样的坐标、权限、十点完备与 digest 校验。**导入型扩展条目（`authority: 'dsh-std'`，今天是 `workspace.provider`）不受"本机必须注册它的定义"这条约束**：它指向的 `@dsh-std/workspace` 不是本仓依赖，宿主既不发布也不读它，为它 fail-closed 会把整个 descriptor 清空。
+- **`Backend` 进了 `HOST_SUPPORTED_CONTRACTS`**（`src/adapter/spec/protocol-constants.ts` 的派生读面同时扩到 `extensions`），`scripts/verify-protocol-single-source.ts` 的坐标字面量表同改。
+- **descriptor 真的发布它，且只在真探针证据上**：`ctx.tuiPluginHost.probeBackendAdmission()` 走一遍"构一个没人拥有的声明 → 家族 validator → 宿主准入事实"的路径（只读、无副作用、不注册任何东西），驱动的同步投影与异步 `refresh` 两条路径都要它。**默认 boot 走的是 `legacy` adapter 模式**，那条路径不跑 Kernel lifecycle、按"挂载拓扑 + 只读探针"声明契约（与 DecisionEvents 的 guard 探针同一个先例），所以同一探针也在那里被读一次——否则这条接线只在 `DSH_TUI_ADAPTER_MODE=new` 下成立，默认启动下第三方 bundle 仍会被拒。"探针缺席"或"机器答不出 `compatible`"⇒ 坐标不发布并报出丢弃原因——这正是 W-1 警告过的"**声明支持但发不出来**"的反面。实测：只做前两条而不接探针时，descriptor 为空、要求该坐标的 bundle 落 `rejected`/`REQUIRED_PROTOCOL_UNAVAILABLE`；接完探针后同一条 manifest 判 `compatible`。
+- **唯一注册贡献定义的生产模块是规范准入 catalog 的装配点**（`src/adapter/standard/tui-extension.ts` 的 `buildAdmissionCatalog()` 调 `registerTuiContributionExtensions(manifests)`）——bundle 的 `x-dsh-tui` 声明因此在 `admitInternal` 的 `manifests.validate()` 里有定义可解析。
+- **协议的协议面**：`Backend` 同时是宿主发布的契约坐标（`tui-profile/protocols/profile-definitions.js` 的 `backendDefinition`，与 `DecisionEvents` 同一个 provider 形状）：bundle 可以在 `requires.contracts` 里引用它。贡献**声明**的形状与语义一字未改（`tui-contributions.js` 的 `backendExtensionDefinition` 仍是唯一的书写面）。
 
-`scripts/verify-backend-contribution.ts` 的最后三条断言（scope guard）**故意钉住「尚未接线」这个状态**：宿主还不支持 `Backend` 坐标、`registryEntries()` 仍不读 `extensions`、没有生产模块调用 `registerTuiContributionExtensions()`。C 段做 W-2 时应当**有意识地改掉这三条**——它们是那段工作的入口条件，不是要长期维护的不变量。
+**仍未做（装链路的活，不是本族的接入条件）**：把**已挂载 bundle** 的 `x-dsh-tui` 声明读出来接进 `registerBackend()` / picker——今天注册表只有内置种子（`backend-registry.ts` 自述 "the plugin discovery of Stage C is the intended second caller"，那个 caller 还没有）。`/plugin` 的安装链（Stage C 的后续 PR）落地时，`Backend` 的声明才是从"能被准入"变成"真的出现在 picker 里"。
