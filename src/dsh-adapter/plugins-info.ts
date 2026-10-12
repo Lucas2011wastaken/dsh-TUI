@@ -403,11 +403,25 @@ function declarationTag(deps: PluginsInfoDeps, packageName: string): string | un
   }
 }
 
+/** The host's localized text (`PluginLocalizedMeta.title`): a literal, or translations by language id. */
+type LocalizedPluginText = string | { readonly en: string; readonly [locale: string]: string }
+
 /** Pick a display string out of the host's localized metadata. */
-function localizedText(value: string | { readonly en: string; readonly [locale: string]: string } | undefined, fallback: string): string {
+function localizedText(value: LocalizedPluginText | undefined, fallback: string): string {
   if (value === undefined) return fallback
   if (typeof value === 'string') return value
   return value[getLang()] ?? value.en ?? fallback
+}
+
+/**
+ * Display title of one loader entry. `PluginInventoryEntry.meta` arrived after
+ * the 0.1.5 line, so an older host answers the module specifier instead
+ * (contract.ts: additions must degrade gracefully on the older lines), and the
+ * field is read structurally for the same reason.
+ */
+function pluginRowTitle(plugin: PluginInfo): string {
+  const meta = (plugin as { readonly meta?: { readonly title?: LocalizedPluginText } }).meta
+  return cell(localizedText(meta?.title, plugin.moduleName))
 }
 
 /** One bundle row: what the profile holds, how it is controlled, what it says. */
@@ -450,9 +464,8 @@ function pluginRowLines(plugins: readonly PluginInfo[]): string[] {
   return [
     t('plugins-rows-header'),
     ...unaddressable.map(plugin => {
-      const title = cell(localizedText(plugin.meta?.title, plugin.moduleName))
       const reason = plugin.readOnlyReason === undefined ? '' : cell(plugin.readOnlyReason)
-      return `  ${title} · ${reason} · ${cell(plugin.entryId)}`
+      return `  ${pluginRowTitle(plugin)} · ${reason} · ${cell(plugin.entryId)}`
     }),
   ]
 }
