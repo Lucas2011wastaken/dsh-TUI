@@ -367,7 +367,7 @@ dsh-tui
 | `/hooks` | 无 | 占位：DSH hooks 未在组合中挂载时给出说明 |
 | `/mcp` | 无 | MCP 连接状态（工具按 `mcp__服务器__工具` 分组）；未配置时给出 `cordis.patch.yml` 插入示例 |
 | `/skills` | 无 | 技能目录选择器（名称+来源+简述），Enter 将可直调技能以 `/name ` 填回输入行 |
-| `/plugin` | `check <dsh-plugin.json 路径>` · `info <id 或 spec>` · `registries` | 插件诊断：信任横幅 + host 描述符 + 授权矩阵 + 台账，再列 profile 的 bundle/行；`check` 校验清单并给兼容状态，`info` 查已装条目或待装 spec，`registries` 列安装源。无参 `/plugin` 预留为插件管理面板（后续段实现） |
+| `/plugin` | `list` · `check <dsh-plugin.json 路径>` · `info <id 或 spec>` · `registries` | `list` 简洁列出你装的额外插件（不含安装自带）；无参给完整诊断：信任横幅 + host 描述符 + 授权矩阵 + 台账 + profile 的 bundle/行（预留为插件管理面板，后续段实现）；`check` 校验清单并给兼容状态，`info` 查已装条目或待装 spec，`registries` 列安装源 |
 | `/update` | 无 | 更新 TUI 并自动重启恢复会话（仅 `dsh --profile` 启动可用；回合运行中会拒绝） |
 | `/terminal-setup` | 无 | 终端配置建议（Windows Terminal ≥110 列、粘贴键位） |
 

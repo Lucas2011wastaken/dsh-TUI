@@ -43,7 +43,7 @@ import { cleanScalarText } from './sanitize.js'
 import type { GrantStore } from '../adapter/standard/grants.js'
 import type { HostDescriptorBuild } from '../adapter/standard/descriptor.js'
 import { isCompositionOwned, type PluginDeclaration } from './plugin-declaration.js'
-import type { PluginManagerView } from './plugin-manager.js'
+import { extraBundles, type PluginManagerView } from './plugin-manager.js'
 import { PLUGIN_STORAGE_DIR } from './plugin-storage.js'
 import { EFFECT_LEDGER_FILE } from './effect-ledger.js'
 
@@ -238,6 +238,7 @@ function decisionLines(decision: NegotiationDecision): string[] {
 /** Which form of the command the raw argument text asks for. */
 export type PluginArgs =
   | { readonly kind: 'overview' }
+  | { readonly kind: 'list' }
   | { readonly kind: 'check'; readonly path: string }
   | { readonly kind: 'info'; readonly spec: string }
   | { readonly kind: 'registries' }
@@ -248,6 +249,7 @@ export function parsePluginArgs(args: string): PluginArgs {
   const trimmed = args.trim()
   if (trimmed === '') return { kind: 'overview' }
   const [sub, ...rest] = trimmed.split(/\s+/)
+  if (sub === 'list') return { kind: 'list' }
   if (sub === 'check') return { kind: 'check', path: rest.join(' ') }
   if (sub === 'info') return { kind: 'info', spec: rest.join(' ') }
   if (sub === 'registries') return { kind: 'registries' }
@@ -270,6 +272,9 @@ export function pluginsInfoLines(args: string, deps: PluginsInfoDeps): string[] 
     lines.push(t('plugins-unknown-subcommand', { sub: cell(parsed.sub) }))
     return lines
   }
+  // `list` is the short form: the trust banner and what the profile added, no
+  // diagnostics. Its data comes from the service half below.
+  if (parsed.kind === 'list') return lines
   // `info <spec>` names what it is looking for, so a bare one is a usage error
   // the sync half can already answer; both service forms render below.
   if (parsed.kind === 'info') {
@@ -425,7 +430,7 @@ function pluginRowTitle(plugin: PluginInfo): string {
 }
 
 /** One bundle row: what the profile holds, how it is controlled, what it says. */
-function bundleLine(deps: PluginsInfoDeps, bundle: BundleInfo): string {
+function bundleLine(deps: PluginsInfoDeps, bundle: BundleInfo, options: { readonly rows?: boolean } = {}): string {
   const flags: string[] = [bundle.enabled ? t('plugins-bundle-on') : t('plugins-bundle-off')]
   if (!bundle.removable) flags.push(t('plugins-bundle-kept'))
   if (bundle.readOnlyReason !== undefined) flags.push(t('plugins-bundle-locked', { reason: cell(bundle.readOnlyReason) }))
@@ -434,8 +439,30 @@ function bundleLine(deps: PluginsInfoDeps, bundle: BundleInfo): string {
   if (tag !== undefined) flags.push(tag)
   const title = cell(localizedText(bundle.meta?.title, bundle.name))
   const version = bundle.version === undefined ? '' : ` ${cell(bundle.version)}`
-  const rows = t('plugins-bundle-rows', { rows: String(bundle.rows.length), overrides: String(bundle.overrides.length) })
-  return `  ${title}${version} · ${flags.join(' · ')} · ${rows}`
+  // The row/override counts are detail: `/plugin info <name>` carries them, and
+  // the short list drops them (`options.rows: false`).
+  const tail = options.rows === false
+    ? ''
+    : ` · ${t('plugins-bundle-rows', { rows: String(bundle.rows.length), overrides: String(bundle.overrides.length) })}`
+  return `  ${title}${version} · ${flags.join(' · ')}${tail}`
+}
+
+/** Whether a listed set needs the "no declaration" legend (composition rows never do). */
+function needsDeclarationLegend(deps: PluginsInfoDeps, bundles: readonly BundleInfo[]): boolean {
+  return bundles.some(bundle => !isCompositionOwned(bundle.name) && deps.declaration?.(bundle.name) === undefined)
+}
+
+/** `/plugin list`: the plugins this profile added, one line each. */
+function listLines(deps: PluginsInfoDeps, bundles: readonly BundleInfo[]): string[] {
+  const extras = extraBundles(bundles)
+  if (extras.length === 0) return [t('plugins-list-empty')]
+  const lines = [t('plugins-list-header', { count: String(extras.length) })]
+  for (const bundle of extras) lines.push(bundleLine(deps, bundle, { rows: false }))
+  // The tag is explained once per report, next to the rows it qualifies: this
+  // surface is a transcript, so there is nothing to click open (C-3).
+  if (needsDeclarationLegend(deps, extras)) lines.push(t('plugins-tag-undeclared-hint'))
+  lines.push(t('plugins-list-hint'))
+  return lines
 }
 
 /** Official (installation-supplied) bundles first, then the profile's own. */
@@ -449,11 +476,7 @@ function bundleSectionLines(deps: PluginsInfoDeps, bundles: readonly BundleInfo[
   }
   group(t('plugins-bundles-official'), bundles.filter(bundle => bundle.optional))
   group(t('plugins-bundles-installed'), bundles.filter(bundle => !bundle.optional))
-  // The tag is explained once per report, next to the rows it qualifies: this
-  // surface is a transcript, so there is nothing to click open (C-3).
-  if (bundles.some(bundle => !isCompositionOwned(bundle.name) && deps.declaration?.(bundle.name) === undefined)) {
-    lines.push(t('plugins-tag-undeclared-hint'))
-  }
+  if (needsDeclarationLegend(deps, bundles)) lines.push(t('plugins-tag-undeclared-hint'))
   return lines
 }
 
@@ -546,6 +569,7 @@ export async function pluginServiceLines(
   // rejected promise still leaves a readable report instead of an unhandled
   // rejection and an empty screen.
   try {
+    if (parsed.kind === 'list') return listLines(deps, await manager.listBundles())
     if (parsed.kind === 'registries') return registriesLines(await manager.registries())
     if (parsed.kind === 'info') return await infoLines(deps, manager, parsed.spec)
     const bundles = await manager.listBundles()

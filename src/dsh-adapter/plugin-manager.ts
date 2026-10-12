@@ -22,6 +22,7 @@ import type {
   PluginRegistries,
   PluginSpecInspection,
 } from '@deepseek-ai/dsh-plugin-manager/types'
+import { isCompositionOwned } from './plugin-declaration.js'
 
 /** The host service operations this package consumes. */
 export interface PluginManagerView {
@@ -44,4 +45,16 @@ export function pluginManagerOf(ctx: Context): PluginManagerView | undefined {
   const manager = ctx.get('pluginManager', false)
   if (manager === undefined || manager === null) return undefined
   return manager as PluginManagerView
+}
+
+/**
+ * The bundles a person added to this profile: the ones its own dependencies
+ * hold (`installed`), minus the composition itself. The installation-supplied
+ * bundles and this application's own rows are not plugins anybody installed,
+ * so the short list leaves them out — a clean profile reports "nothing added"
+ * instead of listing the launcher's base. One predicate, so the list and the
+ * `/plugin info` completion cannot drift apart.
+ */
+export function extraBundles(bundles: readonly BundleInfo[]): BundleInfo[] {
+  return bundles.filter(bundle => bundle.installed && !isCompositionOwned(bundle.name))
 }

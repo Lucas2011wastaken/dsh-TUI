@@ -1337,7 +1337,7 @@ const dict = {
   'plugins-footprint-overflow': { zh: '…另有 {{count}} 个插件未显示', en: { one: '…{{count}} more plugin not shown', other: '…{{count}} more plugins not shown' } },
   'plugins-ledger-empty': { zh: '效果台账为空。', en: 'The effect ledger is empty.' },
   'plugins-ledger-header': { zh: '效果台账（{{file}}）尾 5 条：', en: 'Effect ledger ({{file}}), last 5 records:' },
-  'plugins-unknown-subcommand': { zh: '未知子命令：{{sub}}（支持：check <路径> / info <spec> / registries）', en: 'Unknown subcommand: {{sub}} (supported: check <path> / info <spec> / registries)' },
+  'plugins-unknown-subcommand': { zh: '未知子命令：{{sub}}（支持：list / check <路径> / info <spec> / registries）', en: 'Unknown subcommand: {{sub}} (supported: list / check <path> / info <spec> / registries)' },
   'plugins-check-usage': { zh: '用法：/plugin check <dsh-plugin.json 路径>', en: 'Usage: /plugin check <path-to-dsh-plugin.json>' },
   'plugins-check-not-found': { zh: '文件不存在：{{path}}', en: 'File not found: {{path}}' },
   'plugins-check-invalid-json': { zh: '不是可解析的 JSON：{{err}}', en: 'Not parseable JSON: {{err}}' },
@@ -1363,6 +1363,15 @@ const dict = {
   'plugins-service-error': {
     zh: '插件服务调用失败：{{err}}（上面的诊断部分照常显示。重试一次；仍失败请用 `dsh plugin --profile dsh-tui` 查看 CLI 侧的报错。）',
     en: 'The plugin service call failed: {{err}} (the diagnostics above are unaffected. Retry once; if it keeps failing, read the CLI-side error with `dsh plugin --profile dsh-tui`.)',
+  },
+  'plugins-list-header': { zh: '你装的额外插件（{{count}}）：', en: 'Plugins you added ({{count}}):' },
+  'plugins-list-empty': {
+    zh: '本 profile 没有额外插件：只有安装自带与 dsh-tui 自身。装好后用 /plugin list 复查。',
+    en: 'No extra plugins in this profile: only the installation-supplied bundles and dsh-tui itself. Run /plugin list again after installing one.',
+  },
+  'plugins-list-hint': {
+    zh: '详情：/plugin info <名字>；安装源：/plugin registries；完整诊断：无参 /plugin。',
+    en: 'Details: /plugin info <name>; registries: /plugin registries; full diagnostics: bare /plugin.',
   },
   'plugins-bundles-header': { zh: '已装 bundle（数据来自 profile 插件服务）：', en: 'Installed bundles (from the profile plugin service):' },
   'plugins-bundles-official': { zh: '安装自带', en: 'Official (installation-supplied)' },
@@ -2051,7 +2060,7 @@ const dict = {
   'cmd-desc-hooks': { zh: '查看 hooks 状态' },
   'cmd-desc-mcp': { zh: '查看 MCP 状态' },
   'cmd-desc-skills': { zh: '列出所有可用技能' },
-  'cmd-desc-plugin': { zh: '显示插件诊断与 profile 的 bundle / 行列表' },
+  'cmd-desc-plugin': { zh: '插件诊断；`list` 列你装的额外插件，`info` 查单个条目或待装 spec' },
   'cmd-desc-update': { zh: '更新 dsh-tui 并重启' },
   // Misc
   'cmd-desc-vim': { zh: '切换 vim 模式' },

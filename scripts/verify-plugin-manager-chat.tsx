@@ -87,6 +87,12 @@ const failingManager: PluginManagerView = {
   inspect: () => Promise.reject(new Error(SERVICE_FAILURE)),
 }
 
+/** Only the installation-supplied bundle: the "nothing added yet" profile. */
+const officialOnlyManager: PluginManagerView = {
+  ...manager,
+  listBundles: () => Promise.resolve(bundles.filter(bundle => !bundle.installed)),
+}
+
 let passed = 0
 function check(label: string, ok: boolean, detail = ''): void {
   if (!ok) throw new Error(`${label}\n${detail}`)
@@ -98,6 +104,7 @@ for (const [fullscreen, columns, service] of [
   [false, 100, 'present'],
   [false, 50, 'present'],
   [true, 100, 'present'],
+  [false, 100, 'official-only'],
   [false, 100, 'absent'],
   [false, 100, 'failing'],
 ] as const) {
@@ -128,7 +135,7 @@ for (const [fullscreen, columns, service] of [
   const ctx = {
     on: () => () => undefined,
     get: (name: string) => name === 'pluginManager' && service !== 'absent'
-      ? (service === 'failing' ? failingManager : manager)
+      ? (service === 'failing' ? failingManager : service === 'official-only' ? officialOnlyManager : manager)
       : undefined,
     logger: { warn: () => undefined, info: () => undefined, debug: () => undefined },
   } as never
@@ -164,6 +171,32 @@ for (const [fullscreen, columns, service] of [
   try {
     // 固定窗:pacing the key handlers attach after the first frame.
     await sleep(300)
+
+    if (service === 'official-only') {
+      await run('/plugin list')
+      check(`${tag}: a profile with nothing added says so`,
+        await settled(() => hasText(t('plugins-list-empty'))), screen())
+      await clear()
+      continue
+    }
+    if (service === 'present') {
+      // `list` runs first: it is the only form that asserts an ABSENCE (the
+      // installation's own bundles), and the transcript keeps every earlier
+      // report's lines on screen.
+      await run('/plugin list')
+      check(`${tag}: list answers`,
+        await settled(() => hasText(t('plugins-list-header', { count: '2' }))), screen())
+      check(`${tag}: list leads with the trust banner`,
+        above('C-070', t('plugins-list-header', { count: '2' })), screen())
+      check(`${tag}: list names the plugins the person added`,
+        hasText(`verify-plugin-undeclared 3.1.4 · off · ${t('plugins-tag-undeclared')}`) &&
+        hasText('verify-plugin-locked 4.0.0 · on · not removable'), screen())
+      check(`${tag}: list leaves the installation's own bundles out`,
+        !hasText('@deepseek-ai/dsh-base') && !hasText('@deepseek-harness-tui/dsh-tui'), screen())
+      check(`${tag}: list points at the detail forms`,
+        hasText('/plugin info') && hasText('/plugin registries'), screen())
+      await clear()
+    }
 
     await run('/plugin')
     if (service === 'failing') {
