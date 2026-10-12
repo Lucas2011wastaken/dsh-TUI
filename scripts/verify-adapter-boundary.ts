@@ -49,7 +49,6 @@
  *                                  (vendor) package, no concrete backend
  *                                  directory, no src/dsh-adapter/**
  *   native.dsh    only inside src/dsh-adapter/**
- *   native.codex  only inside src/backends/codex/**
  *
  * The standalone entry's host loading (ADAPTER.md, host contract):
  *
