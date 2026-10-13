@@ -500,10 +500,18 @@ const GROUPS = {
 // 只有安装自带 bundle、服务缺席、服务失败、同步抛错），断言信任横幅仍在首行、Official
 // 在 profile 依赖之前、门禁 1 的标签只落在第三方行上、locked/problem/不可卸载与
 // `readOnlyReason` 原样呈现、`info` 的已装与 inspect 两态、`registries` 纯列表、
-// 服务把凭据写进 registry URL 时不上屏，旧名 `/plugins` 不再是命令（负例），以及
+// 凭据一律只留 host/path 不上屏（registry 的 userinfo、不需要 userinfo 的 `?token=`、
+// accepted 且上游无名时回退的原始 spec、拒绝原因与异常文本里引用的同一个 URL），
+// 旧名 `/plugins` 不再是命令（负例），以及
 // `ctx.pluginManager` 缺席或失败时诊断照旧并给出原因。另有切会话栅栏：`/plugin` 与
 // `/agents` 的报告迟到时不得落进新会话。插件服务是夹具，不跑包管理器。
     ["verify-plugin-manager-chat", ['node', '--import', 'tsx/esm', 'scripts/verify-plugin-manager-chat.tsx']],
+// `/plugin info <name>` 的补全行（review R3/R4）：描述是插件自己的元数据，组合后先净化再按
+// 显示单元限宽——标题里的换行不得越出弹窗行、ANSI 不得进缓存、超宽中文标题在缓存里就有界——
+// 且一次 warm 装入所有 shipped 语言：`/lang` 后同一个已 warm 的节点按渲染时的语言取标题，
+// 与 `/plugin info` 一致，无需重启。端到端用真实 CommandSuggestions 在 100/50 列下断言注入
+// 的标题不会多出一条没有左边框的行（修复前的实际症状）。插件服务是替身，不联网。
+    ["verify-plugin-completions", ['node', '--import', 'tsx/esm', 'scripts/verify-plugin-completions.ts']],
 // 内核切换过场：结局分类（spawn 失败或启动期死亡＝failed，干净退出＝succeeded 不出声，
 // 之后非零退出＝crashed）、进度行写完才 spawn、双语文案与配色、plugin.ts/update.ts 接线。
     ["verify-handoff-transition", ['node', '--import', 'tsx/esm', 'scripts/verify-handoff-transition.ts']],

@@ -27,7 +27,9 @@
  * @dsh-std/manifest revision, then evaluates every public/private protocol
  * through one ProtocolCatalog. Manifests and on-disk files are UNTRUSTED input:
  * every derived line passes cleanScalarText before it reaches the
- * transcript.
+ * transcript, and any credential they quote — a URL field, the spec a person
+ * typed, text the service hands back — is redacted first (`redactUrl`/
+ * `redactText`).
  */
 
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
@@ -76,25 +78,61 @@ interface LedgerLine {
   errorCode?: unknown
 }
 
-const cell = (value: unknown): string => cleanScalarText(String(value ?? ''), LINE_CELLS)
+/** Query parameters that are a secret on their own: a credential needs no
+ *  userinfo (`https://registry.example.com/?token=…`). */
+const CREDENTIAL_QUERY_KEY = /^(?:token|access_token|auth|authorization|password|passwd|pwd|_auth|_authtoken|apikey|api_key|key|secret)$/i
 
 /**
- * A registry (or fetch host) URL with any credentials removed: npm and pnpm
- * accept `https://user:token@registry/…`, and this report is a transcript —
- * the token must never reach the screen or its scrollback. Everything else the
- * URL carries stays readable, so the person still recognizes which registry
- * answered. A value that is not a URL at all (pnpm accepts odd ones) passes
- * through unchanged.
+ * A URL with any credentials removed: npm and pnpm accept
+ * `https://user:token@registry/…` and `?token=…`, and this report is a
+ * transcript — neither may reach the screen or its scrollback. Host and path
+ * stay readable, so the person still recognizes which registry answered. A
+ * value that is not a URL at all (pnpm accepts odd ones) passes through
+ * unchanged.
  */
 function redactUrl(value: string): string {
+  let url: URL
   try {
-    const url = new URL(value)
-    if (url.username === '' && url.password === '') return value
-    return `${url.origin}${url.pathname}`
+    url = new URL(value)
   } catch {
     return value
   }
+  // Userinfo goes with the whole query: a URL that authenticates there often
+  // pairs it with a token in the query.
+  if (url.password !== '' || url.username !== '') return `${url.origin}${url.pathname}`
+  let dropped = false
+  for (const key of [...url.searchParams.keys()]) {
+    if (CREDENTIAL_QUERY_KEY.test(key)) {
+      url.searchParams.delete(key)
+      dropped = true
+    }
+  }
+  return dropped ? `${url.origin}${url.pathname}${url.search}` : value
 }
+
+/** A URL-shaped run inside free text: the spec a person typed, and the same
+ *  URL quoted back in a refusal reason or a thrown error. */
+const URL_IN_TEXT = /[a-z][a-z0-9+.-]*:\/\/[^\s]+/giu
+/** What the parser refuses — a styled (ANSI) URL, an odd host — still loses its
+ *  userinfo, so the one value it cannot read is not the gap a secret leaves by. */
+const USERINFO_AT_START = /^([a-z][a-z0-9+.-]*:\/\/)[^/?#@\s]*@/iu
+
+/**
+ * Free text with every URL it quotes redacted. The three paths that print text
+ * rather than a URL field — an accepted spec the upstream left unnamed, a
+ * refusal reason, an exception message — all funnel through here.
+ */
+function redactText(value: string): string {
+  if (!value.includes('://')) return value
+  return value.replace(URL_IN_TEXT, match => {
+    const redacted = redactUrl(match)
+    return redacted === match ? match.replace(USERINFO_AT_START, '$1') : redacted
+  })
+}
+
+/** One report cell: credentials redacted first, then sanitized, then capped —
+ *  truncation comes last, or a cut URL keeps the head of its own secret. */
+const cell = (value: unknown): string => cleanScalarText(redactText(String(value ?? '')), LINE_CELLS)
 
 /** One URL field as a report cell: credentials stripped, then capped. */
 const urlCell = (value: string): string => cell(redactUrl(value))

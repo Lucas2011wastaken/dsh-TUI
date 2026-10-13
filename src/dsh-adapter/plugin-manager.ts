@@ -22,7 +22,7 @@ import type {
   PluginRegistries,
   PluginSpecInspection,
 } from '@deepseek-ai/dsh-plugin-manager/types'
-import { getLang } from '../i18n.js'
+import { getLang, type Lang } from '../i18n.js'
 import { isCompositionOwned } from './plugin-declaration.js'
 
 /** The host service operations this package consumes. */
@@ -74,9 +74,18 @@ export type LocalizedPluginText = string | { readonly en: string; readonly [loca
  * popup cannot disagree about a title.
  */
 export function localizedPluginText(entry: unknown, fallback: string): string {
+  return pluginTitleIn(entry, getLang(), fallback)
+}
+
+/**
+ * {@link localizedPluginText} pinned to one named language — the completion
+ * catalog caches every shipped language at once, so it cannot ask the active
+ * one and then serve a stale answer after `/lang`.
+ */
+export function pluginTitleIn(entry: unknown, lang: Lang, fallback: string): string {
   const meta = (entry as { readonly meta?: { readonly title?: LocalizedPluginText } } | undefined)?.meta
   const title = meta?.title
   if (title === undefined) return fallback
   if (typeof title === 'string') return title
-  return title[getLang()] ?? title.en ?? fallback
+  return title[lang] ?? title.en ?? fallback
 }

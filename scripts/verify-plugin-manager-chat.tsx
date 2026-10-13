@@ -18,8 +18,11 @@ process.env.DSH_TUI_LANG = 'en'
 import type { PluginManagerView } from '../src/dsh-adapter/plugin-manager.js'
 import type { BundleInfo, PluginEntryId, PluginInfo } from '@deepseek-ai/dsh-plugin-manager/types'
 
-const [{ Writable, PassThrough }, React, { Terminal: XTerm }, ui, { Chat }, { QuestionStore }, { ApprovalStore }, { createChannel }, { setLang, t }, { kernelEntriesOf }, { listBackends }, { findText, settle, settled, sleep, viewportLines }, { Context }] = await Promise.all([
+const [{ Writable, PassThrough }, { mkdtempSync }, { tmpdir }, { join }, React, { Terminal: XTerm }, ui, { Chat }, { QuestionStore }, { ApprovalStore }, { createChannel }, { setLang, t }, { pluginReport }, { kernelEntriesOf }, { listBackends }, { findText, settle, settled, sleep, viewportLines }, { Context }] = await Promise.all([
   import('node:stream'),
+  import('node:fs'),
+  import('node:os'),
+  import('node:path'),
   import('react'),
   import('@xterm/headless'),
   import('../src/ui.js'),
@@ -28,6 +31,7 @@ const [{ Writable, PassThrough }, React, { Terminal: XTerm }, ui, { Chat }, { Qu
   import('../src/dsh-adapter/approvals.js'),
   import('../src/dsh-adapter/channel.js'),
   import('../src/i18n.js'),
+  import('../src/dsh-adapter/plugins-info.js'),
   import('../src/components/kernelCatalog.js'),
   import('../src/dsh-adapter/backend-registry.js'),
   import('./lib/term-test.mjs'),
@@ -72,6 +76,11 @@ const plugins: PluginInfo[] = [
  *  report is a transcript, so this must never reach the screen. */
 const CREDENTIAL = 'tok3n-s3cret'
 const CREDENTIAL_URL = `https://reader:${CREDENTIAL}@registry.npmjs.org/`
+/** The same secret in the two shapes the upstream hands back beyond a URL
+ *  field: a spec a person typed (the report falls back to it when the upstream
+ *  leaves a git URL unnamed) and a URL quoted inside free text. */
+const SPEC_CREDENTIAL = 'fake-review-credential'
+const SPEC_CREDENTIAL_URL = `https://reader:${SPEC_CREDENTIAL}@git.example.com/org/repo.git`
 
 const manager: PluginManagerView = {
   listBundles: () => Promise.resolve(bundles),
@@ -83,11 +92,15 @@ const manager: PluginManagerView = {
   }),
   inspect: spec => Promise.resolve(spec === 'verify-bad-spec'
     ? { status: 'refused', problem: 'not-found', reason: '404 Not Found' }
-    : {
-        status: 'accepted', kind: 'registry', name: 'verify-fresh-plugin', version: '9.9.9',
-        description: 'a fresh plugin', bundle: true, registry: CREDENTIAL_URL,
-        host: `https://reader:${CREDENTIAL}@git.example.com/repo.git`,
-      }),
+    // A git spec the upstream accepts without naming it: the report falls back
+    // to the spec itself, which is exactly the line that must not carry it.
+    : spec === SPEC_CREDENTIAL_URL
+      ? { status: 'accepted', kind: 'git', bundle: true, registry: null }
+      : {
+          status: 'accepted', kind: 'registry', name: 'verify-fresh-plugin', version: '9.9.9',
+          description: 'a fresh plugin', bundle: true, registry: CREDENTIAL_URL,
+          host: `https://reader:${CREDENTIAL}@git.example.com/repo.git`,
+        }),
 }
 
 /** The same service, refusing every call: the report must survive it. */
@@ -354,6 +367,15 @@ for (const [fullscreen, columns, service] of [
       !hasText(CREDENTIAL) && hasText('registry.npmjs.org') && hasText('registry.npmmirror.com'), screen())
     await clear()
 
+    // The spec itself: the upstream accepts a git URL without naming it, so the
+    // report falls back to what the person typed. That line is a transcript
+    // line like any other — it keeps host and path and never the userinfo.
+    await run(`/plugin info ${SPEC_CREDENTIAL_URL}`)
+    check(`${tag}: info redacts the credentials of the spec it was handed`,
+      await settled(() => hasText('Installable: https://git.example.com/org/repo.git')) &&
+      !hasText(SPEC_CREDENTIAL), screen())
+    await clear()
+
     // The rename shipped without a deprecation cycle: nothing was released
     // under the old name, so the merged catalog — the list dispatch and the
     // root completion both match `name` against — must no longer carry it.
@@ -371,6 +393,51 @@ for (const [fullscreen, columns, service] of [
     channel.releaseContributions()
     term.dispose()
   }
+}
+
+// ── Every credential-bearing path of the report, without a terminal ─────────
+// Four ways a secret reaches `pluginReport`, three of which are TEXT rather
+// than a URL field: an accepted spec the upstream left unnamed (the report
+// falls back to the raw spec), a refusal reason, a thrown error — plus registry
+// fields whose credential is a query parameter and needs no userinfo at all.
+// The report is a transcript, so each of them keeps host and path and loses the
+// secret. `deps` points at an empty directory: this block reads no user state.
+{
+  const probeHome = mkdtempSync(join(tmpdir(), 'dsh-plugin-redaction-'))
+  const deps = {
+    grants: { knownPermissions: () => [], allows: () => false },
+    dataDir: probeHome,
+    ledgerFile: join(probeHome, 'ledger.jsonl'),
+    storageDir: probeHome,
+  }
+  const inspectOf = (inspection: unknown): PluginManagerView => ({ ...manager, inspect: () => Promise.resolve(inspection as never) })
+  const spec = SPEC_CREDENTIAL_URL
+  const paths: readonly [string, PluginManagerView, string][] = [
+    ['an accepted spec the upstream left unnamed', inspectOf({ status: 'accepted', kind: 'git', bundle: true, registry: null }), spec],
+    ['a refusal reason quoting it', inspectOf({ status: 'refused', problem: 'network', reason: `Failed to fetch ${spec}` }), 'probe-plugin'],
+    ['an exception message quoting it', { ...manager, inspect: () => { throw new Error(`Cannot reach ${spec}`) } }, 'probe-plugin'],
+  ]
+  for (const [label, service, arg] of paths) {
+    const lines = await pluginReport(`info ${arg}`, deps as never, service)
+    check(`report: ${label} keeps host and path, never the credential`,
+      !lines.some(line => line.includes(SPEC_CREDENTIAL)) &&
+      lines.some(line => line.includes('git.example.com/org/repo.git')),
+      lines.join('\n'))
+  }
+  const query = (host: string, key: string): string => `https://${host}/?${key}=${SPEC_CREDENTIAL}`
+  const registries = await pluginReport('registries', deps as never, {
+    ...manager,
+    registries: () => Promise.resolve({
+      registry: query('registry.example.com', 'token'),
+      fallbackRegistries: [query('npm.example.com', 'access_token')],
+      resolved: `https://other.example.com/path?_authToken=${SPEC_CREDENTIAL}`,
+    }),
+  })
+  check('report: a query-only token keeps host and path, never the credential',
+    !registries.some(line => line.includes(SPEC_CREDENTIAL)) &&
+    ['registry.example.com', 'npm.example.com', 'other.example.com/path']
+      .every(host => registries.some(line => line.includes(host))),
+    registries.join('\n'))
 }
 // ── Both async reports are fenced to the session that asked for them ───────
 // `pluginsInfo` (async since C-3) and `listSubagents` answer through `pushLocal`,

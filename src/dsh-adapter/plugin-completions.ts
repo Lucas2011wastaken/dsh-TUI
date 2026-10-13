@@ -5,6 +5,10 @@
  * list reads (`extraBundles` in `./plugin-manager.ts`), so the popup and
  * `/plugin list` cannot disagree about what "added" means.
  *
+ * A row's description is the bundle's own title and version — sanitized, capped
+ * by display width, and kept in every shipped language, so the popup shows the
+ * same title `/plugin info` would and a `/lang` switch repaints it.
+ *
  * The cache reads like `/model`'s (`channel/model-actions.ts`): one load, an
  * answer that arrives after the owner moved on is dropped, and the popup is
  * refreshed by `emit()` when the names land. A service that is missing — a
@@ -14,8 +18,35 @@
  */
 import type { Context } from '@deepseek-ai/cordis'
 import type { BundleInfo } from '@deepseek-ai/dsh-plugin-manager/types'
-import type { CommandCompletionNode } from '../commands.js'
-import { extraBundles, localizedPluginText, pluginManagerOf } from './plugin-manager.js'
+import type { CommandCompletionNode, LocalizedDescriptions } from '../commands.js'
+import { getLang, LANGS, type Lang } from '../i18n.js'
+import { extraBundles, pluginManagerOf, pluginTitleIn } from './plugin-manager.js'
+import { cleanScalarText } from './sanitize.js'
+
+/**
+ * Display-cell budget for one description. The popup truncates to its own row
+ * width at render, so this only bounds what a bundle's metadata may park in the
+ * cache — a title is host input and arrives as wide as it likes.
+ */
+const DESCRIPTION_CELLS = 200
+
+/**
+ * What one bundle answers to, version included, in every shipped language. The
+ * title is host metadata landing in the popup's row, so it is sanitized and
+ * capped as a display string (`cleanScalarText`: a newline in a title would
+ * leave the row, ANSI would paint it). Every language is built at warm time
+ * because the cache loads once; `CommandSuggestions` resolves `descriptions` at
+ * render (`localizedDescription`), so `/lang` repaints the popup without a
+ * reload and the popup titles a bundle exactly as `/plugin info` does.
+ */
+function bundleDescriptions(bundle: BundleInfo): LocalizedDescriptions {
+  const version = bundle.version === undefined ? '' : ` · ${bundle.version}`
+  const built: Partial<Record<Lang, string>> = {}
+  for (const lang of LANGS) {
+    built[lang] = cleanScalarText(`${pluginTitleIn(bundle, lang, bundle.name)}${version}`, DESCRIPTION_CELLS)
+  }
+  return built
+}
 
 /** The warm-and-read pair the slash completion tree consumes. */
 export function createPluginCompletionCatalog(ctx: Context, deps: {
@@ -56,12 +87,14 @@ export function createPluginCompletionCatalog(ctx: Context, deps: {
       }
       nodes = extraBundles(bundles).map(bundle => {
         // The package name is what `/plugin info` matches, so it is the token;
-        // the title and version are what a person recognizes in the popup. The
-        // title comes from the report's own reader, so the two never disagree.
-        const title = localizedPluginText(bundle, bundle.name)
+        // the title and version are what a person recognizes in the popup. Both
+        // come from the report's own reader, per language, so the two never
+        // disagree — and neither renders raw host metadata.
+        const descriptions = bundleDescriptions(bundle)
         return {
           name: bundle.name,
-          description: bundle.version === undefined ? title : `${title} · ${bundle.version}`,
+          description: descriptions[getLang()] ?? bundle.name,
+          descriptions,
           ...(bundle.enabled ? {} : { tag: 'off' }),
         }
       })
