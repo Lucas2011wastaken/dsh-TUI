@@ -496,11 +496,13 @@ const GROUPS = {
 // 消费者写法（`lib/types/index.d.ts`，故须在 build 之后跑），判据是零诊断：
 // 品牌回归报 TS2322，松成 any 则 `@ts-expect-error` 变 unused directive。
     ["verify-public-config-types", ['node', 'scripts/verify-public-config-types.mjs']],
-// `/plugin` 命令面（Stage C-3）：在真实 Chat 里跑四种版式（inline 100/50、fullscreen 100、
-// 服务缺席），断言信任横幅仍在首行、Official 在 profile 依赖之前、门禁 1 的标签只落在
-// 第三方行上、locked/problem/不可卸载与 `readOnlyReason` 原样呈现、`info` 的已装与
-// inspect 两态、`registries` 纯列表、`/plugins` 弃用别名与新名同源，以及
-// `ctx.pluginManager` 缺席时诊断照旧并给出原因。插件服务是夹具，不跑包管理器。
+// `/plugin` 命令面（Stage C-3）：在真实 Chat 里跑七种版式（inline 100/50、fullscreen 100、
+// 只有安装自带 bundle、服务缺席、服务失败、同步抛错），断言信任横幅仍在首行、Official
+// 在 profile 依赖之前、门禁 1 的标签只落在第三方行上、locked/problem/不可卸载与
+// `readOnlyReason` 原样呈现、`info` 的已装与 inspect 两态、`registries` 纯列表、
+// 服务把凭据写进 registry URL 时不上屏，旧名 `/plugins` 不再是命令（负例），以及
+// `ctx.pluginManager` 缺席或失败时诊断照旧并给出原因。另有切会话栅栏：`/plugin` 与
+// `/agents` 的报告迟到时不得落进新会话。插件服务是夹具，不跑包管理器。
     ["verify-plugin-manager-chat", ['node', '--import', 'tsx/esm', 'scripts/verify-plugin-manager-chat.tsx']],
 // 内核切换过场：结局分类（spawn 失败或启动期死亡＝failed，干净退出＝succeeded 不出声，
 // 之后非零退出＝crashed）、进度行写完才 spawn、双语文案与配色、plugin.ts/update.ts 接线。

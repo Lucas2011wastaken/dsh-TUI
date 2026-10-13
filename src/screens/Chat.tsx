@@ -3504,17 +3504,23 @@ export function Chat({
         void collectMigrateRows().then(setMigrateRows)
         return true
       }
-      case 'plugin':
+      case 'plugin': {
         // Plugin diagnostics (C-070): trust banner first, then descriptor /
         // grant matrix / ledger tail — or validate+negotiate for
         // `/plugin check <path>` (rawInput carries the subcommand).
         setHelpOpen(false)
         // The bundle/row half comes from the host plugin service, so the
-        // report is async (the `/agents` case reads the same way).
+        // report is async (the `/agents` case reads the same way). `pushLocal`
+        // writes the CURRENTLY bound session, and a resume or `/new` can land
+        // while the service is still answering: fence the report to the
+        // binding that asked for it, or it appears in the new transcript.
+        const originAgentBinding = channel.agentBindingGeneration
         void channel.pluginsInfo(rawInput).then((lines) => {
+          if (channel.agentBindingGeneration !== originAgentBinding) return
           channel.pushLocal('/plugin', lines)
         })
         return true
+      }
       case 'export': {
         const target = channel.exportSession()
         channel.notify(
@@ -3578,12 +3584,22 @@ export function Chat({
         }
         return false
       }
-      case 'agents':
+      case 'agents': {
         setHelpOpen(false)
+        // The roster comes from the host subagents service, so the report is
+        // async. Two fences, each for a window of its own: the generation guard
+        // drops an answer that raced a session switch (`pushLocal` writes the
+        // CURRENT binding), and the catch takes the rejection `listSubagents`
+        // raises on purpose when the capture it read for has ended — an
+        // unhandledRejection there is fatal to the process guard, and there is
+        // nothing left to report to.
+        const originAgentBinding = channel.agentBindingGeneration
         void channel.listSubagents().then((lines) => {
+          if (channel.agentBindingGeneration !== originAgentBinding) return
           channel.pushLocal('/agents', lines)
-        })
+        }).catch(() => undefined)
         return true
+      }
       case 'login': {
         setHelpOpen(false)
         if (runBackendLogin()) return true

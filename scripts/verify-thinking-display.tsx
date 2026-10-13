@@ -145,7 +145,7 @@ function makeChannel() {
     exportSession: () => null,
     initWorkspace: () => null,
     doctorInfo: () => [],
-    pluginsInfo: () => [],
+    pluginsInfo: () => Promise.resolve([]),
     listSubagents: async () => [],
     listPresets: async () => [],
     switchPreset: async () => false,

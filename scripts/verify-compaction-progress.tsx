@@ -392,7 +392,7 @@ function makeChatChannel(overrides = {}) {
     agentPreset: 'standard',
     mode: { id: 'default', plan: false },
     modeIndex: 0,
-    cycleMode: () => {},
+    cycleMode: () => Promise.resolve(),
     commandList: [],
     commandCompletions: () => [],
     loadedContext: undefined,

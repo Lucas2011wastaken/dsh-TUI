@@ -22,6 +22,7 @@ import type {
   PluginRegistries,
   PluginSpecInspection,
 } from '@deepseek-ai/dsh-plugin-manager/types'
+import { getLang } from '../i18n.js'
 import { isCompositionOwned } from './plugin-declaration.js'
 
 /** The host service operations this package consumes. */
@@ -57,4 +58,25 @@ export function pluginManagerOf(ctx: Context): PluginManagerView | undefined {
  */
 export function extraBundles(bundles: readonly BundleInfo[]): BundleInfo[] {
   return bundles.filter(bundle => bundle.installed && !isCompositionOwned(bundle.name))
+}
+
+/** The host's localized display text: a literal, or translations by language id. */
+export type LocalizedPluginText = string | { readonly en: string; readonly [locale: string]: string }
+
+/**
+ * What a bundle or loader entry calls itself, in the reader's language. The
+ * entry stays `unknown` on purpose: `meta` arrived after the 0.1.5 line, so the
+ * alpha.2 compat line's own declarations may not carry the field at all
+ * (`verify:alpha-source` type-checks this package against them), and reading it
+ * structurally is what keeps one reader compiling on every line. An older host
+ * that answers without it takes the caller's fallback — the package name, the
+ * module specifier — and one reader means the report's rows and the completion
+ * popup cannot disagree about a title.
+ */
+export function localizedPluginText(entry: unknown, fallback: string): string {
+  const meta = (entry as { readonly meta?: { readonly title?: LocalizedPluginText } } | undefined)?.meta
+  const title = meta?.title
+  if (title === undefined) return fallback
+  if (typeof title === 'string') return title
+  return title[getLang()] ?? title.en ?? fallback
 }

@@ -18,7 +18,7 @@ process.env.DSH_TUI_LANG = 'en'
 import type { PluginManagerView } from '../src/dsh-adapter/plugin-manager.js'
 import type { BundleInfo, PluginEntryId, PluginInfo } from '@deepseek-ai/dsh-plugin-manager/types'
 
-const [{ Writable, PassThrough }, React, { Terminal: XTerm }, ui, { Chat }, { QuestionStore }, { ApprovalStore }, { createChannel }, { setLang, t }, { kernelEntriesOf }, { listBackends }, { findText, settled, sleep, viewportLines }] = await Promise.all([
+const [{ Writable, PassThrough }, React, { Terminal: XTerm }, ui, { Chat }, { QuestionStore }, { ApprovalStore }, { createChannel }, { setLang, t }, { kernelEntriesOf }, { listBackends }, { findText, settle, settled, sleep, viewportLines }, { Context }] = await Promise.all([
   import('node:stream'),
   import('react'),
   import('@xterm/headless'),
@@ -31,6 +31,7 @@ const [{ Writable, PassThrough }, React, { Terminal: XTerm }, ui, { Chat }, { Qu
   import('../src/components/kernelCatalog.js'),
   import('../src/dsh-adapter/backend-registry.js'),
   import('./lib/term-test.mjs'),
+  import('@deepseek-ai/cordis'),
 ])
 
 setLang('en')
@@ -38,8 +39,13 @@ const ROWS = 40
 
 const bundles: BundleInfo[] = [
   {
+    // The installation's own base layer, in the shape a real profile reports:
+    // supplied by the installation (`installed: false`) and named by no shipped
+    // template's `OPTIONAL_BUNDLES` (`optional: false`) — so the overview's
+    // groups must key on `installed`, or this row lands under "Profile
+    // dependencies".
     name: '@deepseek-ai/dsh-base', version: '0.2.0-rc.2', enabled: true, installed: false,
-    optional: true, removable: false, rows: [], overrides: ['hmr'],
+    optional: false, removable: false, rows: [], overrides: ['hmr'],
   },
   {
     name: '@deepseek-harness-tui/dsh-tui', version: '0.14.0', enabled: true, installed: true,
@@ -62,19 +68,25 @@ const plugins: PluginInfo[] = [
     readOnlyReason: 'unaddressable', meta: { title: { en: 'Orphan row', zh: '孤儿行' } },
   },
 ]
+/** What an npm/pnpm configuration may embed in a registry URL's userinfo: the
+ *  report is a transcript, so this must never reach the screen. */
+const CREDENTIAL = 'tok3n-s3cret'
+const CREDENTIAL_URL = `https://reader:${CREDENTIAL}@registry.npmjs.org/`
+
 const manager: PluginManagerView = {
   listBundles: () => Promise.resolve(bundles),
   listPlugins: () => Promise.resolve(plugins),
   registries: () => Promise.resolve({
-    registry: 'https://registry.npmjs.org/',
-    fallbackRegistries: ['https://registry.npmmirror.com/'],
+    registry: CREDENTIAL_URL,
+    fallbackRegistries: [`https://reader:${CREDENTIAL}@registry.npmmirror.com/`],
     resolved: null,
   }),
   inspect: spec => Promise.resolve(spec === 'verify-bad-spec'
     ? { status: 'refused', problem: 'not-found', reason: '404 Not Found' }
     : {
         status: 'accepted', kind: 'registry', name: 'verify-fresh-plugin', version: '9.9.9',
-        description: 'a fresh plugin', bundle: true, registry: 'https://registry.npmjs.org/',
+        description: 'a fresh plugin', bundle: true, registry: CREDENTIAL_URL,
+        host: `https://reader:${CREDENTIAL}@git.example.com/repo.git`,
       }),
 }
 
@@ -87,28 +99,46 @@ const failingManager: PluginManagerView = {
   inspect: () => Promise.reject(new Error(SERVICE_FAILURE)),
 }
 
+/** The same service, throwing BEFORE it returns a promise: `.catch` cannot see
+ *  that, so every consumer has to contain it on its own. */
+const SYNC_FAILURE = 'the plugin service threw before answering'
+const syncThrowManager: PluginManagerView = {
+  ...manager,
+  listBundles: () => { throw new Error(SYNC_FAILURE) },
+}
+
 /** Only the installation-supplied bundle: the "nothing added yet" profile. */
 const officialOnlyManager: PluginManagerView = {
   ...manager,
   listBundles: () => Promise.resolve(bundles.filter(bundle => !bundle.installed)),
 }
 
-let passed = 0
-function check(label: string, ok: boolean, detail = ''): void {
-  if (!ok) throw new Error(`${label}\n${detail}`)
-  passed += 1
-  console.log(`PASS ${label}`)
+/** The service each form mounts (`absent` mounts none). */
+const SERVICES: Record<string, PluginManagerView | undefined> = {
+  present: manager,
+  'official-only': officialOnlyManager,
+  absent: undefined,
+  failing: failingManager,
+  'sync-throw': syncThrowManager,
 }
 
-for (const [fullscreen, columns, service] of [
-  [false, 100, 'present'],
-  [false, 50, 'present'],
-  [true, 100, 'present'],
-  [false, 100, 'official-only'],
-  [false, 100, 'absent'],
-  [false, 100, 'failing'],
-] as const) {
-  const tag = `${fullscreen ? 'fullscreen' : 'inline'} ${columns}${service === 'present' ? '' : ` ${service}`}`
+/** Drain the microtask queue: the report's async chain holds no timers, so one
+ *  macrotask boundary sees it finished. */
+const tick = (): Promise<void> => new Promise(resolve => setImmediate(resolve))
+
+/** The agent fixture a real channel binds as its startup session. */
+function makeAgent(id: string, sessionId: string) {
+  return {
+    id, status: 'idle',
+    session: { id: sessionId, seq: 0, events: [], header: {} },
+    ctx: { on: () => () => undefined },
+    followup() {}, steer() {}, inbox: { remove: () => true },
+  }
+}
+
+/** One terminal + Chat rig: stdin → React → throttled render → xterm. Both the
+ *  forms loop below and the session-fence case drive this same pipeline. */
+function makeHarness(columns: number, fullscreen: boolean) {
   const term = new XTerm({ cols: columns, rows: ROWS, scrollback: 0, allowProposedApi: true })
   class Out extends Writable {
     columns = columns
@@ -123,32 +153,6 @@ for (const [fullscreen, columns, service] of [
     unref() { return this }
   }
   const stdin = new In()
-  // `/plugin` is a DSH-served command (its requirement defaults to `dsh`), so
-  // the fixture is an Agent: createChannel builds the real DSH session around
-  // it and attaches the DSH extensions this command lives in.
-  const agent = {
-    id: 'plugin-chat', status: 'idle',
-    session: { id: 's-plugin-chat', seq: 0, events: [], header: {} },
-    ctx: { on: () => () => undefined },
-    followup() {}, steer() {}, inbox: { remove: () => true },
-  }
-  const ctx = {
-    on: () => () => undefined,
-    get: (name: string) => name === 'pluginManager' && service !== 'absent'
-      ? (service === 'failing' ? failingManager : service === 'official-only' ? officialOnlyManager : manager)
-      : undefined,
-    logger: { warn: () => undefined, info: () => undefined, debug: () => undefined },
-  } as never
-  const channel = createChannel(ctx, agent as never, { model: 'fake-model', provider: '', cwd: process.cwd(), activity: false })
-  const node = React.createElement(Chat, {
-    channel: channel as never, questionStore: new QuestionStore(), approvalStore: new ApprovalStore(),
-    onExit: () => undefined, fullscreen, trajectorySeen: true,
-    kernelEntries: kernelEntriesOf(listBackends()),
-  })
-  const instance = await ui.render(fullscreen ? <ui.AlternateScreen mouseTracking>{node}</ui.AlternateScreen> : node, {
-    stdout: new Out() as never, stdin: stdin as never, stderr: new Out() as never,
-    exitOnCtrlC: false, patchConsole: false,
-  })
   const screen = (): string => viewportLines(term, ROWS).join('\n')
   const hasText = (text: string): boolean => screen().replaceAll(/\s+/gu, '').includes(text.replaceAll(/\s+/gu, ''))
   const type = async (line: string): Promise<void> => {
@@ -170,6 +174,48 @@ for (const [fullscreen, columns, service] of [
     const two = findText(term, second)
     return one !== null && two !== null && one.row < two.row
   }
+  const render = (node: React.ReactElement): Promise<{ unmount(): void }> => ui.render(
+    fullscreen ? <ui.AlternateScreen mouseTracking>{node}</ui.AlternateScreen> : node,
+    {
+      stdout: new Out() as never, stdin: stdin as never, stderr: new Out() as never,
+      exitOnCtrlC: false, patchConsole: false,
+    },
+  )
+  return { term, stdin, screen, hasText, type, run, clear, above, render }
+}
+
+let passed = 0
+function check(label: string, ok: boolean, detail = ''): void {
+  if (!ok) throw new Error(`${label}\n${detail}`)
+  passed += 1
+  console.log(`PASS ${label}`)
+}
+
+for (const [fullscreen, columns, service] of [
+  [false, 100, 'present'],
+  [false, 50, 'present'],
+  [true, 100, 'present'],
+  [false, 100, 'official-only'],
+  [false, 100, 'absent'],
+  [false, 100, 'failing'],
+  [false, 100, 'sync-throw'],
+] as const) {
+  const tag = `${fullscreen ? 'fullscreen' : 'inline'} ${columns}${service === 'present' ? '' : ` ${service}`}`
+  const { term, stdin, screen, hasText, type, run, clear, above, render } = makeHarness(columns, fullscreen)
+  const ctx = {
+    on: () => () => undefined,
+    get: (name: string) => name === 'pluginManager' ? SERVICES[service] : undefined,
+    logger: { warn: () => undefined, info: () => undefined, debug: () => undefined },
+  } as never
+  // `/plugin` is a DSH-served command (its requirement defaults to `dsh`), so
+  // the fixture is an Agent: createChannel builds the real DSH session around
+  // it and attaches the DSH extensions this command lives in.
+  const channel = createChannel(ctx, makeAgent('plugin-chat', 's-plugin-chat') as never, { model: 'fake-model', provider: '', cwd: process.cwd(), activity: false })
+  const instance = await render(React.createElement(Chat, {
+    channel: channel as never, questionStore: new QuestionStore(), approvalStore: new ApprovalStore(),
+    onExit: () => undefined, fullscreen, trajectorySeen: true,
+    kernelEntries: kernelEntriesOf(listBackends()),
+  }))
 
   try {
     // 固定窗:pacing the key handlers attach after the first frame.
@@ -181,6 +227,15 @@ for (const [fullscreen, columns, service] of [
         await settled(() => hasText(t('plugins-list-empty'))), screen())
       await clear()
       continue
+    }
+    if (service === 'sync-throw') {
+      // The service throws before it hands back a promise, which `.catch`
+      // cannot see: the completion tree must fall back to its static forms
+      // instead of taking the keystroke path down with the raw throw.
+      await type('/plugin ')
+      check(`${tag}: a synchronously throwing service leaves the static forms`,
+        await settled(() => hasText('plugin list') && hasText('plugin registries')), screen())
+      await clear()
     }
     if (service === 'present') {
       // `list` runs first: it is the only form that asserts an ABSENCE (the
@@ -226,12 +281,14 @@ for (const [fullscreen, columns, service] of [
     }
 
     await run('/plugin')
-    if (service === 'failing') {
-      // The service rejects: the diagnostics half is intact and the failure is
-      // one line of its own, not a lost report (and not an unhandled rejection).
+    if (service === 'failing' || service === 'sync-throw') {
+      // The service fails: the diagnostics half is intact and the failure is
+      // one line of its own, not a lost report (and not an unhandled rejection
+      // — nor, for the synchronous throw, an escaped one).
+      const failure = service === 'failing' ? SERVICE_FAILURE : SYNC_FAILURE
       check(`${tag}: a failing service keeps the diagnostics and reports itself`,
         await settled(() => hasText(t('plugins-host-unavailable')) &&
-          hasText(t('plugins-service-error', { err: SERVICE_FAILURE }))), screen())
+          hasText(t('plugins-service-error', { err: failure }))), screen())
       await clear()
       continue
     }
@@ -247,6 +304,11 @@ for (const [fullscreen, columns, service] of [
     }
     if (columns >= 100) {
       check(`${tag}: the trust banner stays the first line`, above('C-070', 'Installed bundles'), screen())
+      // The installation's own base layer is `installed: false, optional: false`
+      // — keyed on `optional` it would land under "Profile dependencies", below
+      // that label instead of above it.
+      check(`${tag}: an installation-supplied bundle sits under the official group`,
+        above('@deepseek-ai/dsh-base 0.2.0-rc.2', 'Profile dependencies'), screen())
     }
     check(`${tag}: official bundles precede the profile's own`,
       above('Official', 'Profile dependencies'), screen())
@@ -274,6 +336,8 @@ for (const [fullscreen, columns, service] of [
     check(`${tag}: info inspects a spec that is not installed`,
       await settled(() => hasText('Installable: verify-fresh-plugin 9.9.9 · registry · bundle=true')), screen())
     check(`${tag}: the inspection keeps its description`, hasText('a fresh plugin'), screen())
+    check(`${tag}: the inspection shows its registry and host without credentials`,
+      !hasText(CREDENTIAL) && hasText('registry.npmjs.org') && hasText('git.example.com'), screen())
     await clear()
 
     await run('/plugin info verify-bad-spec')
@@ -286,6 +350,8 @@ for (const [fullscreen, columns, service] of [
       await settled(() => hasText('registry.npmjs.org') && hasText('registry.npmmirror.com')), screen())
     check(`${tag}: an unreadable pnpm resolution is reported as none`,
       hasText(t('plugins-info-registries-resolved', { registry: t('plugins-info-registries-none') })), screen())
+    check(`${tag}: the registries keep their names but never their credentials`,
+      !hasText(CREDENTIAL) && hasText('registry.npmjs.org') && hasText('registry.npmmirror.com'), screen())
     await clear()
 
     // The rename shipped without a deprecation cycle: nothing was released
@@ -300,6 +366,108 @@ for (const [fullscreen, columns, service] of [
     await run('/plugin bogus')
     check(`${tag}: an unknown subcommand names every supported form`,
       await settled(() => hasText('Unknown subcommand: bogus') && hasText('registries')), screen())
+  } finally {
+    instance.unmount()
+    channel.releaseContributions()
+    term.dispose()
+  }
+}
+// ── Both async reports are fenced to the session that asked for them ───────
+// `pluginsInfo` (async since C-3) and `listSubagents` answer through `pushLocal`,
+// which writes whichever session is bound NOW: a report that lands after a
+// `/new` or a resume would appear in the new session's transcript without the
+// generation guard in Chat.
+{
+  const tag = 'session fence'
+  const { term, stdin, screen, type, run, render } = makeHarness(100, false)
+  /** A service call the test can park and then release. */
+  interface Gate<T> {
+    setHold(on: boolean): void
+    call(): Promise<T>
+    readonly waiting: number
+    releaseAll(): void
+  }
+  function makeGate<T>(answer: T): Gate<T> {
+    let hold = false
+    const parked: Array<(value: T) => void> = []
+    return {
+      setHold: (on: boolean): void => { hold = on },
+      call: (): Promise<T> => hold ? new Promise<T>(resolve => { parked.push(resolve) }) : Promise.resolve(answer),
+      get waiting(): number { return parked.length },
+      /** Release every parked answer — the report's is among them. */
+      releaseAll: (): void => { while (parked.length > 0) parked.pop()?.(answer) },
+    }
+  }
+  const bundleGate = makeGate(bundles)
+  const childGate = makeGate([] as Array<{ mode: string; label?: string; activity: string; id: string }>)
+  const ctx = new Context()
+  const provide = (ctx as unknown as { provide(name: string, value: unknown): void }).provide.bind(ctx)
+  const slowManager: PluginManagerView = { ...manager, listBundles: bundleGate.call }
+  provide('pluginManager', slowManager)
+  provide('subagents', { listChildren: childGate.call })
+  // `/new` needs the agents service; each handle's agent becomes the new session.
+  let created = 0
+  provide('agents', {
+    get: () => undefined,
+    create: () => {
+      created += 1
+      return Promise.resolve({
+        agent: { ...makeAgent(`after-${created}`, `s-after-${created}`), options: {}, cancel() {}, whenIdle: () => Promise.resolve() },
+        dispose: () => Promise.resolve(),
+      })
+    },
+  })
+  const channel = createChannel(ctx as never, makeAgent('before', 's-before') as never, {
+    model: 'fake-model', provider: '', cwd: process.cwd(), activity: false,
+  })
+  const instance = await render(React.createElement(Chat, {
+    channel: channel as never, questionStore: new QuestionStore(), approvalStore: new ApprovalStore(),
+    onExit: () => undefined, fullscreen: false, trajectorySeen: true,
+    kernelEntries: kernelEntriesOf(listBackends()),
+  }))
+  /** Local rows titled after one report: one per push onto the bound session. */
+  const reports = (title: string): number => channel.rows.filter(row => row.text === title).length
+
+  /** Positive control first (the same rig does push the report when nothing is
+   *  held), then a `/new` between the ask and the answer. */
+  const fenced = async (
+    fenceTag: string,
+    command: string,
+    title: string,
+    gate: Gate<unknown>,
+  ): Promise<void> => {
+    await run(command)
+    check(`${fenceTag}: the report lands on the session that asked for it`,
+      await settled(() => reports(title) === 1), `${reports(title)} · ${screen()}`)
+
+    // Type first, hold after: a completion warm this keystroke run may trigger
+    // is answered normally, so what gets parked is the report's own call.
+    await type(command)
+    gate.setHold(true)
+    stdin.write('\r')
+    await settle(() => gate.waiting >= 1)
+    check(`${fenceTag}: the report is in flight`, gate.waiting >= 1, String(gate.waiting))
+
+    const generation = channel.agentBindingGeneration
+    check(`${fenceTag}: /new rebinds the channel`,
+      (await channel.newSession()) === true && channel.agentBindingGeneration !== generation,
+      `${generation} -> ${channel.agentBindingGeneration}`)
+    check(`${fenceTag}: the new session starts without the old report`, reports(title) === 0, String(reports(title)))
+
+    gate.releaseAll()
+    // The whole late-answer chain is microtasks — no timers — so one macrotask
+    // boundary is enough to know the guard has run (no fixed window).
+    await tick()
+    check(`${fenceTag}: nothing was left unanswered`, gate.waiting === 0, String(gate.waiting))
+    check(`${fenceTag}: an answer that lands after the switch stays out of the new session`,
+      reports(title) === 0, channel.rows.map(row => row.text).join(' | '))
+  }
+
+  try {
+    // 固定窗:pacing the key handlers attach after the first frame.
+    await sleep(300)
+    await fenced(`${tag} /plugin`, '/plugin list', '/plugin', bundleGate)
+    await fenced(`${tag} /agents`, '/agents', '/agents', childGate)
   } finally {
     instance.unmount()
     channel.releaseContributions()

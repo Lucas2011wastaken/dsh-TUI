@@ -35,7 +35,7 @@ import { join, resolve } from 'node:path'
 import type { BundleInfo, PluginInfo, PluginRegistries, PluginSpecInspection } from '@deepseek-ai/dsh-plugin-manager/types'
 import { parseManifest, projectManifest } from '../adapter/standard/protocols.js'
 import { DATA_DIR } from '../utils/paths.js'
-import { getLang, t } from '../i18n.js'
+import { t } from '../i18n.js'
 import { loadSpecData } from '../adapter/standard/registry.js'
 import { createContractIndex, validatePlugin, negotiate } from '../adapter/standard/admission.js'
 import type { NegotiationDecision } from '../adapter/standard/types.js'
@@ -43,7 +43,7 @@ import { cleanScalarText } from './sanitize.js'
 import type { GrantStore } from '../adapter/standard/grants.js'
 import type { HostDescriptorBuild } from '../adapter/standard/descriptor.js'
 import { isCompositionOwned, type PluginDeclaration } from './plugin-declaration.js'
-import { extraBundles, type PluginManagerView } from './plugin-manager.js'
+import { extraBundles, localizedPluginText, type PluginManagerView } from './plugin-manager.js'
 import { PLUGIN_STORAGE_DIR } from './plugin-storage.js'
 import { EFFECT_LEDGER_FILE } from './effect-ledger.js'
 
@@ -77,6 +77,27 @@ interface LedgerLine {
 }
 
 const cell = (value: unknown): string => cleanScalarText(String(value ?? ''), LINE_CELLS)
+
+/**
+ * A registry (or fetch host) URL with any credentials removed: npm and pnpm
+ * accept `https://user:token@registry/…`, and this report is a transcript —
+ * the token must never reach the screen or its scrollback. Everything else the
+ * URL carries stays readable, so the person still recognizes which registry
+ * answered. A value that is not a URL at all (pnpm accepts odd ones) passes
+ * through unchanged.
+ */
+function redactUrl(value: string): string {
+  try {
+    const url = new URL(value)
+    if (url.username === '' && url.password === '') return value
+    return `${url.origin}${url.pathname}`
+  } catch {
+    return value
+  }
+}
+
+/** One URL field as a report cell: credentials stripped, then capped. */
+const urlCell = (value: string): string => cell(redactUrl(value))
 
 /** Parse the ledger file tolerantly (skip corrupt lines, never throw). */
 function readLedgerRecords(file: string): LedgerLine[] {
@@ -408,25 +429,14 @@ function declarationTag(deps: PluginsInfoDeps, packageName: string): string | un
   }
 }
 
-/** The host's localized text (`PluginLocalizedMeta.title`): a literal, or translations by language id. */
-type LocalizedPluginText = string | { readonly en: string; readonly [locale: string]: string }
-
-/** Pick a display string out of the host's localized metadata. */
-function localizedText(value: LocalizedPluginText | undefined, fallback: string): string {
-  if (value === undefined) return fallback
-  if (typeof value === 'string') return value
-  return value[getLang()] ?? value.en ?? fallback
-}
-
 /**
- * Display title of one loader entry. `PluginInventoryEntry.meta` arrived after
- * the 0.1.5 line, so an older host answers the module specifier instead
- * (contract.ts: additions must degrade gracefully on the older lines), and the
- * field is read structurally for the same reason.
+ * Display title of one loader entry: its own localized title, else the module
+ * specifier it was loaded as (`./plugin-manager.ts` reads the field, which
+ * `PluginInventoryEntry.meta` only carries after the 0.1.5 line — contract.ts:
+ * additions must degrade gracefully on the older lines).
  */
 function pluginRowTitle(plugin: PluginInfo): string {
-  const meta = (plugin as { readonly meta?: { readonly title?: LocalizedPluginText } }).meta
-  return cell(localizedText(meta?.title, plugin.moduleName))
+  return cell(localizedPluginText(plugin, plugin.moduleName))
 }
 
 /** One bundle row: what the profile holds, how it is controlled, what it says. */
@@ -437,7 +447,7 @@ function bundleLine(deps: PluginsInfoDeps, bundle: BundleInfo, options: { readon
   if (bundle.error !== undefined) flags.push(t('plugins-bundle-problem', { code: cell(bundle.error.code) }))
   const tag = declarationTag(deps, bundle.name)
   if (tag !== undefined) flags.push(tag)
-  const title = cell(localizedText(bundle.meta?.title, bundle.name))
+  const title = cell(localizedPluginText(bundle, bundle.name))
   const version = bundle.version === undefined ? '' : ` ${cell(bundle.version)}`
   // The row/override counts are detail: `/plugin info <name>` carries them, and
   // the short list drops them (`options.rows: false`).
@@ -465,7 +475,14 @@ function listLines(deps: PluginsInfoDeps, bundles: readonly BundleInfo[]): strin
   return lines
 }
 
-/** Official (installation-supplied) bundles first, then the profile's own. */
+/**
+ * Official (installation-supplied) bundles first, then the profile's own. The
+ * split is `installed` — the field that answers "do this profile's own
+ * dependencies hold the package" — and not `optional`, which is narrower
+ * (only the launcher's `OPTIONAL_BUNDLES`): an installation-supplied bundle no
+ * shipped template preselects is `installed: false, optional: false` and would
+ * land under the profile's own name.
+ */
 function bundleSectionLines(deps: PluginsInfoDeps, bundles: readonly BundleInfo[]): string[] {
   if (bundles.length === 0) return [t('plugins-bundles-empty')]
   const lines: string[] = [t('plugins-bundles-header')]
@@ -474,8 +491,8 @@ function bundleSectionLines(deps: PluginsInfoDeps, bundles: readonly BundleInfo[
     lines.push(` ${label}:`)
     for (const bundle of group) lines.push(bundleLine(deps, bundle))
   }
-  group(t('plugins-bundles-official'), bundles.filter(bundle => bundle.optional))
-  group(t('plugins-bundles-installed'), bundles.filter(bundle => !bundle.optional))
+  group(t('plugins-bundles-official'), bundles.filter(bundle => !bundle.installed))
+  group(t('plugins-bundles-installed'), bundles.filter(bundle => bundle.installed))
   if (needsDeclarationLegend(deps, bundles)) lines.push(t('plugins-tag-undeclared-hint'))
   return lines
 }
@@ -523,12 +540,12 @@ function inspectionLines(spec: string, inspection: PluginSpecInspection): string
     version: cell(inspection.version ?? ''),
     kind: cell(inspection.kind),
     bundle: inspection.bundle === null ? '?' : String(inspection.bundle),
-    registry: cell(inspection.registry ?? ''),
+    registry: urlCell(inspection.registry ?? ''),
   })]
   if (inspection.description !== undefined) {
     lines.push(t('plugins-info-inspect-description', { description: cell(inspection.description) }))
   }
-  if (inspection.host !== undefined) lines.push(t('plugins-info-inspect-host', { host: cell(inspection.host) }))
+  if (inspection.host !== undefined) lines.push(t('plugins-info-inspect-host', { host: urlCell(inspection.host) }))
   return lines
 }
 
@@ -542,10 +559,12 @@ async function infoLines(deps: PluginsInfoDeps, manager: PluginManagerView, spec
 /** `/plugin registries`: the registries an installation asks, in order. */
 function registriesLines(registries: PluginRegistries): string[] {
   const none = t('plugins-info-registries-none')
-  const asCell = (value: string | null): string => value === null ? none : cell(value)
+  const asCell = (value: string | null): string => value === null ? none : urlCell(value)
+  // Redact per entry, then cap: the list is a comma-joined string, which no
+  // single-URL pass could read.
   const fallbacks = registries.fallbackRegistries.length === 0
     ? none
-    : cell(registries.fallbackRegistries.map(value => value ?? 'null').join(', '))
+    : cell(registries.fallbackRegistries.map(value => value === null ? 'null' : redactUrl(value)).join(', '))
   return [
     t('plugins-info-registries-header'),
     t('plugins-info-registries-first', { registry: asCell(registries.registry) }),
