@@ -39,7 +39,7 @@ import type { BundleInfo, ChangeResult, PluginEntryId, PluginInfo } from '@deeps
 import { t, type I18nKey } from '../i18n.js'
 import { resolveDshProfileName } from '../update.js'
 import { backendDataDir, DATA_DIR } from '../utils/paths.js'
-import { pluginDeclarationOf } from './plugin-declaration.js'
+import { COMPOSITION_PACKAGE, pluginDeclarationOf } from './plugin-declaration.js'
 import { type FirstPartyFeedLoad, firstPartyVerdict, loadFirstPartyFeed } from './plugin-feed.js'
 import {
   HOST_BUNDLE,
@@ -236,15 +236,23 @@ function bundleGuardTarget(bundle: BundleInfo): PluginGuardTarget {
   return { kind: 'bundle', name: bundle.name, removable: bundle.removable, readOnlyReason: bundle.readOnlyReason }
 }
 
-/** The same loader entry as gate 2 reads it. */
-function rowGuardTarget(plugin: PluginInfo): PluginGuardTarget {
+/** The same loader entry as gate 2 reads it, given what the snapshot says about its row. */
+function rowGuardTarget(plugin: PluginInfo, ownRowIds: ReadonlySet<string>): PluginGuardTarget {
+  const patchId = 'patchId' in plugin ? plugin.patchId : undefined
   return {
     kind: 'row',
     entryId: plugin.entryId,
     moduleName: plugin.moduleName,
-    patchId: 'patchId' in plugin ? plugin.patchId : undefined,
+    patchId,
+    ownRow: patchId !== undefined && ownRowIds.has(patchId),
     readOnlyReason: plugin.readOnlyReason,
   }
+}
+
+/** The row ids one bundle's patch inserts. An absent bundle answers the empty set. */
+function insertedRowIds(bundles: readonly BundleInfo[], name: string): ReadonlySet<string> {
+  const bundle = bundles.find(candidate => candidate.name === name)
+  return bundle === undefined ? new Set<string>() : new Set(bundle.rows.map(row => row.rowId))
 }
 
 /**
@@ -325,7 +333,10 @@ export function createPluginManageFlow(options: PluginManageFlowOptions): Plugin
     if (plugin !== undefined) {
       target = rowTarget(options.action, plugin)
       label = cell(plugin.moduleName)
-      return await guardThenDecide(rowGuardTarget(plugin), () => ask(undefined, hostRowIdsOf(bundles)))
+      return await guardThenDecide(
+        rowGuardTarget(plugin, insertedRowIds(bundles, COMPOSITION_PACKAGE)),
+        () => ask(undefined, hostRowIdsOf(bundles)),
+      )
     }
     emit([t('plugins-manage-unknown', {
       target: cell(wanted),

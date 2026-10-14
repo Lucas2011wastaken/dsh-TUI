@@ -56,6 +56,17 @@ export const CORE_BUNDLES = [COMPOSITION_PACKAGE, HOST_BUNDLE] as const
  * The module-name prefix of the rows this application itself provides. A row
  * whose module is this package, or a subpath of it, is what draws the UI a
  * person is looking at; disabling it from that UI is the row-level suicide.
+ *
+ * This is half of the row rule, and the smaller half. Measured on a real
+ * profile (2026-10-14, `dsh --profile dsh-tui --dump-config`): this bundle's
+ * patch inserts **17** rows, and **8** of them load a first-party
+ * `@deepseek-ai/*` module — the composition's own storage, workspace,
+ * code-runtime, agent-presets, cordis-host-runner and webserver seams. Only one
+ * of those eight (`@deepseek-ai/dsh-host-webserver`) is on the host's own
+ * protected list, and it is the only reason the host reports this bundle as
+ * locked at all. The other seven rows are reported as perfectly addressable, so
+ * a module-name rule cannot see them: {@link PluginGuardTarget} carries
+ * `ownRow` for those, read from the same snapshot as everything else.
  */
 export const CORE_ROW_PREFIX = COMPOSITION_PACKAGE
 
@@ -85,6 +96,15 @@ export type PluginGuardTarget =
     readonly moduleName: string
     /** The patch row this entry is addressable as; absent means unaddressable. */
     readonly patchId?: string | undefined
+    /**
+     * Whether this application's own patch inserts the row: `patchId` is one of
+     * the rows {@link CORE_BUNDLES}[0] reports. The caller reads it off the same
+     * snapshot it resolved the target from, because a row of ours may load a
+     * first-party module and so carry no name this predicate could recognize —
+     * see {@link CORE_ROW_PREFIX}. Absent means "not known to be ours", which
+     * leaves the module-name rule as the only one that applies.
+     */
+    readonly ownRow?: boolean | undefined
     /** As on a bundle: the host's own lock, reported rather than re-derived. */
     readonly readOnlyReason?: string | undefined
   }
@@ -104,7 +124,11 @@ export type PluginGuardRefusal =
   | 'not-removable'
   /** A single row is never removed on its own; it goes with its bundle. */
   | 'row-not-removable'
-  /** The row provides this application's UI: module name is this package's. */
+  /**
+   * The row is this application's own: either its module is this package's, or
+   * this application's patch inserts it. Disabling it takes part of the
+   * interface down with it.
+   */
   | 'app-row'
 
 export type PluginGuardVerdict =
@@ -142,6 +166,8 @@ export function pluginGuardVerdict(target: PluginGuardTarget, action: PluginGuar
     return { kind: 'allowed' }
   }
   if (action === 'remove') return { kind: 'refused', reason: 'row-not-removable' }
-  if (action === 'disable' && isCoreRowModule(target.moduleName)) return { kind: 'refused', reason: 'app-row' }
+  if (action === 'disable' && (target.ownRow === true || isCoreRowModule(target.moduleName))) {
+    return { kind: 'refused', reason: 'app-row' }
+  }
   return { kind: 'allowed' }
 }

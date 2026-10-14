@@ -1339,7 +1339,16 @@ for (const [fullscreen, columns, service] of [
     },
     {
       name: APP, version: '0.15.0', enabled: true, installed: true, optional: false, removable: true,
-      rows: [{ rowId: 'tui-row', moduleName: APP }], overrides: [],
+      // The shape a real profile reports: this bundle's patch inserts rows that
+      // load first-party modules too, and the host protects only one of those
+      // (`@deepseek-ai/dsh-host-webserver`). The rest are ours because our patch
+      // inserts them — which no module-name rule can see.
+      rows: [
+        { rowId: 'tui-row', moduleName: APP },
+        { rowId: 'tui-storage', moduleName: '@deepseek-ai/dsh-storage' },
+        { rowId: 'tui-webserver', moduleName: HOST_ROW_MODULE },
+      ],
+      overrides: ['tool-web'],
     },
     {
       name: THIRD, version: '1.0.0', enabled: false, installed: true, optional: false, removable: true,
@@ -1355,6 +1364,12 @@ for (const [fullscreen, columns, service] of [
   ]
   const MANAGE_PLUGINS: PluginInfo[] = [
     { entryId: 'entry-app' as PluginEntryId, moduleName: APP, enabled: true, patchId: 'tui-row' },
+    // This application's own row loading a first-party module: addressable as far
+    // as the host is concerned, and still this application's.
+    { entryId: 'entry-storage' as PluginEntryId, moduleName: '@deepseek-ai/dsh-storage', enabled: true, patchId: 'tui-storage' },
+    // The host layer's own `tool-web` row, which this application's patch overrides:
+    // legitimate to switch off, with a word of warning.
+    { entryId: 'entry-tool-web' as PluginEntryId, moduleName: '@deepseek-ai/dsh-tools', enabled: true, patchId: 'tool-web' },
     { entryId: 'entry-host' as PluginEntryId, moduleName: HOST_ROW_MODULE, enabled: true, patchId: 'host-webserver' },
     { entryId: 'entry-third' as PluginEntryId, moduleName: THIRD, enabled: false, patchId: 'third-row' },
     // A seam row of this application: a subpath of the package, and the shape
@@ -1470,6 +1485,25 @@ for (const [fullscreen, columns, service] of [
     check(`${tag}: a module that merely starts the same is not this application's row`,
       sibling.first.kind === 'done' && sibling.calls.join(',') === 'setPluginEnabled:entry-sibling:false',
       `${sibling.first.kind} · ${sibling.calls.join(',')}`)
+  }
+
+  // The measured half of gate 2's row rule: this application's own patch inserts
+  // rows that load first-party modules, and the host protects only one of them. A
+  // module-name rule cannot see the rest, so the snapshot has to say they are ours.
+  {
+    const own = await manage('disable', 'entry-storage')
+    check(`${tag}: a row this application's own patch inserts is refused, first-party module or not`,
+      own.first.kind === 'done' && own.calls.length === 0 &&
+      has(own, t(REFUSALS['app-row']!, { target: '@deepseek-ai/dsh-storage' })), `${own.first.kind} · ${own.lines.join(' | ')}`)
+    // …while the host layer's own row stays a legitimate, confirmed action: that is
+    // the whole difference between "ours" and "the host's".
+    const hostRow = await manage('disable', 'entry-tool-web')
+    check(`${tag}: a host-layer row is switchable, and asks first`,
+      hostRow.first.kind === 'confirm' && hostRow.first.question.kind === 'host-row' && hostRow.calls.length === 0,
+      `${hostRow.first.kind} · ${hostRow.calls.join(',')}`)
+    const off = await manage('disable', 'entry-tool-web', {}, true)
+    check(`${tag}: confirming switches the host layer's own row off`,
+      off.calls.join(',') === 'setPluginEnabled:entry-tool-web:false', off.calls.join(','))
   }
 
   // The host's own lock is reported as such, with the reason the host gave — never
@@ -2287,13 +2321,15 @@ for (const [fullscreen, columns, service] of [
     // gate 2's, not the host's.
     {
       name: APP, version: '0.15.0', enabled: true, installed: true, optional: false, removable: true,
-      rows: [{ rowId: 'tui-row', moduleName: APP }], overrides: [],
+      rows: [{ rowId: 'tui-row', moduleName: APP }, { rowId: 'tui-storage', moduleName: '@deepseek-ai/dsh-storage' }],
+      overrides: [],
     },
   ]
   const PANE_PLUGINS: PluginInfo[] = [
     { entryId: 'entry-host' as PluginEntryId, moduleName: HOST_ROW_MODULE, enabled: true, patchId: 'host-webserver' },
     { entryId: 'entry-third' as PluginEntryId, moduleName: THIRD, enabled: false, patchId: 'third-row' },
     { entryId: 'entry-app' as PluginEntryId, moduleName: APP, enabled: true, patchId: 'tui-row' },
+    { entryId: 'entry-storage' as PluginEntryId, moduleName: '@deepseek-ai/dsh-storage', enabled: true, patchId: 'tui-storage' },
   ]
   const CHANGE = { changed: true, application: 'applied', stage: 'remove', target: THIRD } as const
 
@@ -2361,6 +2397,12 @@ for (const [fullscreen, columns, service] of [
     return {
       calls, screen, hasText, run, term,
       chatFullscreen: (): boolean => chatProps.fullscreen === true,
+      /** 提交过的命令不会自己从输入行里消失：连着下一条命令前先清空（同 A 段）。 */
+      clear: async (): Promise<void> => {
+        for (let index = 0; index < 60; index += 1) stdin.write('\x7f')
+        // 固定窗:pacing 退格要落在下一批按键之前。
+        await sleep(60)
+      },
       /** Local rows titled after one report: one per push onto the bound session. */
       reportRows: (title: string): number => channel.rows.filter(row => row.text === title).length,
       async enter(): Promise<void> {
@@ -2495,9 +2537,16 @@ for (const [fullscreen, columns, service] of [
         await settled(() => rig.hasText(t('plugins-manage-refused-app-bundle', { target: APP })) &&
           !rig.hasText(t('plugins-manage-pane-title'))), rig.screen())
       check(`${tag}: the refusal wrote nothing`, rig.calls.length === 0, rig.calls.join(','))
+      await rig.clear()
       await rig.run(`/plugin remove ${APP}`)
       check(`${tag}: the next command still works after a refusal`,
         await settled(() => rig.hasText(t('plugins-manage-refused-app-bundle', { target: APP }))), rig.screen())
+      await rig.clear()
+      await rig.run('/plugin disable @deepseek-ai/dsh-storage')
+      check(`${tag}: this application's own first-party-module row is refused the same way`,
+        await settled(() => rig.hasText(t('plugins-manage-refused-app-row', { target: '@deepseek-ai/dsh-storage' })) &&
+          !rig.hasText(t('plugins-manage-pane-title'))), rig.screen())
+      check(`${tag}: …and that refusal wrote nothing either`, rig.calls.length === 0, rig.calls.join(','))
     } finally {
       await rig.done()
     }

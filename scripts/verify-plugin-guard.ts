@@ -54,8 +54,10 @@ type Expected = { readonly kind: 'allowed' } | { readonly kind: 'refused'; reado
 
 const bundle = (name: string, removable = true, readOnlyReason?: string): PluginGuardTarget =>
   ({ kind: 'bundle', name, removable, readOnlyReason })
-const row = (moduleName: string, readOnlyReason?: string): PluginGuardTarget =>
-  ({ kind: 'row', entryId: `entry:${moduleName}`, moduleName, patchId: readOnlyReason === undefined ? `patch:${moduleName}` : undefined, readOnlyReason })
+const row = (moduleName: string, readOnlyReason?: string, ownRow?: boolean): PluginGuardTarget =>
+  ({ kind: 'row', entryId: `entry:${moduleName}`, moduleName, patchId: readOnlyReason === undefined ? `patch:${moduleName}` : undefined, ownRow, readOnlyReason })
+/** A row this application's own patch inserts, loading a first-party module. */
+const OWN_FIRST_PARTY_ROW = '@deepseek-ai/dsh-storage'
 
 const ALLOWED: Expected = { kind: 'allowed' }
 const refused = (reason: string): Expected => ({ kind: 'refused', reason })
@@ -91,6 +93,15 @@ const MATRIX: readonly (readonly [string, PluginGuardTarget, PluginGuardAction, 
   ['a host-layer row can be switched off', row(HOST_ROW_MODULE), 'disable', ALLOWED],
   ['a host-layer row can be switched on', row(HOST_ROW_MODULE), 'enable', ALLOWED],
   ['a third-party row can be switched off', row(THIRD_PARTY), 'disable', ALLOWED],
+  // The measured half of the row rule: this bundle's patch inserts rows that load
+  // first-party modules (the composition's storage / workspace / webserver seams),
+  // and the host protects only one of them. What makes them ours is that our own
+  // patch inserts them, not the name they load.
+  ['a row this application\'s own patch inserts is not disabled', row(OWN_FIRST_PARTY_ROW, undefined, true), 'disable', refused('app-row')],
+  ['the same row is switchable when the snapshot does not call it ours', row(OWN_FIRST_PARTY_ROW, undefined, false), 'disable', ALLOWED],
+  ['an own row can always be switched back on', row(OWN_FIRST_PARTY_ROW, undefined, true), 'enable', ALLOWED],
+  ['a row of ours is not removed on its own either', row(OWN_FIRST_PARTY_ROW, undefined, true), 'remove', refused('row-not-removable')],
+  ['the host lock still outranks the own-row rule', row(OWN_FIRST_PARTY_ROW, 'unaddressable', true), 'disable', refused('service-locked')],
   ['a third-party row can be switched on', row(THIRD_PARTY), 'enable', ALLOWED],
   // The host's own lock: neither direction is ours, and the guard says so rather than
   // re-deriving a reason of its own.
