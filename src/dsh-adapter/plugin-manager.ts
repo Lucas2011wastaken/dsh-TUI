@@ -19,9 +19,9 @@
  * fail on exactly the machines this code runs on. Anything this package needs
  * to compute (a spec's name, a version) it takes from `inspect()` instead.
  *
- * The view covers the write half as well (install / cancel / enable / version
- * exemptions), because the install flow reaches the same probe: a second
- * manager lookup could only drift from this one.
+ * The view covers the write half as well (install / cancel / enable / disable /
+ * remove / version exemptions), because both write flows reach the same probe:
+ * a second manager lookup could only drift from this one.
  */
 import type { Context } from '@deepseek-ai/cordis'
 import type {
@@ -29,6 +29,7 @@ import type {
   ChangeResult,
   InspectOptions,
   InstallBundleOptions,
+  PluginEntryId,
   PluginInfo,
   PluginInstallCancellation,
   PluginInstallLogChunk,
@@ -64,6 +65,28 @@ export interface PluginManagerView {
   installBundle(spec: string, options?: InstallBundleOptions): Promise<ChangeResult>
   /** Stop an installation this manager owns and wait until its files are back. */
   cancelInstall(requestId: PluginInstallRequestId): Promise<PluginInstallCancellation>
+  /**
+   * Select or drop one bundle's composition layer, keeping its installed
+   * dependencies. Dropping a layer the manager itself lives in is refused by
+   * the host (`management-required`), and selecting one re-checks the running
+   * version (`incompatible-version`); both arrive in-band as
+   * `application: 'failed'`.
+   */
+  setBundleEnabled(name: string, enabled: boolean): Promise<ChangeResult>
+  /**
+   * Persist one loader entry's desired enablement, by the `entryId`
+   * `listPlugins()` reports. An entry the host cannot address
+   * (`readOnlyReason`) is refused before anything is written.
+   */
+  setPluginEnabled(id: PluginEntryId, enabled: boolean): Promise<ChangeResult>
+  /**
+   * Uninstall one bundle: drop its layer and remove it from the profile's
+   * dependencies. The host refuses a bundle it did not install
+   * (`not-removable`), one whose rows are live on a profile without hot reload
+   * (`stop-profile`), and one whose contributions are still running
+   * (`bundle-in-use`). Restores `package.json` and the lockfile on failure.
+   */
+  removeBundle(name: string): Promise<ChangeResult>
   /** The exact-version exemptions the profile's compatibility file carries. */
   listVersionExemptions(): { exemptions: Record<string, string[]>; warnings: string[] }
   /** Grant or revoke one `package@version` × runtime exemption. */

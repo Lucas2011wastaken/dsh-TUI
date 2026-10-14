@@ -1494,6 +1494,76 @@ const dict = {
   'plugins-install-key-builds': { zh: '⏎ 允许这些脚本并重试 · esc 取消', en: '⏎ allow these scripts and retry · esc cancel' },
   'plugins-install-key-incompatible': { zh: '⏎ 接受风险并重试 · esc 取消', en: '⏎ accept the risk and retry · esc cancel' },
   'plugins-install-key-cancel': { zh: 'esc 取消安装', en: 'esc cancel the install' },
+
+  // ── dsh-adapter/plugin-manage.ts + components/PluginManagePane.tsx（C-5 生命周期动作） ──
+  'plugins-manage-busy': {
+    zh: '有回合正在运行：先结束它或 /new，再执行这个动作（不改动 profile）。',
+    en: 'A turn is running: finish it or /new before this action (the profile is left alone).',
+  },
+  'plugins-manage-unknown': {
+    zh: '找不到目标：{{target}}（可寻址的：{{names}}）',
+    en: 'No such target: {{target}} (addressable: {{names}})',
+  },
+  'plugins-manage-refused-service-locked': {
+    zh: '拒绝：插件服务锁定了 {{target}}（不可寻址或需要管理权限）——两个方向都不是本应用能改的。',
+    en: 'Refused: the plugin service has {{target}} locked (unaddressable or management-required); neither direction is this app\'s to take.',
+  },
+  'plugins-manage-refused-app-bundle': {
+    zh: '拒绝：{{target}} 就是本应用自己（门禁 2）——关了它，界面当场消失。',
+    en: 'Refused: {{target}} is this application itself (gate 2); switching it off takes the interface down with it.',
+  },
+  'plugins-manage-refused-host-bundle': {
+    zh: '拒绝：{{target}} 是本应用赖以运行的宿主层（门禁 2）——它提供本应用离不开的服务。',
+    en: 'Refused: {{target}} is the host layer this application runs on (gate 2); it provides services the interface needs.',
+  },
+  'plugins-manage-refused-not-removable': {
+    zh: '拒绝：{{target}} 不是本 profile 装的（安装自带），不可卸载。',
+    en: 'Refused: {{target}} was not installed by this profile (the dsh installation supplies it), so it cannot be removed.',
+  },
+  'plugins-manage-refused-row-not-removable': {
+    zh: '拒绝：{{target}} 是一行 patch，不能单独卸载——它随所属 bundle 走。',
+    en: 'Refused: {{target}} is a patch row and cannot be removed on its own; it goes with its bundle.',
+  },
+  'plugins-manage-refused-app-row': {
+    zh: '拒绝：{{target}} 提供本应用的界面（门禁 2）——关掉它，界面当场消失。',
+    en: 'Refused: {{target}} provides this application\'s interface (gate 2); switching it off takes the interface down with it.',
+  },
+  'plugins-manage-trusted': {
+    zh: '嫡系 {{name}}@{{version}}：免确认启用（仍记入效果台账，/plugin 列表照常显示）。',
+    en: 'First-party {{name}}@{{version}}: enabled without asking (it still lands in the effect ledger and the /plugin list).',
+  },
+  'plugins-manage-unchanged': {
+    zh: '{{target}} 已经是这个状态，profile 没有改动。',
+    en: '{{target}} is already in that state; the profile was not changed.',
+  },
+  'plugins-manage-removed': { zh: '已卸载 {{target}}：{{state}}', en: 'Removed {{target}}: {{state}}' },
+  'plugins-manage-enabled': { zh: '已启用 {{target}}：{{state}}', en: 'Enabled {{target}}: {{state}}' },
+  'plugins-manage-disabled': { zh: '已关闭 {{target}}：{{state}}', en: 'Disabled {{target}}: {{state}}' },
+  'plugins-manage-failed': { zh: '操作失败：{{reason}}', en: 'The action failed: {{reason}}' },
+  'plugins-manage-incompatible': {
+    zh: '版本不兼容：{{packages}}——要强行启用，先接受风险：dsh plugin --profile {{profile}} allow-version <包@版本> <当前版本> --accept-risk',
+    en: 'Incompatible version: {{packages}} — to force it, accept the risk first: dsh plugin --profile {{profile}} allow-version <package@version> <running version> --accept-risk',
+  },
+  'plugins-manage-manual-remove': {
+    zh: '手工命令：dsh plugin --profile {{profile}} remove {{target}}',
+    en: 'Manual command: dsh plugin --profile {{profile}} remove {{target}}',
+  },
+  'plugins-manage-manual-profile': {
+    zh: '启用 / 关闭没有命令行动词（profile 的依赖与 cordis.patch.yml 是服务写自己的文件）：请用 `dsh --profile {{profile}}` 启动本应用，在 /plugin 里操作；命令行只有 add / remove。',
+    en: 'Enable and disable have no CLI verb (the profile\'s dependencies and cordis.patch.yml are files the service writes for itself): start this app with `dsh --profile {{profile}}` and use /plugin; the CLI has add and remove only.',
+  },
+  'plugins-manage-residue': {
+    zh: '用户数据仍在：{{paths}} —— 不再需要时可手动删除。',
+    en: 'Your own data is still there: {{paths}} — delete it by hand when you no longer need it.',
+  },
+  'plugins-manage-residue-footprint': {
+    zh: '{{id}} 仍在授权文件 / 效果台账 / 存储目录里留有足迹',
+    en: '{{id}} still has a footprint in the grants file, the effect ledger or the storage directory',
+  },
+  'plugins-manage-residue-unjudged': {
+    zh: '读不到 {{target}} 的包内声明，无法判断它是否留下了用户数据（不猜）。',
+    en: 'The declaration inside {{target}} could not be read, so what data it left behind cannot be judged (nothing is guessed).',
+  },
   'doctor-plugin-generation': { zh: '插件运行时 generation：{{id}}', en: 'Plugin runtime generation: {{id}}' },
   'doctor-plugin-registry': { zh: '插件规范注册表自检：{{state}}', en: 'Plugin-spec registry self-check: {{state}}' },
   'doctor-plugin-host-missing': { zh: 'plugin-host 行未挂载', en: 'plugin-host row not mounted' },

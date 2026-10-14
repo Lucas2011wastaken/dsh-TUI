@@ -20,3 +20,13 @@ export function homeDir(): string {
 
 /** Data directory all preferences/history live in (`~/.dsh-tui`). */
 export const DATA_DIR = join(homeDir(), '.dsh-tui')
+
+/**
+ * Where one backend keeps its own files: `<DATA_DIR>/backends/<id>`, keyed by
+ * the backend's declared id (`BackendContribution.id`, the `x-dsh-tui` entry's
+ * `id` field). The single construction point, so a check for what a removal
+ * left behind reads the same path the backend wrote to (C-5).
+ */
+export function backendDataDir(backendId: string): string {
+  return join(DATA_DIR, 'backends', backendId)
+}

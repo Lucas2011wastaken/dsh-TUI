@@ -178,4 +178,32 @@ check('the guard reaches for no service, no filesystem and no clock (no other im
   [...source.matchAll(/^import\s[\s\S]*?from\s+'([^']+)'/gmu)].map(match => match[1]).join(',') === './plugin-declaration.js',
   JSON.stringify([...source.matchAll(/^import\s[\s\S]*?from\s+'([^']+)'/gmu)].map(match => match[1])))
 
+// ── E. 强制点存在（源码级：判据没有消费者就只是一段注释） ─────────────────────
+// 行为面（"拒了之后一次服务调用都没有"）由假服务电池的 C-5 段驱动真实流程断言；
+// 这里只钉住**结构**：守卫与写入在流程里的相对位置。三条计数都是有意为之的
+// 绊线，照 A 组"核心清单恰 2 项"的先例——数字变了就是一次要有人解释的改动。
+const manage = readFileSync(join(ROOT, 'src', 'dsh-adapter', 'plugin-manage.ts'), 'utf8')
+const manageImports = [...manage.matchAll(/^import[\s\S]*?from\s+'([^']+)'/gmu)].map(match => match[1])
+check('the manage flow imports the guard it has to run',
+  manageImports.includes('./plugin-guard.js'), JSON.stringify(manageImports))
+
+const guardCall = manage.indexOf('pluginGuardVerdict(')
+const writeFunction = manage.indexOf('async function write(')
+const refusalBranch = manage.indexOf("if (verdict.kind === 'refused')")
+check('the guard is called, and refuses, before the write function is even defined',
+  guardCall !== -1 && refusalBranch !== -1 && writeFunction !== -1 && guardCall < refusalBranch && refusalBranch < writeFunction,
+  `guard@${guardCall} refusal@${refusalBranch} write@${writeFunction}`)
+
+// 唯一的写入漏斗：三个动作各一处服务写口，且只有 `run()` 里那一次 `write(current)`。
+// 多出第四个写口、或绕开漏斗直接调服务，都会让计数变红。
+const writeCalls = [...manage.matchAll(/options\.manager\.(?:removeBundle|setBundleEnabled|setPluginEnabled)\b/gu)].length
+const funnelCalls = [...manage.matchAll(/\bwrite\(current\)/gu)].length
+check('every write goes through the one funnel the guard sits above',
+  writeCalls === 3 && funnelCalls === 1, `writes=${writeCalls} funnels=${funnelCalls}`)
+
+// 两条解析分支（bundle 名 / 行身份）都必须过守卫：定义一次 + 调用两次。
+const guardGates = [...manage.matchAll(/\bguardThenDecide\(/gu)].length
+check('both resolutions run the guard, and nothing else decides',
+  guardGates === 3, `guardThenDecide=${guardGates}`)
+
 console.log(`verify-plugin-guard OK (${passed} checks)`)

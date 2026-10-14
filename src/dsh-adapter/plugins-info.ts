@@ -164,13 +164,27 @@ function readLedgerRecords(file: string): LedgerLine[] {
   return records
 }
 
+/** Where the three footprint sources live. */
+export interface PluginFootprintPaths {
+  readonly dataDir: string
+  readonly ledgerFile: string
+  readonly storageDir: string
+}
+
+/** Test overrides for {@link pluginFootprintPaths}; the report's own deps satisfy it. */
+export interface PluginFootprintOverrides {
+  readonly dataDir?: string | undefined
+  readonly ledgerFile?: string | undefined
+  readonly storageDir?: string | undefined
+}
+
 /** The plugin set for the matrix: grants-file keys ∪ ledger pluginIds ∪
  *  storage namespaces ('host'/'undeclared' ledger identities are not
  *  plugins and are excluded). */
-function footprintPlugins(deps: PluginsInfoDeps, dataDir: string, ledgerFile: string, storageDir: string): string[] {
+export function pluginFootprints(paths: PluginFootprintPaths): string[] {
   const found = new Set<string>()
   try {
-    const raw: unknown = JSON.parse(readFileSync(join(dataDir, 'extension-grants.json'), 'utf8'))
+    const raw: unknown = JSON.parse(readFileSync(join(paths.dataDir, 'extension-grants.json'), 'utf8'))
     if (raw !== null && typeof raw === 'object') {
       const table = raw as { grants?: unknown; denies?: unknown }
       for (const section of [table.grants, table.denies]) {
@@ -183,13 +197,13 @@ function footprintPlugins(deps: PluginsInfoDeps, dataDir: string, ledgerFile: st
     // Missing/corrupt grants file: the GrantStore already answers deny;
     // the matrix simply has no rows from this source.
   }
-  for (const record of readLedgerRecords(ledgerFile)) {
+  for (const record of readLedgerRecords(paths.ledgerFile)) {
     if (typeof record.pluginId === 'string' && record.pluginId !== '' && record.pluginId !== 'host' && record.pluginId !== 'undeclared') {
       found.add(record.pluginId)
     }
   }
   try {
-    for (const entry of readdirSync(storageDir)) {
+    for (const entry of readdirSync(paths.storageDir)) {
       if (!entry.endsWith('.json')) continue
       const namespace = decodeURIComponent(entry.slice(0, -'.json'.length))
       if (namespace !== '') found.add(namespace)
@@ -197,8 +211,30 @@ function footprintPlugins(deps: PluginsInfoDeps, dataDir: string, ledgerFile: st
   } catch {
     // No storage directory yet: no rows from this source.
   }
-  void deps
   return [...found].sort()
+}
+
+/**
+ * The three footprint sources, resolved the way the diagnostics resolve them
+ * (test overrides first, else the packaged locations under `~/.dsh-tui`).
+ */
+export function pluginFootprintPaths(overrides: PluginFootprintOverrides = {}): PluginFootprintPaths {
+  const dataDir = overrides.dataDir ?? DATA_DIR
+  return {
+    dataDir,
+    ledgerFile: overrides.ledgerFile ?? EFFECT_LEDGER_FILE,
+    storageDir: overrides.storageDir ?? join(dataDir, PLUGIN_STORAGE_DIR),
+  }
+}
+
+/**
+ * Whether one plugin id still has a footprint in this profile: a grants-file
+ * key, an effect-ledger record, or a storage namespace. The same three sources
+ * the matrix unions — a removal that left something behind is read here rather
+ * than by a second reader that could disagree with the report (C-5).
+ */
+export function pluginFootprintContains(pluginId: string, overrides: PluginFootprintOverrides = {}): boolean {
+  return pluginFootprints(pluginFootprintPaths(overrides)).includes(pluginId)
 }
 
 /** `/plugin check <path>`: official parse/projection + profile validation + negotiation. */
@@ -357,10 +393,6 @@ export function pluginsInfoLines(args: string, deps: PluginsInfoDeps): string[] 
     return lines
   }
 
-  const dataDir = deps.dataDir ?? DATA_DIR
-  const ledgerFile = deps.ledgerFile ?? EFFECT_LEDGER_FILE
-  const storageDir = deps.storageDir ?? join(dataDir, PLUGIN_STORAGE_DIR)
-
   // ── Host Descriptor ──
   if (deps.host === undefined) {
     lines.push(t('plugins-host-unavailable'))
@@ -380,7 +412,7 @@ export function pluginsInfoLines(args: string, deps: PluginsInfoDeps): string[] 
   }
 
   // ── 授权矩阵 ──
-  const plugins = footprintPlugins(deps, dataDir, ledgerFile, storageDir)
+  const plugins = pluginFootprints(pluginFootprintPaths(deps))
   lines.push(t('plugins-matrix-note'))
   const permissions = deps.grants.knownPermissions()
   if (permissions.length === 0) {
@@ -411,6 +443,7 @@ export function pluginsInfoLines(args: string, deps: PluginsInfoDeps): string[] 
   }
 
   // ── 台账尾 ──
+  const ledgerFile = pluginFootprintPaths(deps).ledgerFile
   const records = readLedgerRecords(ledgerFile)
   if (records.length === 0) {
     lines.push(t('plugins-ledger-empty'))
