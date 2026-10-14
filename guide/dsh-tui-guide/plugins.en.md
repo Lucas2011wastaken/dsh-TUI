@@ -88,8 +88,10 @@ Also an experimental public surface:
   exactly, then `entryId` → `patchId` → module name; nothing that matches is reported
   with what is addressable rather than guessed at. **Gate 2** (this application may not
   switch itself off) refuses three kinds of target hard — the bundle providing this app,
-  the host layer `@deepseek-ai/dsh-base`, and the rows this package itself provides —
-  with a reason line and **no service call at all**, and it does so whether or not hot
+  the host layer `@deepseek-ai/dsh-base`, and this application's own rows (those loading
+  a module of this package, **or inserted by its own patch**: measured, that patch inserts
+  17 rows and 8 of them load a first-party `@deepseek-ai/*` module, of which the host locks
+  exactly one) — with a reason line and **no service call at all**, and it does so whether or not hot
   reload is live (the host's own `stop-profile` guard only fires without HMR, and this
   profile runs `patchReload: live`). `enable` is never refused by gate 2: it is the
   repair action, and refusing it would seal off the only in-UI way back from a profile

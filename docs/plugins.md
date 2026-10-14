@@ -67,8 +67,9 @@
   bundle 是组合层（写 profile 清单的 `dsh.profile.bundles`），行是 patch 的 `disabled`；
   解析顺序是 bundle 名精确匹配优先，其次 `entryId` → `patchId` → 模块名，都不中就给可寻址
   清单、不猜。**门禁 2**（不能自己杀自己）在 TUI 侧硬拒三类目标——提供本应用的 bundle、
-  宿主层 `@deepseek-ai/dsh-base`、本包自己提供的行——拒绝时给一行原因且**不发起任何服务
-  调用**，与 HMR 是否生效无关（上游 `stop-profile` 守卫只在没有 HMR 时生效，本 profile 是
+  宿主层 `@deepseek-ai/dsh-base`、本应用自己的行（加载本包模块的行，**或由本包 patch
+  插入的行**：实测本包的 patch 插入 17 行，其中 8 行加载的是首方 `@deepseek-ai/*` 模块，
+  上游只锁住其中一个）——拒绝时给一行原因且**不发起任何服务调用**，与 HMR 是否生效无关（上游 `stop-profile` 守卫只在没有 HMR 时生效，本 profile 是
   `patchReload: live`，所以那道守卫靠不住）。`enable` 不因门禁 2 被拒：它是复原动作，把手工
   改坏的 profile 关在门外等于封死唯一的 UI 退路；上游自己的锁（`management-required` /
   `unaddressable`）则两个方向都拒，并原样转述上游的理由。**确认按来源分流**：第三方
