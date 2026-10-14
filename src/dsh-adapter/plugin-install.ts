@@ -76,6 +76,14 @@ export type PluginInstallStep =
   | { readonly kind: 'incompatible'; readonly packages: readonly IncompatiblePlugin[]; readonly exemptions: VersionExemptions }
   | { readonly kind: 'done' }
 
+/** What the caller of a flow supplies that only the UI knows. */
+export interface PluginInstallSink {
+  /** The session the flow's output belongs to; see `binding` below. */
+  readonly binding: () => number
+  /** Where the flow's transcript lines go (already sanitized and capped). */
+  readonly onLines: (lines: readonly string[]) => void
+}
+
 export interface PluginInstallFlowOptions {
   readonly manager: PluginManagerView
   readonly spec: string

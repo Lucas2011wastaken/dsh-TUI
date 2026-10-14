@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto'
+import { statSync } from 'node:fs'
+import { isAbsolute, resolve } from 'node:path'
 import React from 'react'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import type { Agent, AgentHandle } from '@deepseek-ai/dsh-agent'
@@ -16,6 +18,11 @@ import { EDITABLE_CONFIG_KEYS } from '../settings/definitions.js'
 import { kernelEntriesOf } from '../components/kernelCatalog.js'
 import { openBackendStartup, prepareBackendStartup, probeKernels, installSurfaceFor } from './backends.js'
 import { backendLabel, isBackendIdSyntax, isRegisteredBackend, listBackends, listOfferedBackends, loadBackend, parseBackendChoice, unloadBackends } from './backend-registry.js'
+import { pluginDeclarationOf } from './plugin-declaration.js'
+import { loadFirstPartyFeed } from './plugin-feed.js'
+import { createPluginInstallFlow } from './plugin-install.js'
+import { pluginInstallEvents, pluginManagerOf } from './plugin-manager.js'
+import { declarationNoticeFor, parsePluginArgs } from './plugins-info.js'
 import { formatSessionRef } from '../agent/refs.js'
 import type { AgentEvent } from '../agent/events.js'
 import type { AgentSession } from '../agent/session.js'
@@ -2404,6 +2411,45 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
     // whichever row the user picked, looked up by id — the manifest says what to
     // install and with which executor, this host holds the actions.
     onResolveSdkInstall: installSurfaceFor,
+    // `/plugin install <spec>` (C-4): the write path, built per request. The
+    // flow reads the host plugin service, the packaged first-party feed and the
+    // package's own declaration (when this machine already has one), and it
+    // writes its transcript lines through the sink the screen hands back.
+    // `undefined` ⇒ not an install form, or no service to install through; the
+    // screen then runs the read-only report instead.
+    onPluginInstall: (args, sink) => {
+      const parsed = parsePluginArgs(args)
+      if (parsed.kind !== 'install' || parsed.spec === '') return undefined
+      const manager = pluginManagerOf(ctx)
+      if (manager === undefined) return undefined
+      return createPluginInstallFlow({
+        manager,
+        events: pluginInstallEvents(ctx),
+        spec: parsed.spec,
+        // Read once per install: the feed is a packaged file, and a request that
+        // is never made should never touch the disk.
+        feed: loadFirstPartyFeed(),
+        noticeOf: target => declarationNoticeFor({
+          ...target.name === undefined ? {} : { declaration: pluginDeclarationOf(ctx, target.name) },
+          ...target.directory === undefined ? {} : { directory: target.directory },
+        }),
+        specDirectory: spec => {
+          // Only a directory has a package-root declaration to read: a tarball
+          // path must stay unjudged, never "declares nothing".
+          if (!spec.startsWith('.') && !isAbsolute(spec)) return undefined
+          const directory = resolve(ctx.baseUrl ?? process.cwd(), spec)
+          try {
+            return statSync(directory).isDirectory() ? directory : undefined
+          } catch {
+            return undefined
+          }
+        },
+        binding: sink.binding,
+        onLines: sink.onLines,
+        ownVersion: installedTuiVersion(),
+        profileName: profile ?? resolveDshProfileName(),
+      })
+    },
     kernelPinned: backendPinned,
     // Only a `dsh --profile <name>` launch has a profile installation for
     // `/update` to act on; source checkouts and `--config` overlays get the

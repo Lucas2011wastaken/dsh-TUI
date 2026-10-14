@@ -122,7 +122,9 @@ import { PermissionsPicker } from '../components/PermissionsPicker.js'
 import { ModePicker } from '../components/ModePicker.js'
 import { KernelPicker } from '../components/KernelPicker.js'
 import { SdkInstallWizard, type SdkInstallPhase } from '../components/SdkInstallWizard.js'
+import { PluginInstallPane } from '../components/PluginInstallPane.js'
 import type { SdkInstaller, SdkInstallSurface } from '../agent/backend.js'
+import type { PluginInstallFlow, PluginInstallSink, PluginInstallStep } from '../dsh-adapter/plugin-install.js'
 import { ChannelPicker } from '../components/ChannelPicker.js'
 import type { KernelEntry, KernelStatus } from '../components/kernelCatalog.js'
 import type { KernelBackendId } from '../kernelPrefs.js'
@@ -372,6 +374,17 @@ function peekKey(image: TranscriptImage, title: string | undefined): string {
   return `${title ?? ''} ${image.id}`
 }
 
+/**
+ * One `/plugin install` in progress (C-4): the flow, the step it is waiting on,
+ * and whether a service call is in flight. The flow writes its own transcript
+ * lines, so this is only what the pane has to render and what the keys act on.
+ */
+interface PluginInstallView {
+  readonly flow: PluginInstallFlow
+  readonly step: PluginInstallStep
+  readonly busy: boolean
+}
+
 export function Chat({
   channel,
   questionStore,
@@ -390,6 +403,7 @@ export function Chat({
   onProbeKernels,
   kernelEntries = EMPTY_KERNEL_ENTRIES,
   onResolveSdkInstall,
+  onPluginInstall,
   kernelPinned,
   fullscreen = false,
   trajectorySeen: trajectorySeenProp,
@@ -471,6 +485,18 @@ export function Chat({
    * 同一个派生事实，用户点哪行就装哪行（Stage B / §6 第 12 条）。
    */
   onResolveSdkInstall?: (id: KernelBackendId) => SdkInstallSurface | undefined
+  /**
+   * `/plugin install <spec>`: the write path (Stage C-4). The entry builds the
+   * flow out of the host plugin service, the packaged first-party feed and the
+   * install notice, and answers `undefined` for anything else — an argument
+   * that is not an install form, or a launch with no service to install
+   * through. The caller then runs the ordinary read-only report.
+   *
+   * `sink.binding` is the session the flow is fenced to (the flow drops its own
+   * output once that session moves on); `sink.onLines` writes its lines into
+   * the transcript.
+   */
+  onPluginInstall?: (args: string, sink: PluginInstallSink) => PluginInstallFlow | undefined
   /** 启动参数（Config 行 / DSH_TUI_BACKEND）压过了记忆：选择器明说。 */
   kernelPinned?: boolean
   /**
@@ -960,6 +986,69 @@ export function Chat({
       }
       runSdkInstall(dir)
     })
+  }
+  /**
+   * `/plugin install <spec>` 的步骤态（C-4）。与 SDK 向导同族：异步状态留在
+   * Chat，浮层只渲染它；ref 是回调里的真源，state 只驱动重绘。
+   *
+   * 流程自己把每一行写进转录（按发起时的 binding 加栅栏），所以这里只保存
+   * 「下一步要问什么」；`busy` 表示正在跑一次安装/取消，此时除 Esc 外不接键。
+   */
+  const pluginInstallRef = React.useRef<PluginInstallView | undefined>(undefined)
+  const [pluginInstall, setPluginInstall] = React.useState<PluginInstallView | undefined>(undefined)
+  const pluginOverlay = overlay.kind === 'plugin-install' ? overlay : undefined
+  const storePluginInstall = (next: PluginInstallView | undefined): void => {
+    pluginInstallRef.current = next
+    setPluginInstall(next)
+  }
+  /** 浮层关闭即收尾：在途安装必须取消，否则 profile 会停在半装状态。 */
+  React.useEffect(() => {
+    if (pluginOverlay === undefined) return
+    return () => {
+      const view = pluginInstallRef.current
+      pluginInstallRef.current = undefined
+      view?.flow.dispose()
+      if (view?.busy === true) void view.flow.cancel()
+      setPluginInstall(undefined)
+    }
+  }, [pluginOverlay])
+  const closePluginInstall = (): void => {
+    dispatchOverlay({ type: 'close' })
+  }
+  /** 流程的下一步：`done` 没有可问的，直接收起浮层。 */
+  const settlePluginInstall = (step: PluginInstallStep): void => {
+    const view = pluginInstallRef.current
+    if (view === undefined) return
+    if (step.kind === 'done') {
+      closePluginInstall()
+      return
+    }
+    storePluginInstall({ ...view, step, busy: false })
+  }
+  /** 开始一次安装；`false` 表示这段输入不是 install 形式（或本启动没有服务）。 */
+  const startPluginInstall = (rawArgs: string): boolean => {
+    const flow = onPluginInstall?.(rawArgs, {
+      binding: () => channel.agentBindingGeneration,
+      onLines: lines => channel.pushLocal('/plugin', lines),
+    })
+    if (flow === undefined) return false
+    dispatchOverlay({ type: 'open', overlay: { kind: 'plugin-install' } })
+    storePluginInstall({ flow, step: { kind: 'done' }, busy: true })
+    void flow.begin().then(settlePluginInstall)
+    return true
+  }
+  const runPluginInstallStep = (next: Promise<PluginInstallStep>): void => {
+    const view = pluginInstallRef.current
+    if (view === undefined) return
+    storePluginInstall({ ...view, busy: true })
+    void next.then(settlePluginInstall)
+  }
+  const cancelPluginInstall = (): void => {
+    const view = pluginInstallRef.current
+    if (view === undefined) return
+    // 取消由服务自己结算（回滚 profile），浮层等它回答。
+    storePluginInstall({ ...view, busy: true })
+    void view.flow.cancel().then(settlePluginInstall)
   }
   const host = channel.backendChannels?.()
   const { rows: channelRows, open: openChannelPicker, pick: pickChannel, setMode: runBackendModeCommand, login: runBackendLogin } = useBackendChannels({
@@ -3528,6 +3617,10 @@ export function Chat({
         // grant matrix / ledger tail — or validate+negotiate for
         // `/plugin check <path>` (rawInput carries the subcommand).
         setHelpOpen(false)
+        // `/plugin install <spec>` is the one form that needs a flow of its own
+        // (C-4). Anything else — and any launch whose entry has no service to
+        // install through — falls through to the read-only report below.
+        if (startPluginInstall(rawInput)) return true
         // The bundle/row half comes from the host plugin service, so the
         // report is async (the `/agents` case reads the same way). `pushLocal`
         // writes the CURRENTLY bound session, and a resume or `/new` can land
@@ -5007,6 +5100,48 @@ export function Chat({
       }
       return
     }
+    if (overlay.kind === 'plugin-install') {
+      // 装链路浮层（C-4）：一次安装的每一步都是显式的——确认、批准构建脚本、
+      // 接受版本风险；取消由服务自己结算（回滚 profile），期间除 Esc 外不接键。
+      const view = pluginInstallRef.current
+      if (view === undefined || view.busy) {
+        if (key.escape) {
+          cancelPluginInstall()
+          event.stopImmediatePropagation()
+        }
+        return
+      }
+      if (view.step.kind === 'confirm') {
+        if (plainReturn) {
+          runPluginInstallStep(view.flow.confirm())
+          event.stopImmediatePropagation()
+        } else if (key.escape) {
+          // 还没开始装：收起浮层即可，不去服务那边取消一个不存在的安装。
+          closePluginInstall()
+          event.stopImmediatePropagation()
+        }
+      } else if (view.step.kind === 'build-blocked') {
+        if (plainReturn) {
+          runPluginInstallStep(view.flow.approve(view.step.builds))
+          event.stopImmediatePropagation()
+        } else if (key.escape) {
+          closePluginInstall()
+          event.stopImmediatePropagation()
+        }
+      } else if (view.step.kind === 'incompatible') {
+        if (plainReturn) {
+          runPluginInstallStep(view.flow.acceptRisk())
+          event.stopImmediatePropagation()
+        } else if (key.escape) {
+          closePluginInstall()
+          event.stopImmediatePropagation()
+        }
+      } else if (key.escape) {
+        closePluginInstall()
+        event.stopImmediatePropagation()
+      }
+      return
+    }
     if (overlay.kind === 'channel') {
       // 名册不冻在 overlay 里（channelRows 是渲染期派生值）：切换/导入后
       // 选择器自己就刷新成新状态，不需要重开。
@@ -5775,6 +5910,11 @@ export function Chat({
           {overlay.kind === 'sdk-install' && sdkPhase.kind !== 'idle' && (
             <Box flexDirection="column" marginTop={1}>
               <SdkInstallWizard phase={sdkPhase} />
+            </Box>
+          )}
+          {overlay.kind === 'plugin-install' && pluginInstall !== undefined && (
+            <Box flexDirection="column" marginTop={1}>
+              <PluginInstallPane step={pluginInstall.step} busy={pluginInstall.busy} />
             </Box>
           )}
           {overlay.kind === 'channel' && (

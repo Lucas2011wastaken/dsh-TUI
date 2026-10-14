@@ -1450,6 +1450,39 @@ const dict = {
     zh: '注意：profile 里的 {{name}} 现在是 {{found}}，本进程运行的是 {{running}}；对齐它：dsh plugin --profile {{profile}} add {{name}}@{{running}}',
     en: 'Heads up: {{name}} in the profile is now {{found}} while this process runs {{running}}; realign it: dsh plugin --profile {{profile}} add {{name}}@{{running}}',
   },
+  'plugins-install-usage': { zh: '用法：/plugin install <包名[@版本] | 路径 | git URL>', en: 'Usage: /plugin install <package[@version] | path | git url>' },
+
+  // ── components/PluginInstallPane.tsx（装前提醒 / 信任确认 / 两个"再决定"步骤）──
+  'plugins-install-pane-title': { zh: '安装插件', en: 'Install plugin' },
+  'plugins-install-configure': { zh: '要安装：{{spec}} · {{kind}} · bundle={{bundle}}', en: 'To install: {{spec}} · {{kind}} · bundle={{bundle}}' },
+  'plugins-install-unidentified': { zh: '（服务未给出包名）', en: '(the service named no package)' },
+  'plugins-install-trust-third-party': {
+    zh: '信任确认：插件与本应用同进程运行 —— 进程内全信任、无沙箱；装上后不会自动更新；它的行为受声明的 grants 约束（授权是行为约束，不是安全隔离）。',
+    en: 'Trust: the plugin runs in-process with this app — full trust, no sandbox; it will not auto-update; its behaviour is bounded by the grants it declares (grants are behavioural constraints, not a security boundary).',
+  },
+  'plugins-install-notice-declared': {
+    zh: '声明可判定：该包的 dsh-plugin.json 已通过本 profile 的准入判定。',
+    en: 'Declaration readable: the package-root dsh-plugin.json passes this profile’s admission.',
+  },
+  'plugins-install-notice-undeclared': {
+    zh: '提醒：该包没有声明 TUI 贡献（包根缺少 dsh-plugin.json）；装上后不会作为后端/贡献出现，并会在 /plugin 列表里带常驻标签。',
+    en: 'Heads up: this package declares no TUI contribution (no package-root dsh-plugin.json); it will not appear as a backend/contribution, and /plugin will tag it.',
+  },
+  'plugins-install-notice-invalid': {
+    zh: '提醒：该包的声明本 profile 无法通过（{{err}}）；装上后不会作为后端/贡献出现。',
+    en: 'Heads up: this profile cannot accept the package’s declaration ({{err}}); it will not appear as a backend/contribution.',
+  },
+  'plugins-install-notice-unjudged': {
+    zh: '提醒：注册表里的包在装上之前无法判定是否声明了 TUI 贡献；若未声明，它不会作为后端/贡献出现，并会在 /plugin 列表里带常驻标签。',
+    en: 'Heads up: a registry package’s declaration cannot be read before it lands; if it declares none, it will not appear as a backend/contribution and /plugin will tag it.',
+  },
+  'plugins-install-builds-title': { zh: '以下构建脚本需要批准（写进 profile 的 allowBuilds）：', en: 'These build scripts need approval (written to the profile allowBuilds):' },
+  'plugins-install-incompatible-title': { zh: '版本不兼容的包：', en: 'Incompatible packages:' },
+  'plugins-install-exemptions-title': { zh: '已登记的精确版本豁免：', en: 'Exact-version exemptions recorded:' },
+  'plugins-install-key-confirm': { zh: '⏎ 安装 · esc 取消', en: '⏎ install · esc cancel' },
+  'plugins-install-key-builds': { zh: '⏎ 允许这些脚本并重试 · esc 取消', en: '⏎ allow these scripts and retry · esc cancel' },
+  'plugins-install-key-incompatible': { zh: '⏎ 接受风险并重试 · esc 取消', en: '⏎ accept the risk and retry · esc cancel' },
+  'plugins-install-key-cancel': { zh: 'esc 取消安装', en: 'esc cancel the install' },
   'doctor-plugin-generation': { zh: '插件运行时 generation：{{id}}', en: 'Plugin runtime generation: {{id}}' },
   'doctor-plugin-registry': { zh: '插件规范注册表自检：{{state}}', en: 'Plugin-spec registry self-check: {{state}}' },
   'doctor-plugin-host-missing': { zh: 'plugin-host 行未挂载', en: 'plugin-host row not mounted' },
@@ -2088,6 +2121,7 @@ const dict = {
   'sugg-plugin-info-desc': { zh: '查单个条目或待装 spec', en: 'Describe an installed plugin or an install spec' },
   'sugg-plugin-registries-desc': { zh: '查看安装源', en: 'Show where installations ask' },
   'sugg-plugin-check-desc': { zh: '校验清单，不安装', en: 'Validate a manifest without installing it' },
+  'sugg-plugin-install-desc': { zh: '把这个插件装进当前 profile', en: 'Install a plugin bundle into this profile' },
   'panel-unavailable-hint': { zh: '侧栏需要全屏且内容区 ≥93 列；该面板没有整屏形态', en: 'Sidebar needs fullscreen and ≥93 content columns; this panel has no fullscreen form' },
   // Model / display
   'cmd-desc-activity': { zh: '切换工作状态指示器预设' },

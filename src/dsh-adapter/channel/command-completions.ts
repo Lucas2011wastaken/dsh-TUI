@@ -138,6 +138,7 @@ export function createCommandCompletions(deps: {
       if (path.length === 1 && path[0] === 'plugin') return [
         { name: 'list', description: 'List the plugins this profile added', descriptionKey: 'sugg-plugin-list-desc' },
         { name: 'info', description: 'Describe an installed plugin or an install spec', descriptionKey: 'sugg-plugin-info-desc' },
+        { name: 'install', description: 'Install a plugin bundle into this profile', descriptionKey: 'sugg-plugin-install-desc' },
         { name: 'registries', description: 'Show where installations ask', descriptionKey: 'sugg-plugin-registries-desc' },
         { name: 'check', description: 'Validate a plugin manifest without installing it', descriptionKey: 'sugg-plugin-check-desc' },
       ]

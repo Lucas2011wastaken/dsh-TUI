@@ -307,6 +307,8 @@ export type PluginArgs =
   | { readonly kind: 'check'; readonly path: string }
   | { readonly kind: 'info'; readonly spec: string }
   | { readonly kind: 'registries' }
+  /** `/plugin install <spec>`: the write path (C-4), which the UI drives. */
+  | { readonly kind: 'install'; readonly spec: string }
   | { readonly kind: 'unknown'; readonly sub: string }
 
 /** Route `/plugin`'s argument text: one parser, so both halves of the report agree. */
@@ -318,6 +320,7 @@ export function parsePluginArgs(args: string): PluginArgs {
   if (sub === 'check') return { kind: 'check', path: rest.join(' ') }
   if (sub === 'info') return { kind: 'info', spec: rest.join(' ') }
   if (sub === 'registries') return { kind: 'registries' }
+  if (sub === 'install') return { kind: 'install', spec: rest.join(' ') }
   return { kind: 'unknown', sub: sub ?? '' }
 }
 
@@ -347,6 +350,12 @@ export function pluginsInfoLines(args: string, deps: PluginsInfoDeps): string[] 
     return lines
   }
   if (parsed.kind === 'registries') return lines
+  // `install <spec>` is the write path (C-4): a bare one is a usage error, and
+  // the UI drives the rest — this half stays the diagnostics it always was.
+  if (parsed.kind === 'install') {
+    if (parsed.spec === '') lines.push(t('plugins-install-usage'))
+    return lines
+  }
 
   const dataDir = deps.dataDir ?? DATA_DIR
   const ledgerFile = deps.ledgerFile ?? EFFECT_LEDGER_FILE
@@ -464,36 +473,44 @@ function declarationVerdict(deps: PluginsInfoDeps, packageName: string): Declara
 /**
  * Gate 1's pre-install statement about an install target (C-4), as data.
  *
- * This is the same evaluation the list tags and `check <path>` run — one
- * pipeline, so the two surfaces cannot disagree — asked at a different moment.
- * The difference that matters is what "no declaration" means here:
+ * It runs the same parse/project/validate pipeline `check <path>` and the list
+ * tags run — one implementation, so the surfaces cannot disagree — over the
+ * declaration the caller could find. It deliberately stops before `negotiate`:
+ * admission's five states are a statement about a *running* host, and the
+ * standing tag in `/plugin` is where they are reported after the install. What
+ * a person needs before installing is narrower and decidable: is there a
+ * declaration at all, and does this profile's catalog accept it.
  *
+ * The two empty answers are not the same thing, and that is the point:
+ *
+ * - a directory the caller resolved (`install <path>` specs) either carries a
+ *   package-root `dsh-plugin.json` or does not, so no file is `undeclared`;
  * - a package that is not in this profile yet ships no file this machine can
- *   read, so an empty answer is `unjudged`, not `undeclared`: the install flow
- *   cannot honestly claim a package it has never seen fails gate 1, and the
- *   standing tag in `/plugin` is what reports the real answer afterwards;
- * - a directory the caller resolved (a `install <path>` spec) either carries a
- *   package-root `dsh-plugin.json` or does not, and that is decidable now.
+ *   read, so an empty answer there is `unjudged` — the flow cannot honestly
+ *   claim a package it has never seen fails gate 1.
  */
 export function declarationNoticeFor(
-  deps: PluginsInfoDeps,
-  target: { readonly name?: string | undefined; readonly directory?: string | undefined },
+  target: { readonly declaration?: PluginDeclaration | undefined; readonly directory?: string | undefined },
 ): PluginInstallNotice {
-  const declaration = target.directory !== undefined
-    ? pluginDeclarationIn(target.directory)
-    : target.name === undefined ? undefined : deps.declaration?.(target.name)
+  const declaration = target.declaration ?? (target.directory === undefined ? undefined : pluginDeclarationIn(target.directory))
   if (declaration === undefined) {
-    return target.directory === undefined ? { kind: 'unjudged' } : { kind: 'undeclared' }
+    return target.directory !== undefined && target.declaration === undefined ? { kind: 'undeclared' } : { kind: 'unjudged' }
   }
-  const verdict = verdictOfDeclaration(deps, declaration)
-  switch (verdict.kind) {
-    case 'undeclared':
-      return { kind: 'undeclared' }
-    case 'invalid':
-      return { kind: 'invalid', error: verdict.error }
-    case 'decided':
-      return { kind: 'declared' }
+  const data = loadSpecData()
+  if (data === undefined) return { kind: 'invalid', error: t('plugins-check-spec-unavailable') }
+  let manifest
+  try {
+    manifest = parseManifest(declaration.source, { source: declaration.path })
+    projectManifest(manifest)
+  } catch (error) {
+    return { kind: 'invalid', error: cell(error instanceof Error ? error.message : String(error)) }
   }
+  try {
+    validatePlugin(createContractIndex(data.registry, data.permissions), manifest)
+  } catch (error) {
+    return { kind: 'invalid', error: cell(error instanceof Error ? error.message : String(error)) }
+  }
+  return { kind: 'declared' }
 }
 
 /**
@@ -665,6 +682,9 @@ export async function pluginServiceLines(
 ): Promise<string[]> {
   const parsed = parsePluginArgs(args)
   if (parsed.kind === 'check' || parsed.kind === 'unknown') return []
+  // The write path reports itself line by line as it runs (C-4): what is left
+  // for this half is the usage line the sync half already wrote.
+  if (parsed.kind === 'install') return []
   if (parsed.kind === 'info' && parsed.spec === '') return []
   if (manager === undefined) return [t('plugins-service-unavailable')]
   // The service belongs to the host: a refusal or a crash there must not take

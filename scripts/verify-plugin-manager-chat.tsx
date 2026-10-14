@@ -31,7 +31,7 @@ import type {
   PluginSpecInspection,
 } from '@deepseek-ai/dsh-plugin-manager/types'
 
-const [{ Writable, PassThrough }, { mkdtempSync }, { tmpdir }, { join }, React, { Terminal: XTerm }, ui, { Chat }, { QuestionStore }, { ApprovalStore }, { createChannel }, { setLang, t }, { pluginReport }, { kernelEntriesOf }, { listBackends }, { findText, settle, settled, sleep, viewportLines }, { Context }, { createPluginInstallFlow }, { COMPOSITION_PACKAGE }] = await Promise.all([
+const [{ Writable, PassThrough }, { mkdtempSync }, { tmpdir }, { join }, React, { Terminal: XTerm }, ui, { Chat }, { QuestionStore }, { ApprovalStore }, { createChannel }, { setLang, t }, { pluginReport, parsePluginArgs }, { kernelEntriesOf }, { listBackends }, { findText, settle, settled, sleep, viewportLines }, { Context }, { createPluginInstallFlow }, { COMPOSITION_PACKAGE }] = await Promise.all([
   import('node:stream'),
   import('node:fs'),
   import('node:os'),
@@ -760,6 +760,167 @@ for (const [fullscreen, columns, service] of [
     await rig.flow.begin()
     check(`${tag}: an install that left this app's own version alone is silent about it`,
       !rig.lines.some(line => line.includes('realign it')), rig.lines.join(' | '))
+  }
+}
+
+// ── `/plugin install` through the real Chat (C-4) ───────────────────────────
+// The pane the flow asks through: gate 1's notice, gate 3's routing, and the one
+// step where a person approves build scripts. The flow is the real one; only the
+// service, the feed and the clock's answers are fixtures.
+{
+  const tag = 'install pane'
+  const PLUGIN = '@probe/verify-fresh-plugin'
+  const VERSION = '9.9.9'
+  const accepted = { status: 'accepted', kind: 'registry', name: PLUGIN, version: VERSION, bundle: true, registry: null } as const
+  const firstParty: FirstPartyFeedLoad = {
+    kind: 'ok', path: '/probe/tui-profile/feed/first-party.json',
+    feed: { feedVersion: 1, entries: [{ name: PLUGIN, scope: '@probe', version: VERSION }] },
+  }
+  const noFeed: FirstPartyFeedLoad = { kind: 'unavailable', reason: 'feed file is missing (probe)' }
+  const CHANGE = { changed: true, application: 'restart-required', stage: 'install', target: PLUGIN } as const
+
+  /**
+   * One Chat with the install prop wired to a flow over `service`/`feed`.
+   * `notice` is what the entry reads about the package's declarations; the
+   * fixtures answer it directly (reading a real dsh-plugin.json is
+   * `verify-plugin-feed`'s and `verify-plugin-negotiation`'s job).
+   */
+  async function mountInstallChat(options: {
+    readonly feed: FirstPartyFeedLoad
+    readonly notice: PluginInstallNotice
+    readonly install: () => Promise<ChangeResult>
+  }) {
+    const installs: InstallBundleOptions[] = []
+    const service: PluginManagerView = {
+      ...manager,
+      inspect: () => Promise.resolve(accepted),
+      installBundle: (_spec, settings) => { installs.push(settings ?? {}); return options.install() },
+      listBundles: () => Promise.resolve(bundles),
+    }
+    const { term, stdin, screen, hasText, run, render } = makeHarness(100, false)
+    const ctx = {
+      on: () => () => undefined,
+      get: (name: string) => name === 'pluginManager' ? service : undefined,
+      logger: { warn: () => undefined, info: () => undefined, debug: () => undefined },
+    } as never
+    const channel = createChannel(ctx, makeAgent('plugin-install', 's-plugin-install') as never, {
+      model: 'fake-model', provider: '', cwd: process.cwd(), activity: false,
+    })
+    const instance = await render(React.createElement(Chat, {
+      channel: channel as never, questionStore: new QuestionStore(), approvalStore: new ApprovalStore(),
+      onExit: () => undefined, fullscreen: false, trajectorySeen: true,
+      kernelEntries: kernelEntriesOf(listBackends()),
+      onPluginInstall: (args, sink) => {
+        const parsed = parsePluginArgs(args)
+        if (parsed.kind !== 'install' || parsed.spec === '') return undefined
+        return createPluginInstallFlow({
+          manager: service,
+          spec: parsed.spec,
+          feed: options.feed,
+          noticeOf: () => options.notice,
+          binding: sink.binding,
+          onLines: sink.onLines,
+          requestId: 'probe-pane' as PluginInstallRequestId,
+        })
+      },
+    }))
+    // 固定窗:pacing the key handlers attach after the first frame.
+    await sleep(300)
+    return {
+      installs, screen, hasText,
+      run,
+      async enter(): Promise<void> {
+        await sleep(100) // 固定窗:墙钟 等共享的 80ms 模态 Enter 冷却到期（提交命令那次 Enter 会刷新它）
+        stdin.write('\r')
+      },
+      async escape(): Promise<void> {
+        await sleep(100) // 固定窗:墙钟 等共享的 80ms 模态 Enter 冷却到期（提交命令那次 Enter 会刷新它）
+        stdin.write('\x1b')
+      },
+      async done(): Promise<void> { instance.unmount(); channel.releaseContributions(); term.dispose() },
+    }
+  }
+
+  // A first-party package whose declaration could not be read yet: gate 1 still
+  // has something to say, gate 3 does not — so the pane shows the notice and no
+  // trust confirmation, and Enter installs.
+  {
+    const rig = await mountInstallChat({
+      feed: firstParty,
+      notice: { kind: 'unjudged' },
+      install: () => Promise.resolve(CHANGE),
+    })
+    try {
+      await rig.run('/plugin install verify-fresh-plugin')
+      check(`${tag}: a first-party package with an unreadable declaration asks before installing`,
+        await settled(() => rig.hasText('Install plugin') && rig.hasText(`To install: ${PLUGIN}@${VERSION}`)), rig.screen())
+      check(`${tag}: the pane carries gate 1's notice`,
+        rig.hasText('cannot be read before it lands'), rig.screen())
+      check(`${tag}: a first-party package is not asked to confirm trust`,
+        !rig.hasText('full trust, no sandbox'), rig.screen())
+      check(`${tag}: nothing installed before the answer`, rig.installs.length === 0, String(rig.installs.length))
+      await rig.enter()
+      check(`${tag}: Enter installs what the pane named`,
+        await settled(() => rig.hasText(`Installed ${PLUGIN}`)), rig.screen())
+      check(`${tag}: the request id reaches the service`, rig.installs[0]?.requestId === 'probe-pane', JSON.stringify(rig.installs[0]))
+      check(`${tag}: the pane is gone once the flow is done`, !rig.hasText('Install plugin'), rig.screen())
+    } finally {
+      await rig.done()
+    }
+  }
+
+  // A third-party package: the trust confirmation is the pane's reason to exist,
+  // and Esc before answering installs nothing.
+  {
+    const rig = await mountInstallChat({
+      feed: noFeed,
+      notice: { kind: 'unjudged' },
+      install: () => Promise.resolve(CHANGE),
+    })
+    try {
+      await rig.run('/plugin install verify-fresh-plugin')
+      check(`${tag}: an unlisted package is asked to confirm trust`,
+        await settled(() => rig.hasText('Install plugin') && rig.hasText('full trust, no sandbox')), rig.screen())
+      check(`${tag}: the trust pane says the package will not auto-update`,
+        rig.hasText('will not auto-update'), rig.screen())
+      await rig.escape()
+      check(`${tag}: Esc on the confirmation closes the pane`,
+        await settled(() => !rig.hasText('Install plugin')), rig.screen())
+      check(`${tag}: Esc on the confirmation installs nothing`, rig.installs.length === 0, String(rig.installs.length))
+    } finally {
+      await rig.done()
+    }
+  }
+
+  // Build scripts: the service blocks the install, the pane asks which ones to
+  // allow, and Enter retries with exactly those.
+  {
+    let attempt = 0
+    const rig = await mountInstallChat({
+      feed: firstParty,
+      notice: { kind: 'declared' },
+      install: () => {
+        attempt += 1
+        return Promise.resolve(attempt === 1
+          ? { ...CHANGE, application: 'failed', pendingBuilds: ['esbuild'] }
+          : CHANGE)
+      },
+    })
+    try {
+      await rig.run('/plugin install verify-fresh-plugin')
+      check(`${tag}: blocked build scripts are asked about in the pane`,
+        await settled(() => rig.hasText('These build scripts need approval') && rig.hasText('esbuild')), rig.screen())
+      check(`${tag}: the pane names the scripts it will allow`,
+        await settled(() => rig.hasText('allow these scripts and retry')), rig.screen())
+      await rig.enter()
+      check(`${tag}: Enter retries the install with those scripts approved`,
+        await settled(() => rig.hasText(`Installed ${PLUGIN}`)), rig.screen())
+      check(`${tag}: the retry carries the approved build scripts`,
+        rig.installs.length === 2 && JSON.stringify(rig.installs[1]?.approvedBuilds) === '["esbuild"]',
+        JSON.stringify(rig.installs))
+    } finally {
+      await rig.done()
+    }
   }
 }
 
