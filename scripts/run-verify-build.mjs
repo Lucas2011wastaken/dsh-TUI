@@ -59,6 +59,7 @@ const GATES = [
   'verify:plugin-ledger',
   'verify:plugin-commands',
   'verify:plugin-negotiation',
+  'verify:plugin-feed',
   'verify:plugin-lifecycle',
   'verify:runtime-themes',
   'verify:theme-hotswap',

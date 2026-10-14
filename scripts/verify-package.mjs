@@ -59,6 +59,11 @@ for (const guideFile of ['SKILL.md', ...guideFiles()]) {
   const entry = `${GUIDE_DIR}/${guideFile}`
   if (!packed.has(entry)) throw new Error(`packaged user guide missing from tarball: ${entry}`)
 }
+// 嫡系 feed（C-4）："随包发布"不是口头承诺——清单里的每一条判定都发生在用户机器上，
+// 少了这份文件，免确认分流会静默退回"全部按第三方"（fail closed 但失去意义）。
+for (const feedFile of ['tui-profile/feed/first-party.json']) {
+  if (!packed.has(feedFile)) throw new Error(`packaged first-party feed missing from tarball: ${feedFile}`)
+}
 for (const path of packed) {
   const lower = path.toLowerCase()
   if (lower.includes('plugin-spec/')
