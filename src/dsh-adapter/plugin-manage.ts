@@ -38,7 +38,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { BundleInfo, ChangeResult, PluginEntryId, PluginInfo } from '@deepseek-ai/dsh-plugin-manager/types'
 import { t, type I18nKey } from '../i18n.js'
 import { resolveDshProfileName } from '../update.js'
-import { backendDataDir } from '../utils/paths.js'
+import { backendDataDir, DATA_DIR } from '../utils/paths.js'
 import { pluginDeclarationOf } from './plugin-declaration.js'
 import { type FirstPartyFeedLoad, firstPartyVerdict, loadFirstPartyFeed } from './plugin-feed.js'
 import {
@@ -338,7 +338,9 @@ export function createPluginManageFlow(options: PluginManageFlowOptions): Plugin
   async function guardThenDecide(guardTarget: PluginGuardTarget, allowed: () => Promise<PluginManageStep>): Promise<PluginManageStep> {
     const verdict = pluginGuardVerdict(guardTarget, options.action)
     if (verdict.kind === 'refused') {
-      emit([t(REFUSAL_KEYS[verdict.reason], { target: label })])
+      // `service-locked` quotes the host's own word for it; a rule of ours gets
+      // reported without one.
+      emit([t(REFUSAL_KEYS[verdict.reason], { target: label, reason: cell(guardTarget.readOnlyReason ?? '') })])
       return { kind: 'done' }
     }
     return allowed()
@@ -543,7 +545,7 @@ export function createPluginManageEntry(
  * `undefined` when there is nothing to read: a bundle that ships no declaration
  * is not evidence of a clean removal, only of an unanswerable question.
  */
-export function residueWatchOf(ctx: Context, name: string): PluginResidueWatch | undefined {
+export function residueWatchOf(ctx: Context, name: string, dataRoot: string = DATA_DIR): PluginResidueWatch | undefined {
   const declaration = pluginDeclarationOf(ctx, name)
   if (declaration === undefined) return undefined
   let parsed: unknown
@@ -559,12 +561,12 @@ export function residueWatchOf(ctx: Context, name: string): PluginResidueWatch |
   return () => {
     const left: string[] = []
     for (const backendId of backendIds) {
-      const dir = backendDataDir(backendId)
+      const dir = backendDataDir(backendId, dataRoot)
       if (existsSync(dir)) left.push(dir)
     }
     // The three footprint sources the grant matrix unions, asked through the
     // same reader that drew it — never by a second one that could disagree.
-    if (componentId !== undefined && pluginFootprintContains(componentId)) {
+    if (componentId !== undefined && pluginFootprintContains(componentId, { dataDir: dataRoot })) {
       left.push(t('plugins-manage-residue-footprint', { id: cell(componentId) }))
     }
     return left

@@ -17,6 +17,12 @@ process.env.DSH_TUI_LANG = 'en'
 
 import type { PluginManagerView } from '../src/dsh-adapter/plugin-manager.js'
 import type { PluginInstallFlow } from '../src/dsh-adapter/plugin-install.js'
+import type {
+  PluginManageFlow,
+  PluginManageSink,
+  PluginManageStep,
+  PluginResidueWatch,
+} from '../src/dsh-adapter/plugin-manage.js'
 import type { PluginInstallNotice } from '../src/dsh-adapter/plugin-declaration.js'
 import type { FirstPartyEntry, FirstPartyFeedLoad } from '../src/dsh-adapter/plugin-feed.js'
 import type { PluginInstallSink } from '../src/dsh-adapter/plugin-install.js'
@@ -33,7 +39,9 @@ import type {
   PluginSpecInspection,
 } from '@deepseek-ai/dsh-plugin-manager/types'
 
-const [{ Writable, PassThrough }, { mkdtempSync, mkdirSync, readFileSync, writeFileSync }, { tmpdir }, { join }, React, { Terminal: XTerm }, ui, { Chat }, { QuestionStore }, { ApprovalStore }, { createChannel }, { setLang, t }, { pluginReport, parsePluginArgs }, { kernelEntriesOf }, { listBackends }, { findText, settle, settled, sleep, viewportLines }, { Context }, { createPluginInstallFlow, createPluginInstallEntry }, { COMPOSITION_PACKAGE }, { pathToFileURL }, { createDshSession }, { PluginInstallPane }] = await Promise.all([
+const [{ Writable, PassThrough }, { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync }, { tmpdir }, { join }, React, { Terminal: XTerm }, ui, { Chat }, { QuestionStore }, { ApprovalStore }, { createChannel }, { setLang, t }, { pluginReport, parsePluginArgs }, { kernelEntriesOf }, { listBackends }, { findText, settle, settled, sleep, viewportLines }, { Context }, { createPluginInstallFlow, createPluginInstallEntry }, { COMPOSITION_PACKAGE }, { pathToFileURL }, { createDshSession }, { PluginInstallPane },
+  { createPluginManageFlow, createPluginManageEntry, residueWatchOf },
+  { CORE_BUNDLES, HOST_BUNDLE }, { loadFirstPartyFeed }, { PluginManagePane }, { backendDataDir }] = await Promise.all([
   import('node:stream'),
   import('node:fs'),
   import('node:os'),
@@ -56,6 +64,14 @@ const [{ Writable, PassThrough }, { mkdtempSync, mkdirSync, readFileSync, writeF
   import('node:url'),
   import('../src/dsh-adapter/backend/session.js'),
   import('../src/components/PluginInstallPane.js'),
+  // Appended, never inserted: this list is matched against the destructuring
+  // below by position, so a new import in the middle silently shifts every
+  // binding after it.
+  import('../src/dsh-adapter/plugin-manage.js'),
+  import('../src/dsh-adapter/plugin-guard.js'),
+  import('../src/dsh-adapter/plugin-feed.js'),
+  import('../src/components/PluginManagePane.js'),
+  import('../src/utils/paths.js'),
 ])
 
 setLang('en')
@@ -127,6 +143,11 @@ const manager: PluginManagerView = {
   cancelInstall: () => Promise.resolve({ status: 'cancelled' }),
   listVersionExemptions: () => ({ exemptions: {}, warnings: [] }),
   setVersionExemption: () => Promise.resolve({ changed: true, application: 'restart-required', stage: 'enable', target: 'verify-fresh-plugin' }),
+  // The lifecycle half (C-5). The read-only forms never reach these; the manage
+  // flow below hands in its own service so every write stays assertable.
+  removeBundle: name => Promise.resolve({ changed: true, application: 'restart-required', stage: 'remove', target: name }),
+  setBundleEnabled: (name, enabled) => Promise.resolve({ changed: true, application: 'applied', stage: 'enable', target: name, enabled }),
+  setPluginEnabled: (id, enabled) => Promise.resolve({ changed: true, application: 'applied', stage: 'enable', target: id, enabled }),
 }
 
 /** The same service, refusing every call: the report must survive it. */
@@ -136,6 +157,9 @@ const failingManager: PluginManagerView = {
   listPlugins: () => Promise.reject(new Error(SERVICE_FAILURE)),
   registries: () => Promise.reject(new Error(SERVICE_FAILURE)),
   inspect: () => Promise.reject(new Error(SERVICE_FAILURE)),
+  removeBundle: () => Promise.reject(new Error(SERVICE_FAILURE)),
+  setBundleEnabled: () => Promise.reject(new Error(SERVICE_FAILURE)),
+  setPluginEnabled: () => Promise.reject(new Error(SERVICE_FAILURE)),
 }
 
 /** The same service, throwing BEFORE it returns a promise: `.catch` cannot see
@@ -144,6 +168,9 @@ const SYNC_FAILURE = 'the plugin service threw before answering'
 const syncThrowManager: PluginManagerView = {
   ...manager,
   listBundles: () => { throw new Error(SYNC_FAILURE) },
+  // A service can throw before it hands back a promise on a write too: `.catch`
+  // cannot see that, and the flow has to contain it on its own (C-5).
+  removeBundle: () => { throw new Error(SYNC_FAILURE) },
 }
 
 /** Only the installation-supplied bundle: the "nothing added yet" profile. */
@@ -363,6 +390,17 @@ for (const [fullscreen, columns, service] of [
       await run('/plugin install verify-fresh-plugin')
       check(`${tag}: an install form without the service points at the CLI`,
         await settled(() => hasText('dsh plugin --profile dsh-tui') && hasText('ctx.pluginManager')), screen())
+      await clear()
+      // C-5: the line must not promise a verb the CLI does not have. Install and
+      // remove do; enable and disable are written into the profile's own files by
+      // the service, so the route for those is this application, started on that
+      // profile — a `dsh plugin … enable` would be refused before doing anything.
+      await run('/plugin enable verify-fresh-plugin')
+      check(`${tag}: a lifecycle form without the service answers with the route line`,
+        await settled(() => hasText(t('plugins-service-unavailable-route'))), screen())
+      check(`${tag}: …and that line never claims a CLI verb the CLI does not have`,
+        hasText('no CLI verb') && !hasText('or enable from the CLI') &&
+        !hasText(t('plugins-manage-usage', { sub: 'enable' })), screen())
       continue
     }
     if (columns >= 100) {
@@ -1272,6 +1310,401 @@ for (const [fullscreen, columns, service] of [
   }
 }
 
+// ── The lifecycle flow, headless (C-5) ───────────────────────────────────────
+// What `/plugin remove | enable | disable` refuses, what it asks about, and what
+// it does with each shape of result. No terminal: the flow's whole contract is the
+// steps it hands back and the lines it writes, and a fake service can produce every
+// branch — the real one needs a profile and a package manager.
+{
+  const tag = 'manage flow'
+  const APP = COMPOSITION_PACKAGE
+  const HOST = HOST_BUNDLE
+  const THIRD = 'probe-managed-plugin'
+  const KEPT = 'probe-kept-bundle'
+  const LOCKED = 'probe-locked-bundle'
+  const HOST_ROW_MODULE = '@deepseek-ai/dsh-host-webserver'
+  const LEFTOVER = '/probe/home/.dsh-tui/backends/probe-backend'
+
+  /**
+   * A profile in the shape gate 2 exists for: the application and the host layer
+   * are reported as perfectly **addressable** (`removable: true`, no
+   * `readOnlyReason`), which is exactly what the real host does — its protected
+   * list is first-party module names, and ours are not in it. A case that passes
+   * only because the host locked something is not testing the guard at all.
+   */
+  const MANAGE_BUNDLES: BundleInfo[] = [
+    {
+      name: HOST, version: '0.2.0-rc.2', enabled: true, installed: false, optional: false, removable: true,
+      rows: [{ rowId: 'host-webserver', moduleName: HOST_ROW_MODULE }], overrides: ['tool-web'],
+    },
+    {
+      name: APP, version: '0.15.0', enabled: true, installed: true, optional: false, removable: true,
+      rows: [{ rowId: 'tui-row', moduleName: APP }], overrides: [],
+    },
+    {
+      name: THIRD, version: '1.0.0', enabled: false, installed: true, optional: false, removable: true,
+      rows: [{ rowId: 'third-row', moduleName: THIRD }], overrides: [],
+    },
+    // Supplied by the installation, so the host says it is not removable.
+    { name: KEPT, version: '2.0.0', enabled: true, installed: false, optional: true, removable: false, rows: [], overrides: [] },
+    // The host's own lock: reported, never re-derived into a rule of ours.
+    {
+      name: LOCKED, version: '3.0.0', enabled: true, installed: true, optional: false, removable: false,
+      readOnlyReason: 'management-required', rows: [], overrides: [],
+    },
+  ]
+  const MANAGE_PLUGINS: PluginInfo[] = [
+    { entryId: 'entry-app' as PluginEntryId, moduleName: APP, enabled: true, patchId: 'tui-row' },
+    { entryId: 'entry-host' as PluginEntryId, moduleName: HOST_ROW_MODULE, enabled: true, patchId: 'host-webserver' },
+    { entryId: 'entry-third' as PluginEntryId, moduleName: THIRD, enabled: false, patchId: 'third-row' },
+    // A seam row of this application: a subpath of the package, and the shape
+    // that has no bundle of the same name — so it is reachable by the module name
+    // the report prints, which is how gate 2's prefix rule gets exercised here.
+    { entryId: 'entry-seam' as PluginEntryId, moduleName: `${APP}/panels`, enabled: true, patchId: 'seam-row' },
+    // One character of difference from a core row, and a plugin like any other.
+    { entryId: 'entry-sibling' as PluginEntryId, moduleName: `${APP}-extra`, enabled: true, patchId: 'sibling-row' },
+    { entryId: 'entry-orphan' as PluginEntryId, moduleName: 'orphan-row', enabled: true, readOnlyReason: 'unaddressable' },
+  ]
+  const NO_FEED: FirstPartyFeedLoad = { kind: 'unavailable', reason: 'feed file is missing (probe)' }
+  const feedOf = (...entries: FirstPartyEntry[]): FirstPartyFeedLoad =>
+    ({ kind: 'ok', path: '/probe/tui-profile/feed/first-party.json', feed: { feedVersion: 1, entries } })
+  const CHANGED = { changed: true, application: 'applied', stage: 'enable', target: THIRD } as const
+
+  /** Gate 2's refusal lines, by the rule they break: a refusal has to say which. */
+  const REFUSALS: Record<string, Parameters<typeof t>[0]> = {
+    'app-bundle': 'plugins-manage-refused-app-bundle',
+    'host-bundle': 'plugins-manage-refused-host-bundle',
+    'not-removable': 'plugins-manage-refused-not-removable',
+    'row-not-removable': 'plugins-manage-refused-row-not-removable',
+    'app-row': 'plugins-manage-refused-app-row',
+    'service-locked': 'plugins-manage-refused-service-locked',
+  }
+
+  interface ManageRig {
+    readonly flow: PluginManageFlow
+    readonly lines: string[]
+    /** Every write the flow made, in order, as `method:argument`. */
+    readonly calls: string[]
+    setChange(next: () => Promise<ChangeResult>): void
+  }
+
+  function makeManageRig(options: {
+    readonly action: 'remove' | 'enable' | 'disable'
+    readonly target: string
+    readonly bundles?: readonly BundleInfo[]
+    readonly plugins?: readonly PluginInfo[]
+    readonly feed?: FirstPartyFeedLoad
+    readonly binding?: () => number
+    readonly busy?: () => boolean
+    readonly change?: () => Promise<ChangeResult>
+    /** A resolution that throws before it returns a promise. */
+    readonly reads?: () => Promise<never>
+    /** The removal's leftover watch: a fixture, since the real one reads a package. */
+    readonly residue?: (name: string) => PluginResidueWatch | undefined
+  }): ManageRig {
+    const lines: string[] = []
+    const calls: string[] = []
+    let change = options.change ?? ((): Promise<ChangeResult> => Promise.resolve(CHANGED))
+    const service: PluginManagerView = {
+      ...manager,
+      listBundles: () => options.reads?.() ?? Promise.resolve([...(options.bundles ?? MANAGE_BUNDLES)]),
+      listPlugins: () => Promise.resolve([...(options.plugins ?? MANAGE_PLUGINS)]),
+      removeBundle: name => { calls.push(`removeBundle:${name}`); return change() },
+      setBundleEnabled: (name, enabled) => { calls.push(`setBundleEnabled:${name}:${String(enabled)}`); return change() },
+      setPluginEnabled: (id, enabled) => { calls.push(`setPluginEnabled:${String(id)}:${String(enabled)}`); return change() },
+    }
+    const flow = createPluginManageFlow({
+      manager: service,
+      action: options.action,
+      target: options.target,
+      feed: options.feed ?? NO_FEED,
+      binding: options.binding ?? (() => 0),
+      busy: options.busy ?? (() => false),
+      onLines: batch => { lines.push(...batch) },
+      profileName: 'probe-profile',
+      residueOf: options.residue,
+    })
+    return { flow, lines, calls, setChange: next => { change = next } }
+  }
+  type ManageOptions = Omit<Parameters<typeof makeManageRig>[0], 'action' | 'target'>
+  /** Run one form to its end, optionally answering the confirmation it asks. */
+  async function manage(
+    action: 'remove' | 'enable' | 'disable',
+    target: string,
+    options: ManageOptions = {},
+    confirm = false,
+  ): Promise<ManageRig & { readonly first: PluginManageStep }> {
+    const rig = makeManageRig({ action, target, ...options })
+    const first = await rig.flow.begin()
+    if (confirm && first.kind === 'confirm') await rig.flow.confirm()
+    return { ...rig, first }
+  }
+  const has = (rig: { readonly lines: readonly string[] }, text: string): boolean => rig.lines.some(line => line.includes(text))
+
+  // Gate 2: the three suicides, each refused with the rule it broke and with no
+  // service call at all. The last two reach the same row by its `entryId` and by
+  // its module name — the report prints the module, so that is what a person types.
+  for (const [label, action, target, reason, named] of [
+    ['removing the application bundle', 'remove', APP, 'app-bundle', APP],
+    ['disabling the application bundle', 'disable', APP, 'app-bundle', APP],
+    ['removing the host layer', 'remove', HOST, 'host-bundle', HOST],
+    ['disabling the host layer', 'disable', HOST, 'host-bundle', HOST],
+    ['disabling a row of this application', 'disable', 'entry-app', 'app-row', APP],
+    ['disabling a seam row of this application by module name', 'disable', `${APP}/panels`, 'app-row', `${APP}/panels`],
+  ] as const) {
+    const rig = await manage(action, target)
+    check(`${tag}: ${label} is refused, and the service is never asked`,
+      rig.first.kind === 'done' && rig.calls.length === 0, `${rig.first.kind} · ${rig.calls.join(',')}`)
+    check(`${tag}: ${label} names the rule it broke`,
+      has(rig, t(REFUSALS[reason]!, { target: named })), rig.lines.join(' | '))
+  }
+
+  // A name only a bundle has wins over a row identity, and the next package along
+  // is not this one: the prefix rule needs the separator, so `…-extra` is a plugin
+  // like any other (and asks, rather than being refused).
+  {
+    const bundle = await manage('disable', APP)
+    check(`${tag}: a name that is both a bundle and a row resolves to the bundle`,
+      bundle.calls.length === 0 && has(bundle, t(REFUSALS['app-bundle']!, { target: APP })), bundle.lines.join(' | '))
+    const sibling = await manage('disable', `${APP}-extra`)
+    check(`${tag}: a module that merely starts the same is not this application's row`,
+      sibling.first.kind === 'done' && sibling.calls.join(',') === 'setPluginEnabled:entry-sibling:false',
+      `${sibling.first.kind} · ${sibling.calls.join(',')}`)
+  }
+
+  // The host's own lock is reported as such, with the reason the host gave — never
+  // re-derived, and never turned into one of our rules. It refuses both directions,
+  // because the service itself does.
+  {
+    const locked = await manage('remove', LOCKED)
+    check(`${tag}: a target the host locked is refused with the host's own reason`,
+      locked.first.kind === 'done' && locked.calls.length === 0 &&
+      has(locked, t(REFUSALS['service-locked']!, { target: LOCKED, reason: 'management-required' })),
+      locked.lines.join(' | '))
+    const enabled = await manage('enable', 'entry-orphan')
+    check(`${tag}: the host's lock refuses enable too — it is not ours to lift`,
+      enabled.calls.length === 0 &&
+      has(enabled, t(REFUSALS['service-locked']!, { target: 'orphan-row', reason: 'unaddressable' })),
+      enabled.lines.join(' | '))
+    const row = await manage('remove', 'entry-third')
+    check(`${tag}: a row is not removed on its own, and nothing is called`,
+      row.calls.length === 0 && has(row, t(REFUSALS['row-not-removable']!, { target: THIRD })), row.lines.join(' | '))
+  }
+
+  // A bundle the installation supplied is the host's `not-removable`, a different
+  // answer from "this is core": it says why, and the bundle is still switchable.
+  {
+    const rig = await manage('remove', KEPT)
+    check(`${tag}: a bundle the host calls not removable is refused for that reason`,
+      rig.calls.length === 0 && has(rig, t(REFUSALS['not-removable']!, { target: KEPT })), rig.lines.join(' | '))
+    const off = await manage('disable', KEPT)
+    check(`${tag}: …and switching it off needs no confirmation`,
+      off.calls.join(',') === `setBundleEnabled:${KEPT}:false`, off.lines.join(' | '))
+  }
+
+  // Removing a third-party bundle: destructive, so it asks — and asking is not
+  // doing. The write happens once, on the confirmation, and it names the bundle.
+  {
+    const asked = await manage('remove', THIRD)
+    check(`${tag}: removing a third-party bundle asks first, and writes nothing yet`,
+      asked.first.kind === 'confirm' && asked.first.question.kind === 'remove' && asked.calls.length === 0,
+      `${asked.first.kind} · ${asked.calls.join(',')}`)
+    const done = await manage('remove', THIRD, {}, true)
+    check(`${tag}: confirming removes exactly that bundle, once`,
+      done.calls.join(',') === `removeBundle:${THIRD}`, done.calls.join(','))
+    check(`${tag}: the removal reports the service's own outcome`,
+      has(done, t('plugins-manage-removed', { target: THIRD, state: t('plugins-install-state-applied') })),
+      done.lines.join(' | '))
+  }
+
+  // `application` is the same funnel an installation goes through, so it gets the
+  // same three words for what the running host did with the write.
+  {
+    const restart = await manage('remove', THIRD, {
+      change: () => Promise.resolve({ changed: true, application: 'restart-required', stage: 'remove', target: THIRD }),
+    }, true)
+    check(`${tag}: a write that needs a restart says so`,
+      has(restart, t('plugins-manage-removed', { target: THIRD, state: t('plugins-install-state-restart') })) &&
+      has(restart, t('plugins-install-restart-hint')), restart.lines.join(' | '))
+    const overridden = await manage('disable', THIRD, {
+      change: () => Promise.resolve({ changed: true, application: 'overridden', stage: 'enable', target: THIRD }),
+    })
+    check(`${tag}: an overridden write says HMR is live, in the install flow's own words`,
+      has(overridden, t('plugins-install-state-overridden')), overridden.lines.join(' | '))
+  }
+
+  // The write that changed nothing: the profile is already in that state, and the
+  // report says exactly that instead of dressing it up as an action.
+  {
+    const rig = await manage('disable', THIRD, {
+      change: () => Promise.resolve({ changed: false, application: 'applied', stage: 'enable', target: THIRD }),
+    })
+    check(`${tag}: a write that changed nothing says so`,
+      rig.calls.join(',') === `setBundleEnabled:${THIRD}:false` &&
+      has(rig, t('plugins-manage-unchanged', { target: THIRD })) &&
+      !has(rig, t('plugins-manage-disabled', { target: THIRD, state: t('plugins-install-state-applied') })),
+      rig.lines.join(' | '))
+  }
+
+  // Gate 3's routing on the enable side (C-5): a feed hit on the exact
+  // `name@version` is the one case nobody is asked about, and it still lands an
+  // audit line. Everything else is confirmed — a row included, since a row carries
+  // no version to pin and so can never be first-party (fail closed).
+  {
+    const trusted = await manage('enable', THIRD, { feed: feedOf({ name: THIRD, scope: '@probe', version: '1.0.0' }) })
+    check(`${tag}: a first-party bundle is enabled without asking, and still audited`,
+      trusted.first.kind === 'done' && trusted.calls.join(',') === `setBundleEnabled:${THIRD}:true` &&
+      has(trusted, t('plugins-manage-trusted', { name: THIRD, version: '1.0.0' })), trusted.lines.join(' | '))
+    const stale = await manage('enable', THIRD, { feed: feedOf({ name: THIRD, scope: '@probe', version: '0.0.1' }) })
+    check(`${tag}: the same name at another version is third-party, and asks`,
+      stale.first.kind === 'confirm' && stale.first.question.kind === 'trust' && stale.calls.length === 0,
+      `${stale.first.kind} · ${stale.calls.join(',')}`)
+    const asked = await manage('enable', THIRD, {}, true)
+    check(`${tag}: confirming trust enables exactly that bundle, once`,
+      asked.calls.join(',') === `setBundleEnabled:${THIRD}:true`, asked.calls.join(','))
+    const row = await manage('enable', THIRD, {
+      feed: feedOf({ name: THIRD, scope: '@probe', version: '1.0.0' }),
+      target: 'entry-third',
+    })
+    check(`${tag}: a row can never be first-party — it is asked about`,
+      row.first.kind === 'confirm' && row.first.question.kind === 'trust' && row.calls.length === 0,
+      `${row.first.kind} · ${row.calls.join(',')}`)
+  }
+
+  // `disable` asks about one thing only: a row the host layer owns, whose removal
+  // takes this application's own services down with it. Which rows those are comes
+  // from `dsh-base`'s own rows and overrides — not from a list kept here.
+  {
+    const hostRow = await manage('disable', 'entry-host')
+    check(`${tag}: disabling a host-layer row asks first, and writes nothing yet`,
+      hostRow.first.kind === 'confirm' && hostRow.first.question.kind === 'host-row' && hostRow.calls.length === 0,
+      `${hostRow.first.kind} · ${hostRow.calls.join(',')}`)
+    const done = await manage('disable', 'entry-host', {}, true)
+    check(`${tag}: confirming switches that row off by the id the service takes`,
+      done.calls.join(',') === 'setPluginEnabled:entry-host:false', done.calls.join(','))
+    const third = await manage('disable', 'entry-third')
+    check(`${tag}: a third-party row is reversible and needs no confirmation`,
+      third.first.kind === 'done' && third.calls.join(',') === 'setPluginEnabled:entry-third:false',
+      `${third.first.kind} · ${third.calls.join(',')}`)
+  }
+
+  // A failure arrives in-band (`application: 'failed'`), and the manual route it
+  // prints depends on what was asked: only a removal has a CLI verb. Handing out
+  // the install flow's `add` here would name a command that undoes the opposite.
+  {
+    const failed = await manage('remove', THIRD, {
+      change: () => Promise.resolve({
+        changed: false, application: 'failed', stage: 'remove', target: THIRD,
+        error: { code: 'not-removable' },
+      }),
+    }, true)
+    check(`${tag}: a failed removal reports the service's own code`,
+      has(failed, t('plugins-manage-failed', { reason: 'not-removable' })), failed.lines.join(' | '))
+    check(`${tag}: a failed removal prints the CLI remove command for this profile`,
+      has(failed, `dsh plugin --profile probe-profile remove ${THIRD}`), failed.lines.join(' | '))
+    check(`${tag}: a failed removal never prints the install flow's add command`,
+      !failed.lines.some(line => line.includes(' add ')), failed.lines.join(' | '))
+  }
+  {
+    const incompatible = await manage('enable', THIRD, {
+      change: () => Promise.resolve({
+        changed: false, application: 'failed', stage: 'enable', target: THIRD,
+        error: {
+          code: 'incompatible-version',
+          incompatible: [{ name: THIRD, version: '1.0.0', runtimeVersion: '0.2.0-rc.2', peers: { '@deepseek-ai/dsh': '^9' } }],
+        },
+      }),
+    }, true)
+    check(`${tag}: an incompatible enable lists what the running host refuses`,
+      has(incompatible, `${THIRD}@1.0.0`), incompatible.lines.join(' | '))
+    check(`${tag}: …and points at the CLI's own allow-version verb`,
+      has(incompatible, 'dsh plugin --profile probe-profile allow-version'), incompatible.lines.join(' | '))
+    check(`${tag}: enable and disable have no CLI verb, so the route offered is the profile`,
+      has(incompatible, t('plugins-manage-manual-profile', { profile: 'probe-profile', target: THIRD })),
+      incompatible.lines.join(' | '))
+  }
+  // A rejected call and one that throws before returning a promise both have to
+  // leave a readable line: the second is the shape `.catch` cannot see.
+  {
+    const rejected = await manage('remove', THIRD, {
+      change: () => Promise.reject(new Error(SERVICE_FAILURE)),
+    }, true)
+    check(`${tag}: a rejected write leaves one line, not an unhandled rejection`,
+      has(rejected, t('plugins-manage-failed', { reason: SERVICE_FAILURE })), rejected.lines.join(' | '))
+    const thrown = await manage('remove', THIRD, {
+      change: () => { throw new Error(SYNC_FAILURE) },
+    }, true)
+    check(`${tag}: a write that throws before answering is contained the same way`,
+      has(thrown, t('plugins-manage-failed', { reason: SYNC_FAILURE })), thrown.lines.join(' | '))
+    const readsThrow = await manage('remove', THIRD, { reads: () => { throw new Error(SYNC_FAILURE) } })
+    check(`${tag}: a resolution that throws synchronously is contained too`,
+      readsThrow.first.kind === 'done' && readsThrow.calls.length === 0 &&
+      has(readsThrow, t('plugins-service-error', { err: SYNC_FAILURE })), readsThrow.lines.join(' | '))
+  }
+
+  // A turn is running: nothing is asked, nothing is called — checked before the
+  // resolution, and again before the write (a turn can start while a pane waits).
+  {
+    let busy = true
+    const early = makeManageRig({ action: 'remove', target: THIRD, busy: () => busy })
+    const first = await early.flow.begin()
+    check(`${tag}: a running turn refuses the action before anything is read`,
+      first.kind === 'done' && early.calls.length === 0 && has(early, t('plugins-manage-busy')), early.lines.join(' | '))
+    busy = false
+    const late = makeManageRig({ action: 'remove', target: THIRD, busy: () => busy })
+    const asked = await late.flow.begin()
+    busy = true
+    await late.flow.confirm()
+    check(`${tag}: a turn that starts while the pane waits is caught before the write`,
+      asked.kind === 'confirm' && late.calls.length === 0 && has(late, t('plugins-manage-busy')), late.lines.join(' | '))
+  }
+
+  // Nothing is guessed about the target: an unmatched one is reported with what is
+  // addressable, and no service is written.
+  {
+    const rig = await manage('remove', 'probe-not-a-target')
+    check(`${tag}: an unmatched target is reported with what is addressable`,
+      rig.first.kind === 'done' && rig.calls.length === 0 &&
+      has(rig, 'probe-not-a-target') && has(rig, THIRD) && has(rig, APP) && has(rig, HOST_ROW_MODULE),
+      rig.lines.join(' | '))
+  }
+
+  // The binding fence: a write that lands after the session moved on is dropped.
+  // The run itself is profile-level and finishes either way.
+  {
+    let binding = 0
+    const rig = makeManageRig({ action: 'remove', target: THIRD, binding: () => binding })
+    await rig.flow.begin()
+    binding = 1
+    await rig.flow.confirm()
+    check(`${tag}: an answer that lands after the session moved on is not written`,
+      rig.calls.length === 1 && rig.lines.length === 0, `${rig.calls.join(',')} · ${rig.lines.join(' | ')}`)
+  }
+
+  // What a removal left behind (decision D): reported once, deleted by nobody but
+  // the person. Nothing is said when the check judged it and found nothing, and
+  // "could not judge" is its own answer rather than a clean bill of health.
+  {
+    const withResidue = await manage('remove', THIRD, { residue: () => () => [LEFTOVER] }, true)
+    check(`${tag}: a removal that left data behind says where it is`,
+      has(withResidue, t('plugins-manage-residue', { paths: LEFTOVER })), withResidue.lines.join(' | '))
+    const clean = await manage('remove', THIRD, { residue: () => () => [] }, true)
+    check(`${tag}: a removal that left nothing says nothing about residue`,
+      !has(clean, LEFTOVER) && !has(clean, t('plugins-manage-residue-unjudged', { target: THIRD })) &&
+      has(clean, t('plugins-manage-removed', { target: THIRD, state: t('plugins-install-state-applied') })),
+      clean.lines.join(' | '))
+    const unjudged = await manage('remove', THIRD, { residue: () => undefined }, true)
+    check(`${tag}: a declaration that could not be read is reported as not judged`,
+      has(unjudged, t('plugins-manage-residue-unjudged', { target: THIRD })), unjudged.lines.join(' | '))
+    const brokenWatch = await manage('remove', THIRD, { residue: () => () => { throw new Error('EACCES') } }, true)
+    check(`${tag}: a footprint check that throws is "not judged", never "nothing left"`,
+      has(brokenWatch, t('plugins-manage-residue-unjudged', { target: THIRD })), brokenWatch.lines.join(' | '))
+    const notARemoval = await manage('disable', THIRD, { residue: () => () => [LEFTOVER] })
+    check(`${tag}: only a removal looks for residue`,
+      !has(notARemoval, LEFTOVER), notARemoval.lines.join(' | '))
+  }
+}
+
 // ── `/plugin install` through the real Chat (C-4) ───────────────────────────
 // The pane the flow asks through: gate 1's notice, gate 3's routing, and the one
 // step where a person approves build scripts. The flow is the real one; only the
@@ -1828,6 +2261,263 @@ for (const [fullscreen, columns, service] of [
   }
 }
 
+// ── `/plugin remove | enable | disable` through the real Chat (C-5) ──────────
+// The pane the lifecycle flow asks through. The flow is the real one; only the
+// service, the feed and the clock's answers are fixtures. The three layouts are
+// the screen's job to survive, and `chatFullscreen` reads what Chat was handed so
+// a case tagged fullscreen cannot quietly test an inline screen again.
+{
+  const tag = 'manage pane'
+  const APP = COMPOSITION_PACKAGE
+  const HOST = HOST_BUNDLE
+  const THIRD = 'probe-managed-plugin'
+  const HOST_ROW_MODULE = '@deepseek-ai/dsh-host-webserver'
+  const LEFTOVER = '/probe/home/.dsh-tui/backends/probe-backend'
+
+  const PANE_BUNDLES: BundleInfo[] = [
+    {
+      name: HOST, version: '0.2.0-rc.2', enabled: true, installed: false, optional: false, removable: true,
+      rows: [{ rowId: 'host-webserver', moduleName: HOST_ROW_MODULE }], overrides: ['tool-web'],
+    },
+    {
+      name: THIRD, version: '1.0.0', enabled: false, installed: true, optional: false, removable: true,
+      rows: [{ rowId: 'third-row', moduleName: THIRD }], overrides: [],
+    },
+    // This application, addressable like any other bundle: the refusal below is
+    // gate 2's, not the host's.
+    {
+      name: APP, version: '0.15.0', enabled: true, installed: true, optional: false, removable: true,
+      rows: [{ rowId: 'tui-row', moduleName: APP }], overrides: [],
+    },
+  ]
+  const PANE_PLUGINS: PluginInfo[] = [
+    { entryId: 'entry-host' as PluginEntryId, moduleName: HOST_ROW_MODULE, enabled: true, patchId: 'host-webserver' },
+    { entryId: 'entry-third' as PluginEntryId, moduleName: THIRD, enabled: false, patchId: 'third-row' },
+    { entryId: 'entry-app' as PluginEntryId, moduleName: APP, enabled: true, patchId: 'tui-row' },
+  ]
+  const CHANGE = { changed: true, application: 'applied', stage: 'remove', target: THIRD } as const
+
+  /**
+   * One Chat with the manage prop wired to a flow over the fixture service. The
+   * prop is the shape the real entry has, so the path from a typed command to a
+   * service call is the production one minus the profile.
+   */
+  async function mountManageChat(options: {
+    /** What the Nth write answers; the fixture's appliable change by default. */
+    readonly change?: (index: number) => Promise<ChangeResult>
+    /**
+     * The removal's leftover watch. Judged-and-clean by default, so a case that is
+     * not about residue sees only the outcome it asked for; the real entry reads a
+     * package here, which the production section below drives for real.
+     */
+    readonly residue?: (name: string) => PluginResidueWatch | undefined
+    readonly columns?: number
+    readonly fullscreen?: boolean
+  } = {}) {
+    const calls: string[] = []
+    let writes = 0
+    const service: PluginManagerView = {
+      ...manager,
+      listBundles: () => Promise.resolve(PANE_BUNDLES),
+      listPlugins: () => Promise.resolve(PANE_PLUGINS),
+      removeBundle: name => { calls.push(`removeBundle:${name}`); writes += 1; return options.change?.(writes - 1) ?? Promise.resolve(CHANGE) },
+      setBundleEnabled: (name, enabled) => { calls.push(`setBundleEnabled:${name}:${String(enabled)}`); writes += 1; return options.change?.(writes - 1) ?? Promise.resolve(CHANGE) },
+      setPluginEnabled: (id, enabled) => { calls.push(`setPluginEnabled:${String(id)}:${String(enabled)}`); writes += 1; return options.change?.(writes - 1) ?? Promise.resolve(CHANGE) },
+    }
+    const { term, stdin, screen, hasText, run, render } = makeHarness(options.columns ?? 100, options.fullscreen ?? false)
+    const ctx = {
+      on: () => () => undefined,
+      get: (name: string) => name === 'pluginManager' ? service : undefined,
+      logger: { warn: () => undefined, info: () => undefined, debug: () => undefined },
+    } as never
+    const session = createDshSession(ctx, { agent: makeAgent('plugin-manage', 's-plugin-manage') as never })
+    const channel = createChannel(ctx, session as never, {
+      model: 'fake-model', provider: '', cwd: process.cwd(), activity: false,
+    })
+    const chatProps = {
+      channel: channel as never, questionStore: new QuestionStore(), approvalStore: new ApprovalStore(),
+      onExit: () => undefined, fullscreen: options.fullscreen ?? false, trajectorySeen: true,
+      kernelEntries: kernelEntriesOf(listBackends()),
+      onPluginManage: (args: string, sink: PluginManageSink) => {
+        const parsed = parsePluginArgs(args)
+        if (parsed.kind !== 'remove' && parsed.kind !== 'enable' && parsed.kind !== 'disable') return undefined
+        if (parsed.target === '') return undefined
+        return createPluginManageFlow({
+          manager: service,
+          action: parsed.kind,
+          target: parsed.target,
+          feed: { kind: 'unavailable', reason: 'feed file is missing (probe)' },
+          binding: sink.binding,
+          busy: sink.busy,
+          onLines: sink.onLines,
+          profileName: 'probe-profile',
+          residueOf: options.residue ?? (() => () => []),
+        })
+      },
+    }
+    const instance = await render(React.createElement(Chat, chatProps))
+    // 固定窗:pacing the key handlers attach after the first frame.
+    await sleep(300)
+    return {
+      calls, screen, hasText, run, term,
+      chatFullscreen: (): boolean => chatProps.fullscreen === true,
+      /** Local rows titled after one report: one per push onto the bound session. */
+      reportRows: (title: string): number => channel.rows.filter(row => row.text === title).length,
+      async enter(): Promise<void> {
+        await sleep(100) // 固定窗:墙钟 等共享的 80ms 模态 Enter 冷却到期（提交命令那次 Enter 会刷新它）
+        stdin.write('\r')
+      },
+      async escape(): Promise<void> {
+        await sleep(100) // 固定窗:墙钟 等共享的 80ms 模态 Enter 冷却到期（提交命令那次 Enter 会刷新它）
+        stdin.write('\x1b')
+      },
+      async done(): Promise<void> { instance.unmount(); channel.releaseContributions(); term.dispose() },
+    }
+  }
+
+  for (const [fullscreen, columns] of [[false, 100], [false, 50], [true, 100]] as const) {
+    const layout = `${fullscreen ? 'fullscreen' : 'inline'} ${columns}`
+    const rig = await mountManageChat({ columns, fullscreen })
+    try {
+      check(`${tag} ${layout}: the screen was given the layout under test`,
+        rig.chatFullscreen() === fullscreen, String(rig.chatFullscreen()))
+      await rig.run(`/plugin remove ${THIRD}`)
+      check(`${tag} ${layout}: removing a bundle asks through the pane`,
+        await settled(() => rig.hasText(t('plugins-manage-pane-title')) && rig.hasText(`About to ${t('plugins-manage-action-remove')}: ${THIRD}`)),
+        rig.screen())
+      check(`${tag} ${layout}: the pane says what a removal changes`,
+        rig.hasText(t('plugins-manage-remove-facts', { rows: '1', overrides: '0' })), rig.screen())
+      check(`${tag} ${layout}: the pane keeps its key hint on screen`,
+        rig.hasText(t('plugins-manage-key-confirm')), rig.screen())
+      check(`${tag} ${layout}: nothing was written before the answer`, rig.calls.length === 0, rig.calls.join(','))
+      await rig.escape()
+      check(`${tag} ${layout}: Esc on the confirmation closes the pane`,
+        await settled(() => !rig.hasText(t('plugins-manage-pane-title'))), rig.screen())
+      check(`${tag} ${layout}: Esc on the confirmation writes nothing`, rig.calls.length === 0, rig.calls.join(','))
+      // The positive half in the same layout: the pane's Enter is what writes.
+      await rig.run(`/plugin remove ${THIRD}`)
+      check(`${tag} ${layout}: the pane comes back for the answer`,
+        await settled(() => rig.hasText(t('plugins-manage-pane-title'))), rig.screen())
+      await rig.enter()
+      check(`${tag} ${layout}: Enter removes what the pane named, in this layout`,
+        await settled(() => rig.hasText(t('plugins-manage-removed', { target: THIRD, state: t('plugins-install-state-applied') }))),
+        rig.screen())
+      check(`${tag} ${layout}: the removal ran once, and on the bundle name`,
+        rig.calls.join(',') === `removeBundle:${THIRD}`, rig.calls.join(','))
+      check(`${tag} ${layout}: the pane is gone once the flow is done`,
+        await settled(() => !rig.hasText(t('plugins-manage-pane-title'))), rig.screen())
+    } finally {
+      await rig.done()
+    }
+  }
+
+  // Esc while the write is in flight: unlike an installation there is no
+  // cancellation to hand over, so the pane just closes and the profile write
+  // finishes on its own — and the answer still lands in the transcript.
+  {
+    let resolveWrite: ((result: ChangeResult) => void) | undefined
+    const rig = await mountManageChat({
+      change: () => new Promise<ChangeResult>(resolve => { resolveWrite = resolve }),
+    })
+    try {
+      await rig.run(`/plugin remove ${THIRD}`)
+      await rig.enter()
+      check(`${tag}: the write is in flight before Esc`,
+        await settled(() => rig.calls.length === 1 && rig.hasText(t('plugins-manage-working'))), rig.screen())
+      check(`${tag}: the busy pane says what Esc will and will not do`,
+        rig.hasText(t('plugins-manage-key-busy')), rig.screen())
+      await rig.escape()
+      check(`${tag}: Esc mid-write closes the pane, and asks the service for nothing`,
+        await settled(() => !rig.hasText(t('plugins-manage-pane-title'))), rig.screen())
+      resolveWrite?.({ ...CHANGE })
+      check(`${tag}: the write that outlived the pane still reports itself`,
+        await settled(() => rig.hasText(t('plugins-manage-removed', { target: THIRD, state: t('plugins-install-state-applied') }))),
+        rig.screen())
+      check(`${tag}: nothing asked the service to cancel a write it cannot cancel`,
+        rig.calls.join(',') === `removeBundle:${THIRD}`, rig.calls.join(','))
+    } finally {
+      await rig.done()
+    }
+  }
+
+  // The fence at the screen level: the first flow's answer must not close the pane
+  // a second flow opened. The two are told apart by identity, not by order.
+  {
+    let resolveFirst: ((result: ChangeResult) => void) | undefined
+    const rig = await mountManageChat({
+      change: index => index === 0
+        ? new Promise<ChangeResult>(resolve => { resolveFirst = resolve })
+        : Promise.resolve(CHANGE),
+    })
+    try {
+      await rig.run(`/plugin remove ${THIRD}`)
+      await rig.enter()
+      check(`${tag}: the first write is in flight`,
+        await settled(() => rig.calls.length === 1), rig.calls.join(','))
+      await rig.escape()
+      await settled(() => !rig.hasText(t('plugins-manage-pane-title')))
+      // A third-party `enable` asks, so the second flow has a pane of its own to
+      // lose: `disable` of the same bundle would write straight through and leave
+      // nothing to protect.
+      await rig.run(`/plugin enable ${THIRD}`)
+      check(`${tag}: the second flow opens its own pane`,
+        await settled(() => rig.hasText(t('plugins-manage-pane-title')) &&
+          rig.hasText(`About to ${t('plugins-manage-action-enable')}: ${THIRD}@1.0.0`)), rig.screen())
+      const pushes = rig.reportRows('/plugin')
+      resolveFirst?.({ ...CHANGE })
+      // 固定窗:探针 断言的是「这个迟到的回答不许改变当前这个面板」——没有可等的完成条件
+      await sleep(200)
+      check(`${tag}: the first flow's late answer leaves the second pane, and its question, alone`,
+        rig.hasText(t('plugins-manage-pane-title')) &&
+        rig.hasText(`About to ${t('plugins-manage-action-enable')}: ${THIRD}@1.0.0`) &&
+        !rig.hasText(`About to ${t('plugins-manage-action-remove')}: ${THIRD}`), rig.screen())
+      // Counted on the channel, not read off the screen: the transcript is the
+      // whole scrollback, and the landing page plus the open pane push the older
+      // lines past the viewport (they are there, just not in these 40 rows).
+      check(`${tag}: …while its own outcome still reaches the transcript`,
+        rig.reportRows('/plugin') === pushes + 1 &&
+        findText(rig.term, THIRD) !== null, `${pushes} → ${rig.reportRows('/plugin')}`)
+      await rig.enter()
+      check(`${tag}: the second flow's own answer writes what it asked for`,
+        await settled(() => rig.calls.join(',') === `removeBundle:${THIRD},setBundleEnabled:${THIRD}:true`), rig.calls.join(','))
+    } finally {
+      await rig.done()
+    }
+  }
+
+  // A refusal has no pane to open: the line is the whole answer, and the screen
+  // must stay usable — no overlay left behind to swallow the next command.
+  {
+    const rig = await mountManageChat()
+    try {
+      await rig.run(`/plugin disable ${APP}`)
+      check(`${tag}: gate 2's refusal is a transcript line, not a pane`,
+        await settled(() => rig.hasText(t('plugins-manage-refused-app-bundle', { target: APP })) &&
+          !rig.hasText(t('plugins-manage-pane-title'))), rig.screen())
+      check(`${tag}: the refusal wrote nothing`, rig.calls.length === 0, rig.calls.join(','))
+      await rig.run(`/plugin remove ${APP}`)
+      check(`${tag}: the next command still works after a refusal`,
+        await settled(() => rig.hasText(t('plugins-manage-refused-app-bundle', { target: APP }))), rig.screen())
+    } finally {
+      await rig.done()
+    }
+  }
+
+  // Decision D at the screen: what a removal leaves behind is reported in the
+  // transcript once, and nothing is deleted for the person.
+  {
+    const rig = await mountManageChat({ residue: () => () => [LEFTOVER] })
+    try {
+      await rig.run(`/plugin remove ${THIRD}`)
+      await rig.enter()
+      check(`${tag}: a removal that left data behind says so in the transcript`,
+        await settled(() => rig.hasText(t('plugins-manage-residue', { paths: LEFTOVER }))), rig.screen())
+    } finally {
+      await rig.done()
+    }
+  }
+}
+
 // ── The production wiring, driven for real (C-4) ─────────────────────────────
 // Everything above hands the flow a fixture feed and a fixture notice. This
 // section drives `createPluginInstallEntry` — the function the entry itself
@@ -1984,6 +2674,185 @@ for (const [fullscreen, columns, service] of [
         (await flow?.begin())?.kind === 'done', 'a relative path is `invalid-spec` upstream')
       flow?.dispose()
     }
+  }
+}
+
+// ── The lifecycle wiring, driven for real (C-5) ──────────────────────────────
+// Everything above hands the manage flow a fixture feed and a fixture watch. This
+// section drives `createPluginManageEntry` and `residueWatchOf` — the two functions
+// the entry itself uses — so the parts that only exist in the wiring are covered:
+// the packaged feed as shipped, the argument forms, and the declaration read that
+// names a removed plugin's own data.
+{
+  const tag = 'manage entry'
+  const manifest = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { name: string; version: string }
+  const COMPONENT_ID = 'com.probe.managed-plugin'
+  const BACKEND_ID = 'probe-managed-backend'
+  const ROW_ENTRY = 'probe-row-entry'
+  const calls: string[] = []
+  /**
+   * The version the profile reports for this application. The feed pins the one the
+   * package publishes, so a case that wants "we publish this name, but not this
+   * artifact" moves this and names the same bundle again.
+   */
+  let ownBundleVersion = manifest.version
+  /** The profile these cases act on: this application, one plugin bundle, one row. */
+  const PROBE_SERVICE: PluginManagerView = {
+    ...manager,
+    listBundles: () => Promise.resolve([
+      {
+        name: manifest.name, version: ownBundleVersion, enabled: true, installed: true, optional: false, removable: true,
+        rows: [{ rowId: 'tui-row', moduleName: manifest.name }], overrides: [],
+      },
+      {
+        name: '@probe/managed-plugin', version: '1.0.0', enabled: true, installed: true, optional: false, removable: true,
+        rows: [{ rowId: 'managed-row', moduleName: '@probe/managed-plugin' }], overrides: [],
+      },
+    ]),
+    listPlugins: () => Promise.resolve([
+      { entryId: ROW_ENTRY as PluginEntryId, moduleName: '@probe/managed-plugin', enabled: true, patchId: 'managed-row' },
+    ]),
+    removeBundle: name => { calls.push(`removeBundle:${name}`); return Promise.resolve({ changed: true, application: 'applied', stage: 'remove', target: name }) },
+    setBundleEnabled: (name, enabled) => { calls.push(`setBundleEnabled:${name}:${String(enabled)}`); return Promise.resolve({ changed: true, application: 'applied', stage: 'enable', target: name, enabled }) },
+    setPluginEnabled: (id, enabled) => { calls.push(`setPluginEnabled:${String(id)}:${String(enabled)}`); return Promise.resolve({ changed: true, application: 'applied', stage: 'enable', target: String(id), enabled }) },
+  }
+  const sink = { binding: () => 0, busy: () => false, onLines: () => undefined }
+
+  /** A profile whose install tree holds one declared plugin package. */
+  function probeProfile(declaration: unknown | undefined): { readonly ctx: never; readonly name: string; readonly root: string } {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-manage-entry-'))
+    const profile = join(root, 'profile')
+    const installed = join(profile, 'node_modules', '@probe', 'managed-plugin')
+    mkdirSync(installed, { recursive: true })
+    writeFileSync(join(profile, 'package.json'), JSON.stringify({ name: 'probe-profile', dependencies: {} }))
+    writeFileSync(join(installed, 'package.json'), JSON.stringify({ name: '@probe/managed-plugin', version: '1.0.0', dsh: { bundle: {} } }))
+    if (declaration !== undefined) writeFileSync(join(installed, 'dsh-plugin.json'), JSON.stringify(declaration))
+    return {
+      root,
+      name: '@probe/managed-plugin',
+      ctx: {
+        on: () => () => undefined,
+        get: (name: string) => name === 'pluginManager' ? PROBE_SERVICE : undefined,
+        logger: { warn: () => undefined, info: () => undefined, debug: () => undefined },
+        baseUrl: pathToFileURL(`${profile}/`).href,
+      } as never,
+    }
+  }
+  const DECLARATION = {
+    id: COMPONENT_ID,
+    contributes: { 'x-dsh-tui': [{ kind: 'Backend', id: BACKEND_ID }] },
+  }
+
+  {
+    // No service: the entry hands back no flow, and the screen falls back to the
+    // report — which is where the CLI route for each form is printed.
+    const bare = {
+      on: () => () => undefined, get: () => undefined,
+      logger: { warn: () => undefined, info: () => undefined, debug: () => undefined },
+    } as never
+    const noService = createPluginManageEntry(bare, { profileName: 'probe' })
+    check(`${tag}: with no plugin service the entry offers no flow`,
+      noService('remove probe-managed-plugin', sink) === undefined)
+  }
+
+  {
+    const { ctx } = probeProfile(DECLARATION)
+    const factory = createPluginManageEntry(ctx, { profileName: 'probe' })
+    for (const args of ['list', 'info probe-managed-plugin', 'install probe-managed-plugin', 'registries', 'check /tmp/x.json']) {
+      check(`${tag}: "${args}" is not a lifecycle form, so the entry offers no flow`,
+        factory(args, sink) === undefined)
+    }
+    // A bare form is a usage error the report answers; a flow here would write
+    // nothing and say nothing.
+    for (const sub of ['remove', 'enable', 'disable']) {
+      check(`${tag}: a bare "${sub}" offers no flow (the report answers its usage)`,
+        factory(sub, sink) === undefined)
+      const flow = factory(`${sub} ${manifest.name}@${manifest.version}`, sink)
+      check(`${tag}: "${sub}" with a target does build a flow`, flow !== undefined)
+      flow?.dispose()
+    }
+  }
+
+  // The shipped feed, read through the real loader: it pins this very package at
+  // this very version, so an enable of it is the one case nobody is asked about.
+  {
+    const { ctx } = probeProfile(DECLARATION)
+    const flow = createPluginManageEntry(ctx, { profileName: 'probe' })(`enable ${manifest.name}`, sink)
+    const step = await flow?.begin()
+    check(`${tag}: the shipped feed vouches for the package it pins, so enabling it asks nothing`,
+      step?.kind === 'done', JSON.stringify(step))
+    flow?.dispose()
+    // The same bundle, with the profile reporting a version the feed does not pin:
+    // "we publish this name" is not "we published this artifact" (`feed/README.md`).
+    ownBundleVersion = '0.0.1'
+    const stale = createPluginManageEntry(ctx, { profileName: 'probe' })(`enable ${manifest.name}`, sink)
+    const staleStep = await stale?.begin()
+    check(`${tag}: the same name at another version is asked about, not trusted`,
+      staleStep?.kind === 'confirm' && staleStep.question.kind === 'trust', JSON.stringify(staleStep))
+    stale?.dispose()
+    ownBundleVersion = manifest.version
+  }
+
+  // Which identity the argument names: a bundle name is matched before any row, so
+  // a name both of them carry cannot quietly become the smaller action.
+  {
+    const { ctx, name } = probeProfile(DECLARATION)
+    const flow = createPluginManageEntry(ctx, { profileName: 'probe' })(`remove ${name}`, sink)
+    const step = await flow?.begin()
+    check(`${tag}: a name the profile holds as a bundle resolves to the bundle`,
+      step?.kind === 'confirm' && step.target.kind === 'bundle' && step.target.rows === 1,
+      JSON.stringify(step))
+    flow?.dispose()
+    // The same name as a row identity: the row's module is the same string, and the
+    // bundle still wins — which is why the report prints entry ids too.
+    calls.length = 0
+    const asRow = createPluginManageEntry(ctx, { profileName: 'probe' })(`disable ${ROW_ENTRY}`, sink)
+    const rowStep = await asRow?.begin()
+    check(`${tag}: an entry id reaches the row the bundle name would have shadowed`,
+      rowStep?.kind === 'done' && calls.join(',') === `setPluginEnabled:${ROW_ENTRY}:false`,
+      `${JSON.stringify(rowStep)} · ${calls.join(',')}`)
+    asRow?.dispose()
+  }
+
+  // What a removal leaves behind, read through the real reader: the declaration
+  // names the plugin's identity and its backends' data directories, and both are
+  // looked for where they would actually be.
+  {
+    const { ctx, name } = probeProfile(DECLARATION)
+    const dataRoot = join(mkdtempSync(join(tmpdir(), 'dsh-manage-data-')), 'data')
+    const watch = residueWatchOf(ctx, name, dataRoot)
+    check(`${tag}: a declared plugin's removal is watched`, watch !== undefined)
+    check(`${tag}: a removal that left nothing reports nothing`, watch?.().length === 0, JSON.stringify(watch?.()))
+
+    // The backend's own directory, at the path the host builds for it.
+    const backendDir = backendDataDir(BACKEND_ID, dataRoot)
+    mkdirSync(backendDir, { recursive: true })
+    check(`${tag}: a backend's data directory is found where the host would have written it`,
+      watch?.().join(',') === backendDir, JSON.stringify(watch?.()))
+
+    // …and the plugin's own footprint, through the same three sources the grant
+    // matrix unions.
+    rmSync(backendDir, { recursive: true, force: true })
+    writeFileSync(join(dataRoot, 'effect-ledger.jsonl'),
+      `${JSON.stringify({ sequence: 1, operation: 'create', pluginId: COMPONENT_ID, resource: { kind: 'storage-namespace', id: 'probe' }, result: 'applied' })}\n`)
+    check(`${tag}: a plugin's ledger footprint is found without its data directory`,
+      watch?.().length === 1 && watch?.()[0]?.includes(COMPONENT_ID) === true, JSON.stringify(watch?.()))
+
+    // A bundle that ships no declaration is not evidence of a clean removal: the
+    // question is unanswerable, and the flow says so rather than "nothing left".
+    const undeclared = probeProfile(undefined)
+    check(`${tag}: a bundle that declares nothing has no watch to hand the flow`,
+      residueWatchOf(undeclared.ctx, undeclared.name, dataRoot) === undefined)
+    // A declaration that names no identity either: nothing to look for, and no
+    // directory invented from a contribution of another family.
+    const empty = probeProfile({ id: '', contributes: { 'x-dsh-tui': [{ kind: 'Panel', id: BACKEND_ID }] } })
+    check(`${tag}: a declaration that names no plugin identity has no watch either`,
+      residueWatchOf(empty.ctx, empty.name, dataRoot) === undefined)
+    const other = probeProfile({ id: COMPONENT_ID, contributes: { 'x-dsh-tui': [{ kind: 'Panel', id: BACKEND_ID }] } })
+    mkdirSync(backendDataDir(BACKEND_ID, dataRoot), { recursive: true })
+    check(`${tag}: a non-Backend contribution never names a backend data directory`,
+      residueWatchOf(other.ctx, other.name, dataRoot)?.().every(path => path !== backendDataDir(BACKEND_ID, dataRoot)) === true,
+      JSON.stringify(residueWatchOf(other.ctx, other.name, dataRoot)?.()))
   }
 }
 

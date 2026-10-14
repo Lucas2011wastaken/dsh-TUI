@@ -47,7 +47,7 @@ import type { HostDescriptorBuild } from '../adapter/standard/descriptor.js'
 import { isCompositionOwned, pluginDeclarationIn, type PluginDeclaration, type PluginInstallNotice } from './plugin-declaration.js'
 import { extraBundles, localizedPluginText, type PluginManagerView } from './plugin-manager.js'
 import { PLUGIN_STORAGE_DIR } from './plugin-storage.js'
-import { EFFECT_LEDGER_FILE } from './effect-ledger.js'
+import { EFFECT_LEDGER_NAME } from './effect-ledger.js'
 
 /** How many plugins the matrix shows before an overflow note. */
 export const PLUGINS_MATRIX_MAX_ROWS = 20
@@ -222,7 +222,7 @@ export function pluginFootprintPaths(overrides: PluginFootprintOverrides = {}): 
   const dataDir = overrides.dataDir ?? DATA_DIR
   return {
     dataDir,
-    ledgerFile: overrides.ledgerFile ?? EFFECT_LEDGER_FILE,
+    ledgerFile: overrides.ledgerFile ?? join(dataDir, EFFECT_LEDGER_NAME),
     storageDir: overrides.storageDir ?? join(dataDir, PLUGIN_STORAGE_DIR),
   }
 }
@@ -745,7 +745,7 @@ export async function pluginServiceLines(
   // route, whatever the form asked for — the write path included: the flow that
   // would run it lives in the entry, and without a service the entry hands back
   // no flow, so this is the sentence the person reads.
-  if (manager === undefined) return [t('plugins-service-unavailable')]
+  if (manager === undefined) return [t('plugins-service-unavailable'), t('plugins-service-unavailable-route')]
   // The write paths report themselves line by line as they run (C-4 / C-5): with
   // a service present, this half has nothing to add to them.
   if (parsed.kind === 'install' || parsed.kind === 'remove' || parsed.kind === 'enable' || parsed.kind === 'disable') return []

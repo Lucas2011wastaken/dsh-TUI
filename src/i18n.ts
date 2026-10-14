@@ -1357,8 +1357,14 @@ const dict = {
   'plugins-check-host-unavailable': { zh: '当前没有 live Host Descriptor；只做静态 manifest 校验，不进行协议支持声明/协商。', en: 'No live Host Descriptor is available; only static manifest validation was performed, no protocol support declaration/negotiation.' },
   // profile 插件服务（ctx.pluginManager）：bundle/行列表与门禁 1 的标签
   'plugins-service-unavailable': {
-    zh: '当前内核没有 profile 插件服务（ctx.pluginManager）：bundle/行列表不可用。装/卸可从命令行运行 `dsh plugin --profile dsh-tui add|remove …`；**启用与关闭没有命令行动词**（那两件事是服务写 profile 自己的 dsh.profile.bundles 与 cordis.patch.yml），请以 `dsh --profile dsh-tui` 启动本应用后在 /plugin 里操作。',
-    en: 'This kernel provides no profile plugin service (ctx.pluginManager): the bundle/row list is unavailable. Install and remove from the CLI with `dsh plugin --profile dsh-tui add|remove …`; **enable and disable have no CLI verb** (the service writes them into the profile\'s own dsh.profile.bundles and cordis.patch.yml) — start this app through `dsh --profile dsh-tui` and use /plugin.',
+    zh: '当前内核没有 profile 插件服务（ctx.pluginManager）：bundle / 行列表与生命周期动作都不可用。',
+    en: 'This kernel provides no profile plugin service (ctx.pluginManager): the bundle/row list and the lifecycle actions are unavailable.',
+  },
+  // 第二行单独一条：转录里的报告行只留 preview 那么宽，把出口挤在第一行末尾等于看不见。
+  // 也不承诺 CLI 没有的动词——enable / disable 是服务写 profile 自己的文件（决策 C）。
+  'plugins-service-unavailable-route': {
+    zh: '装 / 卸走命令行：`dsh plugin --profile dsh-tui add|remove …`；启用 / 关闭没有命令行动词，请以 `dsh --profile dsh-tui` 启动本应用后在 /plugin 里操作。',
+    en: 'Install and remove go through the CLI: `dsh plugin --profile dsh-tui add|remove …`. Enable and disable have no CLI verb — start this app with `dsh --profile dsh-tui` and use /plugin.',
   },
   'plugins-service-error': {
     zh: '插件服务调用失败：{{err}}（上面的诊断部分照常显示。重试一次；仍失败请用 `dsh plugin --profile dsh-tui` 查看 CLI 侧的报错。）',
@@ -1505,8 +1511,8 @@ const dict = {
     en: 'No such target: {{target}} (addressable: {{names}})',
   },
   'plugins-manage-refused-service-locked': {
-    zh: '拒绝：插件服务锁定了 {{target}}（不可寻址或需要管理权限）——两个方向都不是本应用能改的。',
-    en: 'Refused: the plugin service has {{target}} locked (unaddressable or management-required); neither direction is this app\'s to take.',
+    zh: '拒绝：插件服务锁定了 {{target}}（{{reason}}）——两个方向都不是本应用能改的。',
+    en: 'Refused: the plugin service has {{target}} locked ({{reason}}); neither direction is this app\'s to take.',
   },
   'plugins-manage-refused-app-bundle': {
     zh: '拒绝：{{target}} 就是本应用自己（门禁 2）——关了它，界面当场消失。',
