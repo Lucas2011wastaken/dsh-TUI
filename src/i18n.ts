@@ -1425,6 +1425,10 @@ const dict = {
   'plugins-install-installing': { zh: '正在安装…', en: 'Installing…' },
   'plugins-install-cancelling': { zh: '正在取消…', en: 'Cancelling…' },
   'plugins-install-applying': { zh: '正在应用…', en: 'Applying…' },
+  'plugins-install-log-line-omitted': {
+    zh: '已省略超长日志行（每行上限 {{bytes}} 字节）。',
+    en: 'An oversized log line was omitted (limit: {{bytes}} bytes per line).',
+  },
   'plugins-install-build-blocked': {
     zh: '安装被构建脚本拦住：有 {{count}} 个脚本待批准（批准后才会重试安装）',
     en: 'Blocked by build scripts: {{count}} awaiting approval (the install retries only after approval)',
@@ -1435,8 +1439,8 @@ const dict = {
   },
   'plugins-install-incompatible': { zh: '版本不兼容：{{packages}}（当前 DSH {{runtime}}）', en: 'Incompatible version: {{packages}} (running DSH {{runtime}})' },
   'plugins-install-exempted': {
-    zh: '已为 {{count}} 个包登记精确版本豁免（accept-risk），正在重试安装',
-    en: 'Recorded an exact-version exemption for {{count}} package(s) (accept-risk); retrying the install',
+    zh: '已为 {{count}} 个包登记精确版本豁免（accept-risk）',
+    en: 'Recorded an exact-version exemption for {{count}} package(s) (accept-risk)',
   },
   'plugins-install-exemptions-unreadable': {
     zh: '读不到当前的版本豁免清单：{{reason}}（面板按"没有豁免"继续）',

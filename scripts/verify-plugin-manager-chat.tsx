@@ -723,6 +723,35 @@ for (const [fullscreen, columns, service] of [
       `${JSON.stringify(rig.exemptions)} · installs ${rig.installs.length}`)
   }
 
+  // A pending input can start a turn while the incompatible pane waits. The
+  // exemption itself writes and reloads the profile, before the install retry.
+  for (const becomesBusy of ['before approval', 'during the first write'] as const) {
+    let busy = false
+    const peers = ['probe-peer-a', 'probe-peer-b'].map(name => ({
+      name, version: '1.0.0', runtimeVersion: '0.2.0-rc.2', peers: {},
+    }))
+    const rig = makeInstallRig({
+      feed: TRUSTED,
+      busy: () => busy,
+      install: () => Promise.resolve({
+        ...CHANGE, application: 'failed', error: { code: 'incompatible-version', incompatible: peers },
+      }),
+      exempt: () => {
+        busy = true
+        return Promise.resolve(CHANGE)
+      },
+    })
+    const blocked = await rig.flow.begin()
+    check(`${tag}: ${becomesBusy} starts from the incompatible decision`, blocked.kind === 'incompatible')
+    if (becomesBusy === 'before approval') busy = true
+    const after = await rig.flow.acceptRisk()
+    check(`${tag}: ${becomesBusy} stops all subsequent profile writes`,
+      after.kind === 'done' && rig.exemptions.length === (becomesBusy === 'before approval' ? 0 : 1)
+      && rig.installs.length === 1 && rig.lines.includes(t('plugins-install-busy')),
+      `${JSON.stringify(rig.exemptions)} · installs ${rig.installs.length}`)
+    rig.flow.dispose()
+  }
+
   // The service answers a refusal in-band (a stale runtime version, a
   // compatibility file it will not rewrite): reporting that as "recorded" and
   // retrying would loop forever.
@@ -779,17 +808,23 @@ for (const [fullscreen, columns, service] of [
 
   // A failure keeps the evidence, loses the credentials, and says how to retry.
   {
+    const output = 'first line\nlast line\nfrom https://reader:probe-secret@registry.example.com/x'
     const rig = makeInstallRig({
       feed: TRUSTED,
-      install: () => Promise.resolve({
-        ...CHANGE,
-        application: 'failed',
-        error: { code: 'operation-error', diagnostic: 'pnpm exited 1' },
-        packageResult: {
-          exitCode: 1, truncated: false, logPath: '/probe/pnpm.log',
-          output: 'first line\nlast line\nfrom https://reader:probe-secret@registry.example.com/x',
-        },
-      }),
+      install: () => {
+        // The real service emits the stream and repeats its capture in the
+        // result; evidence must come from the former, before byte truncation.
+        rig.emitLog({
+          requestId: rig.flow.requestId, jobId: 'job', argv: ['pnpm'], cwd: '/probe',
+          stream: 'stderr', text: output,
+        })
+        return Promise.resolve({
+          ...CHANGE,
+          application: 'failed',
+          error: { code: 'operation-error', diagnostic: output },
+          packageResult: { exitCode: 1, truncated: false, logPath: '/probe/pnpm.log', output },
+        })
+      },
     })
     const step = await rig.flow.begin()
     check(`${tag}: a failed install reports the reason, the tail and the manual command`,
@@ -830,6 +865,100 @@ for (const [fullscreen, columns, service] of [
     check(`${tag}: truncation preserves complete captured lines and the structured reason (${label})`,
       rig.lines.some(line => line.includes('complete captured line')) && rig.lines.some(line => line.includes('operation-error')),
       rig.lines.join(' | '))
+  }
+
+  // Upstream captures the last 16 KiB, byte by byte, and copies that capture
+  // into its failure diagnostic. A retained suffix can lose its URL header.
+  // Mixing stdout/stderr can split a URL even without truncating any bytes.
+  for (const source of ['userinfo tail', 'query tail', 'interleaved streams'] as const) {
+    const secret = 'probe-captured-secret-1528'
+    const suffix = source === 'query tail' ? `${secret}&padding=` : `${secret}@registry.example.com/x `
+    const prefix = source === 'query tail' ? 'GET https://registry.example.com/x?token=' : 'fetch https://reader:'
+    const whole = `${prefix}${suffix}${'x'.repeat(16384 - Buffer.byteLength(suffix))}`
+    const captured = source === 'interleaved streams'
+      ? `${prefix}stderr-evidence\n${secret}@registry.example.com/x\n`
+      : Buffer.from(whole).subarray(-16384).toString('utf8')
+    const rig = makeInstallRig({
+      feed: TRUSTED,
+      install: () => {
+        const log = (text: string, stream: 'stdout' | 'stderr') => rig.emitLog({
+          requestId: rig.flow.requestId, jobId: 'job', argv: ['pnpm'], cwd: '/probe', stream, text,
+        })
+        if (source === 'interleaved streams') {
+          log(prefix, 'stdout')
+          log('stderr-evidence\n', 'stderr')
+          log(`${secret}@registry.example.com/x\n`, 'stdout')
+        } else {
+          log(`${whole}\n`, 'stdout')
+        }
+        log('retained-event-evidence\n', 'stderr')
+        return Promise.resolve({
+          ...CHANGE, application: 'failed',
+          error: { code: 'operation-error', diagnostic: captured },
+          packageResult: {
+            exitCode: 1, truncated: source !== 'interleaved streams', logPath: '/probe/pnpm.log', output: captured,
+          },
+        })
+      },
+    })
+    const after = await rig.flow.begin()
+    check(`${tag}: ${source} cannot reintroduce credentials through output or diagnostic`,
+      after.kind === 'done' && !rig.lines.some(line => line.includes(secret)), rig.lines.join(' | '))
+    check(`${tag}: ${source} still reports the failure and complete event evidence`,
+      rig.lines.some(line => line.includes('operation-error')) && rig.lines.includes('  retained-event-evidence'),
+      rig.lines.join(' | '))
+    rig.flow.dispose()
+  }
+
+  // Logs use a byte budget, including incomplete lines. Never truncate a
+  // credential-bearing line into a printable suffix; discard through its next
+  // newline, then resume normally. A CR-only progress stream is still one line.
+  for (const source of ['one chunk', 'many CR-only chunks', 'wide characters'] as const) {
+    const rejectedPrefix = 'OVER-BUDGET-1528'
+    const rig = makeInstallRig({
+      feed: TRUSTED,
+      install: () => {
+        const log = (text: string) => rig.emitLog({
+          requestId: rig.flow.requestId, jobId: 'job', argv: ['pnpm'], cwd: '/probe', stream: 'stdout', text,
+        })
+        // Exactly 16 KiB remains admissible, independently of the implementation's constant.
+        const acceptedPrefix = 'AT-BYTE-LIMIT-1528'
+        log(`${acceptedPrefix}${'x'.repeat(16384 - acceptedPrefix.length)}\n`)
+        log(`${rejectedPrefix} https://reader:probe-oversize-secret@registry.example.com/x `)
+        if (source === 'wide characters') log('界'.repeat(5500))
+        else if (source === 'one chunk') log('x'.repeat(32768))
+        else for (let index = 0; index < 128; index += 1) log(`${'x'.repeat(2048)}\r`)
+        log('\nRECOVERED-EVIDENCE-1528\n')
+        return Promise.resolve({ ...CHANGE, application: 'failed', error: { code: 'operation-error' } })
+      },
+    })
+    await rig.flow.begin()
+    const tail = rig.lines.filter(line => line.startsWith('  '))
+    check(`${tag}: ${source} drops the whole oversized line, including its prefix`,
+      !rig.lines.some(line => line.includes(rejectedPrefix) || line.includes('probe-oversize-secret')),
+      rig.lines.join(' | '))
+    check(`${tag}: ${source} keeps the byte-limit line and resumes after the discarded one`,
+      tail.some(line => line.includes('AT-BYTE-LIMIT-1528')) && tail.includes('  RECOVERED-EVIDENCE-1528')
+      && tail.length === 3,
+      tail.join(' | '))
+    rig.flow.dispose()
+  }
+
+  // Failures applying a bundle after pnpm succeeded still have whole activation
+  // diagnostics, rather than the failed package run's opaque capture.
+  {
+    const rig = makeInstallRig({
+      feed: TRUSTED,
+      install: () => Promise.resolve({
+        ...CHANGE, application: 'failed',
+        error: { code: 'operation-error', diagnostic: 'activation-evidence-1528' },
+        packageResult: { exitCode: 0, truncated: false, output: '', logPath: '/probe/pnpm.log' },
+      }),
+    })
+    await rig.flow.begin()
+    check(`${tag}: a failed activation retains its own diagnostic`,
+      rig.lines.some(line => line.includes('activation-evidence-1528')), rig.lines.join(' | '))
+    rig.flow.dispose()
   }
 
   // pnpm writes a stream chunk by chunk, and a credential can straddle two of

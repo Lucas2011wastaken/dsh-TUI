@@ -47,9 +47,8 @@ import { cell, declarationNoticeFor, parsePluginArgs } from './plugins-info.js'
 
 /** How many lines of pnpm's output the failure report keeps. */
 export const INSTALL_LOG_TAIL = 6
-
-/** Raw line-buffer budget in UTF-16 code units, not terminal display cells. */
-const INSTALL_LOG_LINE_CHARS = 16_384
+/** Larger lines are discarded whole, rather than retaining a credential fragment. */
+const INSTALL_LOG_LINE_BYTES = 16 * 1024
 
 /** What a spec names, once the service has read it. */
 export interface PluginArtifact {
@@ -144,10 +143,14 @@ export interface PluginInstallFlow {
 function failureReasonOf(result: ChangeResult): string {
   const error = result.error
   if (error !== undefined) {
-    // A truncated capture can start inside a credential, without the URL head
-    // redaction needs. The service also uses that capture as its diagnostic.
-    return error.diagnostic === undefined || result.packageResult?.truncated === true
-      ? error.code : `${error.code} — ${cell(error.diagnostic)}`
+    // A failed package run repeats its byte-limited, interleaved capture in the
+    // diagnostic. It can start halfway through a credential-bearing URL; only
+    // the per-stream event lines are safe evidence. Activation errors after a
+    // successful run, and operations without a package run, keep their details.
+    const failedPackageRun = result.packageResult !== undefined
+      && (result.packageResult.exitCode !== 0 || result.packageResult.timedOut === true)
+    const diagnostic = failedPackageRun ? undefined : error.diagnostic
+    return diagnostic === undefined ? error.code : `${error.code} — ${cell(diagnostic)}`
   }
   if (result.packageResult?.kind !== undefined) return result.packageResult.kind
   if (result.failedAt !== undefined) return result.failedAt
@@ -230,12 +233,12 @@ export function createPluginInstallFlow(options: PluginInstallFlowOptions): Plug
    * two of them: a line is evidence only once it is whole, because the one
    * renderer that strips them (`redactText`) reads URLs, and a fragment that
    * lost its `scheme://user:` head is not one. Lines are assembled per job and
-   * stream. Oversized lines are discarded through their delimiter so a buffer
-   * limit never strips the URL head and turns its suffix into unsafe evidence.
-   * A bounded unfinished line is settled when the run is over.
+   * stream. Over-budget lines are discarded through their next newline, with a
+   * notice in the tail: slicing them could expose a credential fragment. A
+   * bounded unfinished line is settled once the run is over.
    */
-  const partials = new Map<string, string>()
-  const oversized = new Set<string>()
+  // null means this stream is discarding an oversized line until its newline.
+  const partials = new Map<string, { text: string; bytes: number } | null>()
   const pushLogLine = (line: string): void => {
     const text = cell(line)
     if (text.trim() === '') return
@@ -243,9 +246,8 @@ export function createPluginInstallFlow(options: PluginInstallFlowOptions): Plug
     while (logTail.length > INSTALL_LOG_TAIL) logTail.shift()
   }
   const flushLogTail = (): void => {
-    for (const rest of partials.values()) pushLogLine(rest)
+    for (const rest of partials.values()) if (rest !== null) pushLogLine(rest.text)
     partials.clear()
-    oversized.clear()
   }
 
   if (options.events !== undefined) {
@@ -266,24 +268,27 @@ export function createPluginInstallFlow(options: PluginInstallFlowOptions): Plug
     // failed one: keep the last lines and report them with the failure.
     disposers.push(options.events.onLog(requestId, chunk => {
       const key = `${chunk.jobId}\u0000${chunk.stream}`
-      const parts = chunk.text.split(/\r?\n/u)
-      for (let index = 0; index < parts.length; index++) {
-        const complete = index < parts.length - 1
-        if (!oversized.has(key)) {
-          const rest = partials.get(key) ?? ''
-          const part = parts[index] ?? ''
-          if (rest.length + part.length > INSTALL_LOG_LINE_CHARS) {
-            partials.delete(key)
-            oversized.add(key)
-          } else if (complete) {
-            pushLogLine(rest + part)
-            partials.delete(key)
-          } else if (part !== '') {
-            partials.set(key, rest + part)
+      let partial = partials.get(key)
+      if (partial === undefined) partial = { text: '', bytes: 0 }
+      const parts = chunk.text.split('\n')
+      for (const [index, part] of parts.entries()) {
+        if (partial !== null) {
+          const bytes = Buffer.byteLength(part)
+          if (partial.bytes + bytes > INSTALL_LOG_LINE_BYTES) {
+            partial = null
+            pushLogLine(t('plugins-install-log-line-omitted', { bytes: String(INSTALL_LOG_LINE_BYTES) }))
+          } else {
+            partial.text += part
+            partial.bytes += bytes
           }
         }
-        if (complete) oversized.delete(key)
+        if (index < parts.length - 1) {
+          if (partial !== null) pushLogLine(partial.text)
+          partial = { text: '', bytes: 0 }
+        }
       }
+      if (partial !== null && partial.text === '') partials.delete(key)
+      else partials.set(key, partial)
     }))
   }
 
@@ -419,14 +424,6 @@ export function createPluginInstallFlow(options: PluginInstallFlowOptions): Plug
         })])
         return { kind: 'incompatible', packages: incompatible, exemptions: exemptionsNow() }
       }
-      const output = result.packageResult?.output
-      if (output !== undefined) {
-        const lines = output.split(/\r?\n/u)
-        // The capture retains the last bytes, so its first line may begin in a
-        // credential. Only the later lines are known to have their URL heads.
-        if (result.packageResult?.truncated === true) lines.shift()
-        for (const line of lines.slice(-INSTALL_LOG_TAIL)) pushLogLine(line)
-      }
       emit([
         t('plugins-install-failed', { reason: failureReasonOf(result) }),
         ...tailLines(),
@@ -479,6 +476,13 @@ export function createPluginInstallFlow(options: PluginInstallFlowOptions): Plug
     try {
       for (const entry of packages) {
         if (stopped) break
+        // Granting an exemption writes and reloads the profile, just like an
+        // install. A turn can start while the pane, or the previous write, waits.
+        const refused = refuseWhileBusy()
+        if (refused !== undefined) {
+          if (recorded > 0) emit([t('plugins-install-exempted', { count: String(recorded) })])
+          return refused
+        }
         // A refusal is in-band (`application: 'failed'`): a stale runtime
         // version, an unrepairable compatibility file, a missing --accept-risk.
         // Reporting it as granted and retrying would send the person in a loop
@@ -563,6 +567,7 @@ export function createPluginInstallFlow(options: PluginInstallFlowOptions): Plug
     },
     dispose() {
       for (const dispose of disposers.splice(0)) dispose()
+      partials.clear()
     },
   }
 }

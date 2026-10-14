@@ -406,6 +406,8 @@ Installing a plugin from inside the TUI: `/plugin install <package | path | git 
 
 During installation, `esc` attempts cancellation and keeps the pane open until the write settles; if cancellation is too late, it waits for the installation to finish. During exemption registration, it waits for the current write and stops subsequent grants and the retry. Exemptions already written remain.
 
+Failed installs show up to six redacted log lines; lines larger than 16 KiB are omitted with a notice.
+
 ## Documentation
 
 - **Start** — [Getting started](docs/getting-started.en.md) · [VS Code](docs/vscode.en.md)
