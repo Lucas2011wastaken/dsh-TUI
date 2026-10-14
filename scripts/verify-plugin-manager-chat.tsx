@@ -803,6 +803,35 @@ for (const [fullscreen, columns, service] of [
       !rig.lines.some(line => line.includes('probe-secret')), rig.lines.join(' | '))
   }
 
+  // The service retains the last outputBytes bytes, and reuses that capture
+  // as the error diagnostic. Its leading fragment can be inside credentials.
+  for (const [label, prefix, suffix] of [
+    ['userinfo', 'fetch https://reader:', '@registry.example.com/x'],
+    ['query token', 'GET https://registry.example.com/x?token=', ''],
+  ] as const) {
+    const secret = 'probe-cutoff-secret'
+    const full = `${prefix}${'p'.repeat(1000)}${secret}${suffix} ${'x'.repeat(16200)}\ncomplete captured line\n`
+    const bytes = Buffer.from(full)
+    const output = bytes.subarray(bytes.length - 16384).toString('utf8')
+    const rig = makeInstallRig({
+      feed: TRUSTED,
+      install: () => {
+        rig.emitLog({ requestId: rig.flow.requestId, jobId: 'job', argv: ['pnpm'], cwd: '/probe', stream: 'stdout', text: full })
+        return Promise.resolve({
+          ...CHANGE, application: 'failed',
+          error: { code: 'operation-error', diagnostic: output },
+          packageResult: { exitCode: 1, output, truncated: true },
+        })
+      },
+    })
+    await rig.flow.begin()
+    check(`${tag}: a capture starting inside ${label} leaks neither its diagnostic nor its tail`,
+      !rig.lines.some(line => line.includes(secret)), rig.lines.join(' | '))
+    check(`${tag}: truncation preserves complete captured lines and the structured reason (${label})`,
+      rig.lines.some(line => line.includes('complete captured line')) && rig.lines.some(line => line.includes('operation-error')),
+      rig.lines.join(' | '))
+  }
+
   // pnpm writes a stream chunk by chunk, and a credential can straddle two of
   // them. Redaction reads URLs, so a fragment that lost its `scheme://user:`
   // head is not one — the line has to be whole before it is judged. Both split
@@ -858,6 +887,28 @@ for (const [fullscreen, columns, service] of [
       rig.lines.join(' | '))
   }
 
+  // An oversized line cannot be cut into a publishable suffix. Drop it through
+  // its delimiter, keep other streams independent, and resume on the next line.
+  {
+    const rig = makeInstallRig({
+      feed: TRUSTED,
+      install: () => {
+        const identity = { requestId: rig.flow.requestId, jobId: 'job', argv: ['pnpm'], cwd: '/probe' }
+        rig.emitLog({ ...identity, stream: 'stdout', text: `oversized-line https://reader:${'x'.repeat(65536)}` })
+        rig.emitLog({ ...identity, stream: 'stderr', text: 'independent stream line\n' })
+        rig.emitLog({ ...identity, stream: 'stdout', text: 'probe-secret@registry.example.com/x\nnext complete line\n' })
+        rig.emitLog({ ...identity, stream: 'stdout', text: `oversized-final-line ${'x'.repeat(65536)}` })
+        return Promise.resolve({ ...CHANGE, application: 'failed', error: { code: 'operation-error' } })
+      },
+    })
+    await rig.flow.begin()
+    check(`${tag}: oversized lines and their credential suffixes are discarded, including at EOF`,
+      !rig.lines.some(line => /oversized-|probe-secret/u.test(line)), rig.lines.join(' | '))
+    check(`${tag}: a discarded line does not lose the next line or another stream`,
+      rig.lines.some(line => line.includes('next complete line')) && rig.lines.some(line => line.includes('independent stream line')),
+      rig.lines.join(' | '))
+  }
+
   // A service that throws before it hands back a promise: contained like a rejection.
   {
     const rig = makeInstallRig({ feed: TRUSTED, install: () => { throw new Error(SYNC_FAILURE) } })
@@ -872,6 +923,11 @@ for (const [fullscreen, columns, service] of [
     const rig = makeInstallRig({
       feed: TRUSTED,
       install: () => new Promise<ChangeResult>(resolve => { resolveInstall = resolve }),
+      cancel: () => {
+        // The service's cancelled answer follows the owned install's rollback.
+        resolveInstall?.({ ...CHANGE, application: 'cancelled' })
+        return Promise.resolve({ status: 'cancelled' })
+      },
     })
     const pending = rig.flow.begin()
     await tick()
@@ -887,13 +943,67 @@ for (const [fullscreen, columns, service] of [
     check(`${tag}: a second cancel does not ask the service again`,
       rig.cancels.length === 1 && rig.lines.filter(line => line.includes('Install cancelled')).length === 1,
       `${rig.cancels.length} · ${rig.lines.join(' | ')}`)
-    resolveInstall?.({ ...CHANGE, application: 'cancelled' })
     await pending
     check(`${tag}: an install that ends cancelled does not report a second ending`,
       !rig.lines.some(line => line.includes('Install failed')), rig.lines.join(' | '))
   }
 
-  // Two Escs, one rollback. The service's answer is the whole of the wait, so a
+  // Cancellation refusal or failure does not settle an applying installation.
+  for (const status of ['too-late', 'not-running', 'rejected'] as const) {
+    let resolveInstall: ((result: ChangeResult) => void) | undefined
+    const rig = makeInstallRig({
+      feed: TRUSTED,
+      install: () => new Promise<ChangeResult>(resolve => { resolveInstall = resolve }),
+      cancel: () => status === 'rejected'
+        ? Promise.reject(new Error('cancel fixture failed'))
+        : Promise.resolve({ status }),
+    })
+    const pending = rig.flow.begin()
+    await tick()
+    const first = rig.flow.cancel()
+    const second = rig.flow.cancel()
+    let cancelled = false
+    void first.then(() => { cancelled = true })
+    await tick()
+    check(`${tag}: ${status} cancellation keeps waiting for the owned install`,
+      !cancelled && rig.cancels.length === 1, `${cancelled} · ${rig.cancels.length}`)
+    resolveInstall?.(CHANGE)
+    await pending
+    check(`${tag}: ${status} cancellation settles once the install finishes, including repeated calls`,
+      (await first).kind === 'done' && (await second).kind === 'done' &&
+      rig.lines.some(line => line.includes(`Installed ${PLUGIN}`)), rig.lines.join(' | '))
+  }
+
+  // Cancelling while one exemption is being written waits for that write and
+  // starts no more. The completed exemption is reported, never called undone.
+  {
+    let resolveExemption: ((result: ChangeResult) => void) | undefined
+    const packages = ['verify-one', 'verify-two'].map(name => ({ name, version: '1.0.0', runtimeVersion: '0.2.0-rc.2', peers: {} }))
+    const rig = makeInstallRig({
+      feed: TRUSTED,
+      install: () => Promise.resolve({ ...CHANGE, application: 'failed', error: { code: 'incompatible-version', incompatible: packages } }),
+      exempt: () => new Promise<ChangeResult>(resolve => { resolveExemption = resolve }),
+    })
+    const blocked = await rig.flow.begin()
+    const granting = rig.flow.acceptRisk()
+    const cancellation = rig.flow.cancel()
+    let cancelled = false
+    void cancellation.then(() => { cancelled = true })
+    await tick()
+    check(`${tag}: cancelling an exemption waits for the write and does not cancel an expired install`,
+      blocked.kind === 'incompatible' && !cancelled && rig.exemptions.length === 1 && rig.cancels.length === 0,
+      `${cancelled} · ${JSON.stringify(rig.exemptions)} · ${JSON.stringify(rig.cancels)}`)
+    resolveExemption?.(CHANGE)
+    await granting
+    check(`${tag}: cancellation prevents subsequent exemptions and the install retry`,
+      (await cancellation).kind === 'done' && rig.exemptions.length === 1 && rig.installs.length === 1,
+      `${JSON.stringify(rig.exemptions)} · ${rig.installs.length}`)
+    check(`${tag}: cancellation reports the one exemption that did land`,
+      rig.lines.includes(t('plugins-install-exempted', { count: '1' })) && !rig.lines.includes(t('plugins-install-exempted', { count: '2' })),
+      rig.lines.join(' | '))
+  }
+
+  // Two Escs, one rollback. A repeated cancel shares the owned wait, so a
   // second cancel answers only when the first one does: a `done` that lands
   // before the profile is restored is what lets the screen close the pane (and
   // hand the prompt back) over work that is still going on.
@@ -1245,6 +1355,10 @@ for (const [fullscreen, columns, service] of [
       feed: firstParty,
       notice: { kind: 'declared' },
       install: () => new Promise<ChangeResult>(resolve => { resolveInstall = resolve }),
+      cancel: () => {
+        resolveInstall?.({ ...CHANGE, application: 'cancelled' })
+        return Promise.resolve({ status: 'cancelled' })
+      },
     })
     try {
       await rig.run(`/plugin install ${PLUGIN}@${VERSION}`)
@@ -1254,7 +1368,6 @@ for (const [fullscreen, columns, service] of [
         await settled(() => rig.cancels.length === 1 && rig.cancels[0] === 'probe-pane'), JSON.stringify(rig.cancels))
       check(`${tag}: the cancellation reads as one line`,
         await settled(() => rig.screen().includes(t('plugins-install-cancelled'))), rig.screen())
-      resolveInstall?.({ ...CHANGE, application: 'cancelled' })
       check(`${tag}: the pane closes once the service confirms the cancellation`,
         await settled(() => !rig.hasText('Install plugin')), rig.screen())
     } finally {
@@ -1298,6 +1411,37 @@ for (const [fullscreen, columns, service] of [
       check(`${tag}: the pane closes once the rollback is back`,
         await settled(() => !rig.hasText('Install plugin')), rig.screen())
     } finally {
+      await rig.done()
+    }
+  }
+
+  // The applying phase cannot be cancelled. Its immediate too-late response
+  // leaves the pane busy until the original install settles, in both layouts.
+  for (const fullscreen of [false, true]) {
+    let resolveInstall: ((result: ChangeResult) => void) | undefined
+    const rig = await mountInstallChat({
+      feed: firstParty,
+      notice: { kind: 'declared' },
+      install: () => new Promise<ChangeResult>(resolve => { resolveInstall = resolve }),
+      cancel: () => Promise.resolve({ status: 'too-late' }),
+      fullscreen,
+      columns: 50,
+    })
+    try {
+      await rig.run(`/plugin install ${PLUGIN}@${VERSION}`)
+      check(`${tag}: applying is in flight before Esc (fullscreen=${fullscreen})`,
+        await settled(() => rig.installs.length === 1), rig.screen())
+      await rig.escape()
+      // 固定窗:探针 the forbidden pane close must have time to render before
+      // this negative assertion; reading the pre-Esc frame would pass falsely.
+      await sleep(250)
+      check(`${tag}: too-late keeps the narrow pane open (fullscreen=${fullscreen})`,
+        rig.cancels.length === 1 && rig.hasText('Install plugin'), rig.screen())
+      resolveInstall?.(CHANGE)
+      check(`${tag}: the applying result closes the pane (fullscreen=${fullscreen})`,
+        await settled(() => !rig.hasText('Install plugin') && rig.hasText(`Installed ${PLUGIN}`)), rig.screen())
+    } finally {
+      resolveInstall?.(CHANGE)
       await rig.done()
     }
   }

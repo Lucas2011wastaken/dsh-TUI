@@ -48,6 +48,9 @@ import { cell, declarationNoticeFor, parsePluginArgs } from './plugins-info.js'
 /** How many lines of pnpm's output the failure report keeps. */
 export const INSTALL_LOG_TAIL = 6
 
+/** Raw line-buffer budget in UTF-16 code units, not terminal display cells. */
+const INSTALL_LOG_LINE_CHARS = 16_384
+
 /** What a spec names, once the service has read it. */
 export interface PluginArtifact {
   readonly name?: string | undefined
@@ -131,7 +134,7 @@ export interface PluginInstallFlow {
   approve(builds: readonly string[]): Promise<PluginInstallStep>
   /** Answer an `incompatible` step: exempt these exact versions and retry. */
   acceptRisk(): Promise<PluginInstallStep>
-  /** Stop the run and wait until the profile is back; a repeated call waits for the same one. */
+  /** Stop pending work and await profile writes already started; repeated calls share the wait. */
   cancel(): Promise<PluginInstallStep>
   /** Release the event subscriptions. */
   dispose(): void
@@ -141,7 +144,10 @@ export interface PluginInstallFlow {
 function failureReasonOf(result: ChangeResult): string {
   const error = result.error
   if (error !== undefined) {
-    return error.diagnostic === undefined ? error.code : `${error.code} — ${cell(error.diagnostic)}`
+    // A truncated capture can start inside a credential, without the URL head
+    // redaction needs. The service also uses that capture as its diagnostic.
+    return error.diagnostic === undefined || result.packageResult?.truncated === true
+      ? error.code : `${error.code} — ${cell(error.diagnostic)}`
   }
   if (result.packageResult?.kind !== undefined) return result.packageResult.kind
   if (result.failedAt !== undefined) return result.failedAt
@@ -189,8 +195,9 @@ export function createPluginInstallFlow(options: PluginInstallFlowOptions): Plug
   /** The lines of pnpm output kept for a failure report. */
   const logTail: string[] = []
   let stopped = false
-  /** Whether `installBundle` was actually called: before that there is nothing to cancel. */
-  let installStarted = false
+  /** Writes already handed to the service: cancellation must await their settlement. */
+  let activeInstall: Promise<ChangeResult> | undefined
+  let activeExemption: Promise<ChangeResult> | undefined
   /**
    * The one cancellation in flight. A repeated Esc waits for the same rollback
    * rather than reporting the flow over: the service has a single request to
@@ -223,10 +230,12 @@ export function createPluginInstallFlow(options: PluginInstallFlowOptions): Plug
    * two of them: a line is evidence only once it is whole, because the one
    * renderer that strips them (`redactText`) reads URLs, and a fragment that
    * lost its `scheme://user:` head is not one. Lines are assembled per job and
-   * stream, and the fragment an unfinished stream leaves behind is settled once
-   * the run is over — by then it IS the whole line.
+   * stream. Oversized lines are discarded through their delimiter so a buffer
+   * limit never strips the URL head and turns its suffix into unsafe evidence.
+   * A bounded unfinished line is settled when the run is over.
    */
   const partials = new Map<string, string>()
+  const oversized = new Set<string>()
   const pushLogLine = (line: string): void => {
     const text = cell(line)
     if (text.trim() === '') return
@@ -236,6 +245,7 @@ export function createPluginInstallFlow(options: PluginInstallFlowOptions): Plug
   const flushLogTail = (): void => {
     for (const rest of partials.values()) pushLogLine(rest)
     partials.clear()
+    oversized.clear()
   }
 
   if (options.events !== undefined) {
@@ -256,11 +266,24 @@ export function createPluginInstallFlow(options: PluginInstallFlowOptions): Plug
     // failed one: keep the last lines and report them with the failure.
     disposers.push(options.events.onLog(requestId, chunk => {
       const key = `${chunk.jobId}\u0000${chunk.stream}`
-      const parts = `${partials.get(key) ?? ''}${chunk.text}`.split(/\r?\n/u)
-      const rest = parts.pop() ?? ''
-      if (rest === '') partials.delete(key)
-      else partials.set(key, rest)
-      for (const line of parts) pushLogLine(line)
+      const parts = chunk.text.split(/\r?\n/u)
+      for (let index = 0; index < parts.length; index++) {
+        const complete = index < parts.length - 1
+        if (!oversized.has(key)) {
+          const rest = partials.get(key) ?? ''
+          const part = parts[index] ?? ''
+          if (rest.length + part.length > INSTALL_LOG_LINE_CHARS) {
+            partials.delete(key)
+            oversized.add(key)
+          } else if (complete) {
+            pushLogLine(rest + part)
+            partials.delete(key)
+          } else if (part !== '') {
+            partials.set(key, rest + part)
+          }
+        }
+        if (complete) oversized.delete(key)
+      }
     }))
   }
 
@@ -361,12 +384,13 @@ export function createPluginInstallFlow(options: PluginInstallFlowOptions): Plug
         ...options.registry === undefined ? {} : { registry: options.registry },
         ...approvedBuilds === undefined ? {} : { approvedBuilds: [...approvedBuilds] },
       }
-      installStarted = true
-      result = await options.manager.installBundle(installSpec, installOptions)
+      activeInstall = options.manager.installBundle(installSpec, installOptions)
+      result = await activeInstall
     } catch (error) {
       emit([t('plugins-install-failed', { reason: cell(error instanceof Error ? error.message : String(error)) })])
       return { kind: 'done' }
     } finally {
+      activeInstall = undefined
       // The run is over: whatever its last chunk left unfinished is whole now.
       flushLogTail()
     }
@@ -397,9 +421,11 @@ export function createPluginInstallFlow(options: PluginInstallFlowOptions): Plug
       }
       const output = result.packageResult?.output
       if (output !== undefined) {
-        // The service's own capture is whole already: one funnel for the tail, so
-        // the chunked path and this one cannot disagree about what a line is.
-        for (const line of output.split(/\r?\n/u).slice(-INSTALL_LOG_TAIL)) pushLogLine(line)
+        const lines = output.split(/\r?\n/u)
+        // The capture retains the last bytes, so its first line may begin in a
+        // credential. Only the later lines are known to have their URL heads.
+        if (result.packageResult?.truncated === true) lines.shift()
+        for (const line of lines.slice(-INSTALL_LOG_TAIL)) pushLogLine(line)
       }
       emit([
         t('plugins-install-failed', { reason: failureReasonOf(result) }),
@@ -449,23 +475,31 @@ export function createPluginInstallFlow(options: PluginInstallFlowOptions): Plug
   async function riskAndRetry(): Promise<PluginInstallStep> {
     if (incompatible.length === 0 || stopped) return { kind: 'done' }
     const packages = [...incompatible]
+    let recorded = 0
     try {
       for (const entry of packages) {
+        if (stopped) break
         // A refusal is in-band (`application: 'failed'`): a stale runtime
         // version, an unrepairable compatibility file, a missing --accept-risk.
         // Reporting it as granted and retrying would send the person in a loop
         // that cannot succeed.
-        const outcome = await options.manager.setVersionExemption(`${entry.name}@${entry.version}`, entry.runtimeVersion, true, true)
+        activeExemption = options.manager.setVersionExemption(`${entry.name}@${entry.version}`, entry.runtimeVersion, true, true)
+        const outcome = await activeExemption
+        activeExemption = undefined
         if (outcome.application === 'failed') {
           emit([t('plugins-install-failed', { reason: failureReasonOf(outcome) })])
           return { kind: 'done' }
         }
+        recorded += 1
       }
     } catch (error) {
       emit([t('plugins-install-failed', { reason: cell(error instanceof Error ? error.message : String(error)) })])
       return { kind: 'done' }
+    } finally {
+      activeExemption = undefined
     }
-    emit([t('plugins-install-exempted', { count: String(packages.length) })])
+    if (recorded > 0) emit([t('plugins-install-exempted', { count: String(recorded) })])
+    if (stopped) return { kind: 'done' }
     incompatible = []
     return run()
   }
@@ -505,18 +539,24 @@ export function createPluginInstallFlow(options: PluginInstallFlowOptions): Plug
       // again (the first answer is the one that gets reported).
       if (stopped) return { kind: 'done' }
       stopped = true
-      // Nothing was handed to the service yet: there is no run to stop, and
-      // asking it to cancel one would only answer "not-running".
-      if (!installStarted) return { kind: 'done' }
+      const install = activeInstall
+      const pending = install ?? activeExemption
+      // Inspection and waiting for an answer have no profile write to settle.
+      if (pending === undefined) return { kind: 'done' }
       cancelling = (async (): Promise<PluginInstallStep> => {
-        try {
-          const outcome = await options.manager.cancelInstall(requestId)
-          emit([t(outcome.status === 'cancelled'
-            ? 'plugins-install-cancelled'
-            : outcome.status === 'too-late' ? 'plugins-install-cancel-too-late' : 'plugins-install-cancel-not-running')])
-        } catch (error) {
-          emit([t('plugins-install-cancel-failed', { reason: cell(error instanceof Error ? error.message : String(error)) })])
+        if (install !== undefined) {
+          try {
+            const outcome = await options.manager.cancelInstall(requestId)
+            emit([t(outcome.status === 'cancelled'
+              ? 'plugins-install-cancelled'
+              : outcome.status === 'too-late' ? 'plugins-install-cancel-too-late' : 'plugins-install-cancel-not-running')])
+          } catch (error) {
+            emit([t('plugins-install-cancel-failed', { reason: cell(error instanceof Error ? error.message : String(error)) })])
+          }
         }
+        // `too-late`, `not-running` and a rejected cancellation do not settle
+        // the owned write. Its original caller reports any failure.
+        await pending.then(() => undefined, () => undefined)
         return { kind: 'done' }
       })()
       return cancelling

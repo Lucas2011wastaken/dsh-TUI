@@ -121,6 +121,7 @@ function asEntry(value: unknown): FirstPartyEntry | undefined {
   if (typeof name !== 'string' || name.length === 0) return undefined
   if (typeof scope !== 'string' || scope.length === 0) return undefined
   if (typeof version !== 'string' || version.length === 0) return undefined
+  if (!/^@[^/]+\/[^/]+$/u.test(name) || scope !== name.slice(0, name.indexOf('/'))) return undefined
   return { name, scope, version }
 }
 

@@ -109,6 +109,8 @@ const MALFORMED: readonly (readonly [string, string, string])[] = [
   ['未知 feedVersion', JSON.stringify({ feedVersion: 2, entries: [{ name: '@probe/x', scope: '@probe', version: '1.0.0' }] }), 'unknown feedVersion'],
   ['条目缺字段', JSON.stringify({ feedVersion: 1, entries: [{ name: '@probe/x', version: '1.0.0' }] }), 'unrecognized entry'],
   ['条目带未知字段', JSON.stringify({ feedVersion: 1, entries: [{ name: '@probe/x', scope: '@probe', version: '1.0.0', extra: 1 }] }), 'unrecognized entry'],
+  ['scope 与包名不符', JSON.stringify({ feedVersion: 1, entries: [{ name: '@probe/x', scope: '@other', version: '1.0.0' }] }), 'unrecognized entry'],
+  ['非 scoped 包名', JSON.stringify({ feedVersion: 1, entries: [{ name: 'probe', scope: '@probe', version: '1.0.0' }] }), 'unrecognized entry'],
   ['空清单', JSON.stringify({ feedVersion: 1, entries: [] }), 'no entries'],
   ['不是 JSON', '{ nope', 'not JSON'],
 ]
