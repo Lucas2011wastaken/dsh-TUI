@@ -16,9 +16,22 @@ process.env.FORCE_COLOR = '3'
 process.env.DSH_TUI_LANG = 'en'
 
 import type { PluginManagerView } from '../src/dsh-adapter/plugin-manager.js'
-import type { BundleInfo, PluginEntryId, PluginInfo } from '@deepseek-ai/dsh-plugin-manager/types'
+import type { PluginInstallFlow } from '../src/dsh-adapter/plugin-install.js'
+import type { PluginInstallNotice } from '../src/dsh-adapter/plugin-declaration.js'
+import type { FirstPartyEntry, FirstPartyFeedLoad } from '../src/dsh-adapter/plugin-feed.js'
+import type {
+  BundleInfo,
+  ChangeResult,
+  InstallBundleOptions,
+  PluginEntryId,
+  PluginInfo,
+  PluginInstallLogChunk,
+  PluginInstallProgress,
+  PluginInstallRequestId,
+  PluginSpecInspection,
+} from '@deepseek-ai/dsh-plugin-manager/types'
 
-const [{ Writable, PassThrough }, { mkdtempSync }, { tmpdir }, { join }, React, { Terminal: XTerm }, ui, { Chat }, { QuestionStore }, { ApprovalStore }, { createChannel }, { setLang, t }, { pluginReport }, { kernelEntriesOf }, { listBackends }, { findText, settle, settled, sleep, viewportLines }, { Context }] = await Promise.all([
+const [{ Writable, PassThrough }, { mkdtempSync }, { tmpdir }, { join }, React, { Terminal: XTerm }, ui, { Chat }, { QuestionStore }, { ApprovalStore }, { createChannel }, { setLang, t }, { pluginReport }, { kernelEntriesOf }, { listBackends }, { findText, settle, settled, sleep, viewportLines }, { Context }, { createPluginInstallFlow }, { COMPOSITION_PACKAGE }] = await Promise.all([
   import('node:stream'),
   import('node:fs'),
   import('node:os'),
@@ -36,6 +49,8 @@ const [{ Writable, PassThrough }, { mkdtempSync }, { tmpdir }, { join }, React, 
   import('../src/dsh-adapter/backend-registry.js'),
   import('./lib/term-test.mjs'),
   import('@deepseek-ai/cordis'),
+  import('../src/dsh-adapter/plugin-install.js'),
+  import('../src/dsh-adapter/plugin-declaration.js'),
 ])
 
 setLang('en')
@@ -101,6 +116,13 @@ const manager: PluginManagerView = {
           description: 'a fresh plugin', bundle: true, registry: CREDENTIAL_URL,
           host: `https://reader:${CREDENTIAL}@git.example.com/repo.git`,
         }),
+  // The write half (C-4). The read-only forms never reach these; the install
+  // flow below hands in its own service so every write stays assertable.
+  installBundle: () => Promise.resolve({ changed: true, application: 'restart-required', stage: 'install', target: 'verify-fresh-plugin' }),
+  setBundleEnabled: () => Promise.resolve({ changed: true, application: 'restart-required', stage: 'enable', target: 'verify-fresh-plugin' }),
+  cancelInstall: () => Promise.resolve({ status: 'cancelled' }),
+  listVersionExemptions: () => ({ exemptions: {}, warnings: [] }),
+  setVersionExemption: () => Promise.resolve({ changed: true, application: 'restart-required', stage: 'enable', target: 'verify-fresh-plugin' }),
 }
 
 /** The same service, refusing every call: the report must survive it. */
@@ -439,6 +461,308 @@ for (const [fullscreen, columns, service] of [
       .every(host => registries.some(line => line.includes(host))),
     registries.join('\n'))
 }
+// ── The install flow, headless (C-4) ─────────────────────────────────────────
+// What `/plugin install` asks about, what it refuses to guess, and what it does
+// with each shape of result. No terminal: the flow's whole contract is the
+// steps it hands back and the lines it writes, and a fake service can produce
+// every branch (a real one needs pnpm, a profile and a network).
+{
+  const tag = 'install flow'
+  const PLUGIN = '@probe/verify-fresh-plugin'
+  const VERSION = '9.9.9'
+  const feedOf = (...entries: FirstPartyEntry[]): FirstPartyFeedLoad =>
+    ({ kind: 'ok', path: '/probe/tui-profile/feed/first-party.json', feed: { feedVersion: 1, entries } })
+  const TRUSTED = feedOf({ name: PLUGIN, scope: '@probe', version: VERSION })
+  /** The same feed, one version behind: "we publish this, but not this artifact". */
+  const STALE = feedOf({ name: PLUGIN, scope: '@probe', version: '0.0.1' })
+  /** A feed nobody could read (missing file, corrupt bytes): vouches for nothing. */
+  const NO_FEED: FirstPartyFeedLoad = { kind: 'unavailable', reason: 'feed file is missing (probe)' }
+  const ACCEPTED = { status: 'accepted', kind: 'registry', name: PLUGIN, version: VERSION, bundle: true, registry: null } as const
+  const CHANGE = { changed: true, application: 'restart-required', stage: 'install', target: PLUGIN } as const
+
+  interface Rig {
+    readonly flow: PluginInstallFlow
+    readonly lines: string[]
+    readonly installs: InstallBundleOptions[]
+    readonly cancels: PluginInstallRequestId[]
+    /** `[package@version, runtime version, enabled, accept risk]` per exemption granted. */
+    readonly exemptions: string[][]
+    setInstall(next: () => Promise<ChangeResult>): void
+    emitState(progress: PluginInstallProgress): void
+    emitLog(chunk: PluginInstallLogChunk): void
+  }
+
+  function makeInstallRig(options: {
+    readonly feed: FirstPartyFeedLoad
+    readonly inspect?: PluginSpecInspection | (() => Promise<PluginSpecInspection>)
+    readonly notice?: (target: { readonly name?: string; readonly directory?: string }) => PluginInstallNotice
+    readonly binding?: () => number
+    readonly ownVersion?: string
+    readonly bundles?: BundleInfo[]
+    readonly install?: () => Promise<ChangeResult>
+  }): Rig {
+    const lines: string[] = []
+    const installs: InstallBundleOptions[] = []
+    const cancels: PluginInstallRequestId[] = []
+    const exemptions: string[][] = []
+    let install = options.install ?? (() => Promise.resolve(CHANGE))
+    const state: Array<(progress: PluginInstallProgress) => void> = []
+    const log: Array<(chunk: PluginInstallLogChunk) => void> = []
+    const service: PluginManagerView = {
+      ...manager,
+      inspect: () => typeof options.inspect === 'function'
+        ? options.inspect()
+        : Promise.resolve(options.inspect ?? ACCEPTED),
+      installBundle: (_spec, settings) => { installs.push(settings ?? {}); return install() },
+      cancelInstall: requestId => { cancels.push(requestId); return Promise.resolve({ status: 'cancelled' }) },
+      listVersionExemptions: () => ({ exemptions: {}, warnings: [] }),
+      setVersionExemption: (packageVersion, runtimeVersion, enabled, acceptRisk) => {
+        exemptions.push([packageVersion, runtimeVersion, String(enabled), String(acceptRisk)])
+        return Promise.resolve(CHANGE)
+      },
+      listBundles: () => Promise.resolve(options.bundles ?? []),
+    }
+    const flow = createPluginInstallFlow({
+      manager: service,
+      spec: 'verify-fresh-plugin',
+      feed: options.feed,
+      noticeOf: options.notice ?? (() => ({ kind: 'declared' })),
+      binding: options.binding ?? (() => 0),
+      onLines: batch => { lines.push(...batch) },
+      events: {
+        onState: (_requestId, listener) => { state.push(listener); return () => undefined },
+        onLog: (_requestId, listener) => { log.push(listener); return () => undefined },
+      },
+      ownVersion: options.ownVersion,
+      requestId: 'probe-request' as PluginInstallRequestId,
+    })
+    return {
+      flow, lines, installs, cancels, exemptions,
+      setInstall: next => { install = next },
+      emitState: progress => { for (const listener of state) listener(progress) },
+      emitLog: chunk => { for (const listener of log) listener(chunk) },
+    }
+  }
+
+  // The trust route: a feed hit with a readable declaration is the one case that
+  // installs without asking, and it still leaves an audit line.
+  {
+    const rig = makeInstallRig({ feed: TRUSTED })
+    const step = await rig.flow.begin()
+    check(`${tag}: a first-party package with a declaration installs without asking`,
+      step.kind === 'done' && rig.installs.length === 1, `${step.kind} · ${rig.installs.length}`)
+    check(`${tag}: skipping the confirmation still leaves an audit line`,
+      rig.lines.some(line => line.includes('First-party (feed hit)') && line.includes(`${PLUGIN}@${VERSION}`)),
+      rig.lines.join(' | '))
+    check(`${tag}: the install carries the request id the flow owns`,
+      rig.installs[0]?.requestId === rig.flow.requestId, JSON.stringify(rig.installs[0]))
+  }
+
+  // Fail closed: an unlisted name, a listed name at another version, and a feed
+  // nobody could read all ask first — and none of them installs before the answer.
+  for (const [label, feed, reason] of [
+    ['a name the feed does not list', feedOf(), 'not-listed'],
+    ['a listed name at another version', STALE, 'version-mismatch'],
+    ['a feed that cannot be read', NO_FEED, 'no-feed'],
+  ] as const) {
+    const rig = makeInstallRig({ feed, notice: () => ({ kind: 'unjudged' }) })
+    const step = await rig.flow.begin()
+    check(`${tag}: ${label} is asked about before anything installs`,
+      step.kind === 'confirm' && step.trust.kind === 'third-party' && step.trust.reason === reason && rig.installs.length === 0,
+      `${step.kind} · ${step.kind === 'confirm' ? step.trust.kind : ''} · installs ${rig.installs.length}`)
+    check(`${tag}: ${label} keeps the notice the wiring read (gate 1)`,
+      step.kind === 'confirm' && step.notice.kind === 'unjudged', JSON.stringify(step))
+    const after = await rig.flow.confirm()
+    check(`${tag}: ${label} installs once the person confirms`,
+      after.kind === 'done' && rig.installs.length === 1, `${after.kind} · ${rig.installs.length}`)
+  }
+
+  // A first-party package whose declaration is missing still asks: gate 1 has
+  // something to say even when the feed vouches for the artifact.
+  {
+    const rig = makeInstallRig({ feed: TRUSTED, notice: () => ({ kind: 'undeclared' }) })
+    const step = await rig.flow.begin()
+    check(`${tag}: a first-party package with no declaration still gets gate 1's notice`,
+      step.kind === 'confirm' && step.trust.kind === 'first-party' && step.notice.kind === 'undeclared' && rig.installs.length === 0,
+      JSON.stringify(step))
+  }
+
+  // A spec the service refuses never reaches an install.
+  {
+    const rig = makeInstallRig({
+      feed: TRUSTED,
+      inspect: { status: 'refused', problem: 'not-found', reason: '404 Not Found' },
+    })
+    const step = await rig.flow.begin()
+    check(`${tag}: a refused spec reports itself and installs nothing`,
+      step.kind === 'done' && rig.installs.length === 0 &&
+      rig.lines.some(line => line.includes('Not installable: not-found — 404 Not Found')), rig.lines.join(' | '))
+  }
+
+  // Build scripts: the service blocks the install, the approval retries with them.
+  {
+    const rig = makeInstallRig({
+      feed: TRUSTED,
+      install: () => Promise.resolve({ ...CHANGE, application: 'failed', pendingBuilds: ['esbuild', 'sharp'] }),
+    })
+    const step = await rig.flow.begin()
+    check(`${tag}: blocked build scripts come back as a decision`,
+      step.kind === 'build-blocked' && step.builds.join(',') === 'esbuild,sharp', JSON.stringify(step))
+    rig.setInstall(() => Promise.resolve(CHANGE))
+    const after = await rig.flow.approve(['esbuild', 'sharp'])
+    check(`${tag}: approving the scripts writes them into the retry`,
+      after.kind === 'done' && rig.installs.length === 2 &&
+      JSON.stringify(rig.installs[1]?.approvedBuilds) === '["esbuild","sharp"]',
+      JSON.stringify(rig.installs))
+    check(`${tag}: the approval is reported before the retry`,
+      rig.lines.some(line => line.includes('Approved 2 build scripts')), rig.lines.join(' | '))
+  }
+
+  // An incompatible version: the service's own list, and the exemption escape.
+  {
+    const peer = { name: 'verify-other', version: '1.0.0', runtimeVersion: '0.2.0-rc.2', peers: { '@deepseek-ai/dsh': '^9' } }
+    const rig = makeInstallRig({
+      feed: TRUSTED,
+      install: () => Promise.resolve({
+        ...CHANGE, application: 'failed', error: { code: 'incompatible-version', incompatible: [peer] },
+      }),
+    })
+    const step = await rig.flow.begin()
+    check(`${tag}: an incompatible version comes back with the packages and the exemptions`,
+      step.kind === 'incompatible' && step.packages.length === 1 && step.exemptions.exemptions !== undefined,
+      JSON.stringify(step))
+    rig.setInstall(() => Promise.resolve(CHANGE))
+    const after = await rig.flow.acceptRisk()
+    check(`${tag}: accepting the risk registers the exact exemption and retries`,
+      after.kind === 'done' && rig.exemptions.length === 1 &&
+      rig.exemptions[0]?.join('|') === 'verify-other@1.0.0|0.2.0-rc.2|true|true' && rig.installs.length === 2,
+      `${JSON.stringify(rig.exemptions)} · installs ${rig.installs.length}`)
+  }
+
+  // A failure keeps the evidence, loses the credentials, and says how to retry.
+  {
+    const rig = makeInstallRig({
+      feed: TRUSTED,
+      install: () => Promise.resolve({
+        ...CHANGE,
+        application: 'failed',
+        error: { code: 'operation-error', diagnostic: 'pnpm exited 1' },
+        packageResult: {
+          exitCode: 1, truncated: false, logPath: '/probe/pnpm.log',
+          output: 'first line\nlast line\nfrom https://reader:probe-secret@registry.example.com/x',
+        },
+      }),
+    })
+    const step = await rig.flow.begin()
+    check(`${tag}: a failed install reports the reason, the tail and the manual command`,
+      step.kind === 'done' && rig.lines.some(line => line.includes('operation-error')) &&
+      rig.lines.some(line => line.includes('last line')) &&
+      rig.lines.some(line => line.includes('dsh plugin --profile dsh-tui add verify-fresh-plugin')) &&
+      rig.lines.some(line => line.includes('dsh-tui safe --rescue')), rig.lines.join(' | '))
+    check(`${tag}: the tail never carries the credentials of the registry it quotes`,
+      !rig.lines.some(line => line.includes('probe-secret')), rig.lines.join(' | '))
+  }
+
+  // A service that throws before it hands back a promise: contained like a rejection.
+  {
+    const rig = makeInstallRig({ feed: TRUSTED, install: () => { throw new Error(SYNC_FAILURE) } })
+    const step = await rig.flow.begin()
+    check(`${tag}: a service that throws synchronously is contained in one line`,
+      step.kind === 'done' && rig.lines.some(line => line.includes(SYNC_FAILURE)), rig.lines.join(' | '))
+  }
+
+  // Cancellation: the service's own three-state answer, and no second ending.
+  {
+    let resolveInstall: ((result: ChangeResult) => void) | undefined
+    const rig = makeInstallRig({
+      feed: TRUSTED,
+      install: () => new Promise<ChangeResult>(resolve => { resolveInstall = resolve }),
+    })
+    const pending = rig.flow.begin()
+    await tick()
+    const step = await rig.flow.cancel()
+    check(`${tag}: cancelling asks the service for that very request`,
+      step.kind === 'done' && rig.cancels.length === 1 && rig.cancels[0] === rig.flow.requestId,
+      JSON.stringify(rig.cancels))
+    check(`${tag}: the cancellation is reported once`,
+      rig.lines.some(line => line.includes('Install cancelled')), rig.lines.join(' | '))
+    resolveInstall?.({ ...CHANGE, application: 'cancelled' })
+    await pending
+    check(`${tag}: an install that ends cancelled does not report a second ending`,
+      !rig.lines.some(line => line.includes('Install failed')), rig.lines.join(' | '))
+  }
+
+  // The fence: a session that moved on gets no further lines, and the run goes on.
+  {
+    let binding = 7
+    let resolveInstall: ((result: ChangeResult) => void) | undefined
+    const rig = makeInstallRig({
+      feed: TRUSTED,
+      binding: () => binding,
+      install: () => new Promise<ChangeResult>(resolve => { resolveInstall = resolve }),
+    })
+    const pending = rig.flow.begin()
+    await tick()
+    binding = 8
+    rig.emitState({ requestId: rig.flow.requestId, phase: 'installing', attempt: { registry: 'https://registry.example.com/', index: 1, total: 2 } })
+    rig.emitLog({ requestId: rig.flow.requestId, jobId: 'job', argv: ['pnpm'], cwd: '/probe', stream: 'stdout', text: 'late output' })
+    resolveInstall?.({ ...CHANGE })
+    await pending
+    check(`${tag}: a report for a session that moved on stays out of the transcript`,
+      !rig.lines.some(line => line.includes('Asking registry') || line.includes('late output') || line.includes('Installed')),
+      rig.lines.join(' | '))
+    check(`${tag}: the lines written while it was still bound are kept`,
+      rig.lines.some(line => line.includes('First-party (feed hit)')), rig.lines.join(' | '))
+  }
+
+  // Progress: the service's own phases, in the transcript, before the result.
+  {
+    let resolveInstall: ((result: ChangeResult) => void) | undefined
+    const rig = makeInstallRig({
+      feed: TRUSTED,
+      install: () => new Promise<ChangeResult>(resolve => { resolveInstall = resolve }),
+    })
+    const pending = rig.flow.begin()
+    await tick()
+    rig.emitState({ requestId: rig.flow.requestId, phase: 'installing', attempt: { registry: 'https://registry.example.com/', index: 1, total: 2 } })
+    rig.emitState({ requestId: rig.flow.requestId, phase: 'applying' })
+    resolveInstall?.({ ...CHANGE })
+    await pending
+    check(`${tag}: the registry attempts and the applying phase are reported`,
+      rig.lines.some(line => line.includes('Asking registry 1/2') && line.includes('registry.example.com')) &&
+      rig.lines.some(line => line.includes('Applying')), rig.lines.join(' | '))
+    check(`${tag}: the result follows the progress it reports`,
+      rig.lines.findIndex(line => line.includes('Installed')) >
+      rig.lines.findIndex(line => line.includes('Asking registry')), rig.lines.join(' | '))
+    check(`${tag}: a restart-required install says so, and asks for the restart`,
+      rig.lines.some(line => line.includes('restart required')) &&
+      rig.lines.some(line => line.includes('Restart this app')), rig.lines.join(' | '))
+  }
+
+  // #1340: an install that moves this application's own version is reported,
+  // never repaired.
+  {
+    const rig = makeInstallRig({
+      feed: TRUSTED,
+      ownVersion: '0.15.0',
+      bundles: [{
+        name: COMPOSITION_PACKAGE, version: '0.14.0', enabled: true, installed: true,
+        optional: false, removable: true, rows: [], overrides: [],
+      }],
+    })
+    await rig.flow.begin()
+    check(`${tag}: an install that moved this app's own version is reported with the fix`,
+      rig.lines.some(line => line.includes('0.14.0') && line.includes('0.15.0') &&
+        line.includes(`dsh plugin --profile dsh-tui add ${COMPOSITION_PACKAGE}@0.15.0`)), rig.lines.join(' | '))
+  }
+  {
+    const rig = makeInstallRig({ feed: TRUSTED, ownVersion: '0.15.0' })
+    await rig.flow.begin()
+    check(`${tag}: an install that left this app's own version alone is silent about it`,
+      !rig.lines.some(line => line.includes('realign it')), rig.lines.join(' | '))
+  }
+}
+
 // ── Both async reports are fenced to the session that asked for them ───────
 // `pluginsInfo` (async since C-3) and `listSubagents` answer through `pushLocal`,
 // which writes whichever session is bound NOW: a report that lands after a

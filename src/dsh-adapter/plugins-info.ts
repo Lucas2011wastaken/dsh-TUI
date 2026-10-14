@@ -44,7 +44,7 @@ import type { NegotiationDecision } from '../adapter/standard/types.js'
 import { cleanScalarText } from './sanitize.js'
 import type { GrantStore } from '../adapter/standard/grants.js'
 import type { HostDescriptorBuild } from '../adapter/standard/descriptor.js'
-import { isCompositionOwned, type PluginDeclaration } from './plugin-declaration.js'
+import { isCompositionOwned, pluginDeclarationIn, type PluginDeclaration, type PluginInstallNotice } from './plugin-declaration.js'
 import { extraBundles, localizedPluginText, type PluginManagerView } from './plugin-manager.js'
 import { PLUGIN_STORAGE_DIR } from './plugin-storage.js'
 import { EFFECT_LEDGER_FILE } from './effect-ledger.js'
@@ -130,9 +130,15 @@ function redactText(value: string): string {
   })
 }
 
-/** One report cell: credentials redacted first, then sanitized, then capped —
- *  truncation comes last, or a cut URL keeps the head of its own secret. */
-const cell = (value: unknown): string => cleanScalarText(redactText(String(value ?? '')), LINE_CELLS)
+/**
+ * One report cell: credentials redacted first, then sanitized, then capped —
+ * truncation comes last, or a cut URL keeps the head of its own secret.
+ *
+ * Exported for the install flow (C-4): pnpm's output and the service's error
+ * text are foreign input reaching the same transcript, and one renderer means
+ * the two surfaces cannot disagree about what a cell is.
+ */
+export const cell = (value: unknown): string => cleanScalarText(redactText(String(value ?? '')), LINE_CELLS)
 
 /** One URL field as a report cell: credentials stripped, then capped. */
 const urlCell = (value: string): string => cell(redactUrl(value))
@@ -421,10 +427,8 @@ type DeclarationVerdict =
   | { readonly kind: 'invalid'; readonly error: string }
   | { readonly kind: 'decided'; readonly decision: NegotiationDecision }
 
-/** Evaluate a package's declaration exactly as `check <path>` does. */
-function declarationVerdict(deps: PluginsInfoDeps, packageName: string): DeclarationVerdict {
-  const declaration = deps.declaration?.(packageName)
-  if (declaration === undefined) return { kind: 'undeclared' }
+/** Evaluate one declaration exactly as `check <path>` does. */
+function verdictOfDeclaration(deps: PluginsInfoDeps, declaration: PluginDeclaration): DeclarationVerdict {
   const data = loadSpecData()
   if (data === undefined) return { kind: 'invalid', error: t('plugins-check-spec-unavailable') }
   let manifest
@@ -448,6 +452,48 @@ function declarationVerdict(deps: PluginsInfoDeps, packageName: string): Declara
     granted: deps.grants.allows({ componentId: manifest.id }, request.name, request.scope),
   }))
   return { kind: 'decided', decision: negotiate(index, manifest, host.descriptor, granted) }
+}
+
+/** Evaluate a package's declaration exactly as `check <path>` does. */
+function declarationVerdict(deps: PluginsInfoDeps, packageName: string): DeclarationVerdict {
+  const declaration = deps.declaration?.(packageName)
+  if (declaration === undefined) return { kind: 'undeclared' }
+  return verdictOfDeclaration(deps, declaration)
+}
+
+/**
+ * Gate 1's pre-install statement about an install target (C-4), as data.
+ *
+ * This is the same evaluation the list tags and `check <path>` run — one
+ * pipeline, so the two surfaces cannot disagree — asked at a different moment.
+ * The difference that matters is what "no declaration" means here:
+ *
+ * - a package that is not in this profile yet ships no file this machine can
+ *   read, so an empty answer is `unjudged`, not `undeclared`: the install flow
+ *   cannot honestly claim a package it has never seen fails gate 1, and the
+ *   standing tag in `/plugin` is what reports the real answer afterwards;
+ * - a directory the caller resolved (a `install <path>` spec) either carries a
+ *   package-root `dsh-plugin.json` or does not, and that is decidable now.
+ */
+export function declarationNoticeFor(
+  deps: PluginsInfoDeps,
+  target: { readonly name?: string | undefined; readonly directory?: string | undefined },
+): PluginInstallNotice {
+  const declaration = target.directory !== undefined
+    ? pluginDeclarationIn(target.directory)
+    : target.name === undefined ? undefined : deps.declaration?.(target.name)
+  if (declaration === undefined) {
+    return target.directory === undefined ? { kind: 'unjudged' } : { kind: 'undeclared' }
+  }
+  const verdict = verdictOfDeclaration(deps, declaration)
+  switch (verdict.kind) {
+    case 'undeclared':
+      return { kind: 'undeclared' }
+    case 'invalid':
+      return { kind: 'invalid', error: verdict.error }
+    case 'decided':
+      return { kind: 'declared' }
+  }
 }
 
 /**

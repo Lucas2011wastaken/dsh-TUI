@@ -46,13 +46,54 @@ export function pluginDeclarationOf(ctx: Context, packageName: string): PluginDe
   }
 }
 
+/** This application's own package: the composition, never a plugin of it. */
+export const COMPOSITION_PACKAGE = '@deepseek-harness-tui/dsh-tui'
+
 /**
- * Whether a listed bundle belongs to the composition itself rather than to the
+ * What a listed bundle belongs to the composition itself rather than to the
  * plugins a person installs. Gate 1 is a statement about *plugins* ("this
  * package declares no TUI contribution"), so applying it to the host's own
  * rows — or to this application — would report the composition as a missing
  * declaration. Everything else is judged by its declaration alone.
  */
 export function isCompositionOwned(packageName: string): boolean {
-  return packageName.startsWith('@deepseek-ai/') || packageName === '@deepseek-harness-tui/dsh-tui'
+  return packageName.startsWith('@deepseek-ai/') || packageName === COMPOSITION_PACKAGE
 }
+
+/**
+ * The package-root declaration of a directory that is not installed yet: a
+ * `/plugin install <path>` spec names its directory, so the pre-install notice
+ * can read the same file the admission path will read after the install.
+ * Tolerant like {@link pluginDeclarationOf}: a missing or unreadable file
+ * answers "no declaration", never a throw. A spec that names a tarball, a git
+ * URL or a registry package has no directory here — the caller reports the
+ * notice as unjudged rather than guessing.
+ */
+export function pluginDeclarationIn(directory: string): PluginDeclaration | undefined {
+  const file = join(directory, 'dsh-plugin.json')
+  if (!existsSync(file)) return undefined
+  try {
+    return { path: file, source: readFileSync(file, 'utf8') }
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Gate 1's pre-install statement about a package, as data (Stage C-4).
+ *
+ * `unjudged` is the honest answer for anything whose declaration is not on
+ * this machine yet — a registry spec has no package-root file to read before
+ * the install runs. The notice therefore never claims "this package supports
+ * dsh-tui"; it says either what it read, or that the answer arrives with the
+ * install (the standing tag in `/plugin` is what really reports it, C-3).
+ */
+export type PluginInstallNotice =
+  /** A declaration was read and this profile accepts it. */
+  | { readonly kind: 'declared' }
+  /** Read, and the package ships no package-root `dsh-plugin.json`. */
+  | { readonly kind: 'undeclared' }
+  /** Read, and this profile cannot accept it (parse/validate/negotiate). */
+  | { readonly kind: 'invalid'; readonly error: string }
+  /** Nothing on disk to read yet: the answer arrives with the install. */
+  | { readonly kind: 'unjudged' }
