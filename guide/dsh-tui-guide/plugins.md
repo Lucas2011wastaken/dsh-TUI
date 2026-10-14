@@ -56,9 +56,10 @@
 - **装包本身已在终端里可用（C-4）**：`/plugin install <spec>` 走宿主
   `ctx.pluginManager`，装前给提醒、按来源决定要不要确认信任（嫡系判据是随包发布的
   `tui-profile/feed/first-party.json`，离线可判；验不过一律 fail closed 退回确认），
-  进度可 `esc` 取消（服务回滚 profile），构建脚本被拦时在面板里批准，版本不兼容可登记
-  **精确版本豁免**。**已知缺口**：provenance 只留了「一票否决」的缝、没有任何在线校验
-  （宿主服务不暴露这类 API）；服务缺席时给 CLI 命令与原因，**不在 TUI 内代跑 `dsh plugin`**。
+  `esc` 收起面板——安装进行中按 `esc` 则取消（服务回滚 profile）——构建脚本被拦时在面板里批准，
+  版本不兼容可登记 **精确版本豁免**。**已知缺口**：provenance 只留了「一票否决」的缝、
+  没有任何在线校验（宿主服务不暴露这类 API）；服务缺席时由转录给出 CLI 命令与原因
+  （不弹面板：没有可驱动的流程），**不在 TUI 内代跑 `dsh plugin`**。
 - `grants` 收窄为 `HostGrantFacade`，迁移细节见该 PR。
 - `TuiSceneProps.channel`（`ChannelUi`）上的 `minimal` / `setMinimal()` 已更名为
   `minimalUi` / `setMinimalUi()`；旧名保留为 **deprecated 别名**，读写同一个
