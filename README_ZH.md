@@ -345,7 +345,7 @@ pnpm smoke
 
 接缝分级与 API 说明：[插件开发](docs/plugins.md)。生态组织只维护收录，不背书社区插件。
 
-在 TUI 里装插件：`/plugin install <包名 | 路径 | git URL>`。动作全走宿主 profile 插件管理器——装前提醒、信任确认、可取消的进度、构建脚本批准与精确版本豁免；命中**随包发布的嫡系清单**（`tui-profile/feed/first-party.json`，一个版本钉死一份、离线可判）的包跳过信任确认，清单担保不了的一律先让人确认。同样的动作在命令行仍可用（`dsh plugin --profile dsh-tui …`）。
+在 TUI 里装插件：`/plugin install <包名 | 路径 | git URL>`。动作全走宿主 profile 插件管理器——装前提醒、信任确认、可取消的进度、构建脚本批准与精确版本豁免；命中**随包发布的嫡系清单**（`tui-profile/feed/first-party.json`，一个版本钉死一份、离线可判）的包跳过信任确认，且只有写明该精确版本的 spec 才算命中：裸包名、标签或范围会在安装时被重新解析，因此一律先让人确认。确认的是哪一件就装哪一件——安装会钉住 inspect 读到的精确 `name@version`；回合仍在运行时拒绝安装（先结束它，或用 `/new`）。同样的动作在命令行仍可用（`dsh plugin --profile dsh-tui …`）。
 
 ## 文档索引
 

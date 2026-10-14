@@ -32,7 +32,7 @@ import type {
   PluginSpecInspection,
 } from '@deepseek-ai/dsh-plugin-manager/types'
 
-const [{ Writable, PassThrough }, { mkdtempSync, mkdirSync, readFileSync, writeFileSync }, { tmpdir }, { join }, React, { Terminal: XTerm }, ui, { Chat }, { QuestionStore }, { ApprovalStore }, { createChannel }, { setLang, t }, { pluginReport, parsePluginArgs }, { kernelEntriesOf }, { listBackends }, { findText, settle, settled, sleep, viewportLines }, { Context }, { createPluginInstallFlow, createPluginInstallEntry }, { COMPOSITION_PACKAGE }, { pathToFileURL }] = await Promise.all([
+const [{ Writable, PassThrough }, { mkdtempSync, mkdirSync, readFileSync, writeFileSync }, { tmpdir }, { join }, React, { Terminal: XTerm }, ui, { Chat }, { QuestionStore }, { ApprovalStore }, { createChannel }, { setLang, t }, { pluginReport, parsePluginArgs }, { kernelEntriesOf }, { listBackends }, { findText, settle, settled, sleep, viewportLines }, { Context }, { createPluginInstallFlow, createPluginInstallEntry }, { COMPOSITION_PACKAGE }, { pathToFileURL }, { createDshSession }, { PluginInstallPane }] = await Promise.all([
   import('node:stream'),
   import('node:fs'),
   import('node:os'),
@@ -53,6 +53,8 @@ const [{ Writable, PassThrough }, { mkdtempSync, mkdirSync, readFileSync, writeF
   import('../src/dsh-adapter/plugin-install.js'),
   import('../src/dsh-adapter/plugin-declaration.js'),
   import('node:url'),
+  import('../src/dsh-adapter/backend/session.js'),
+  import('../src/components/PluginInstallPane.js'),
 ])
 
 setLang('en')
@@ -497,6 +499,10 @@ for (const [fullscreen, columns, service] of [
     readonly flow: PluginInstallFlow
     readonly lines: string[]
     readonly installs: InstallBundleOptions[]
+    /** The spec each `installBundle` call was handed, in order. */
+    readonly installSpecs: string[]
+    /** How many times the inspection ran: a refused install makes none. */
+    readonly inspections: number
     readonly cancels: PluginInstallRequestId[]
     /** `[package@version, runtime version, enabled, accept risk]` per exemption granted. */
     readonly exemptions: string[][]
@@ -510,6 +516,10 @@ for (const [fullscreen, columns, service] of [
     readonly inspect?: PluginSpecInspection | (() => Promise<PluginSpecInspection>)
     readonly notice?: (target: { readonly name?: string; readonly directory?: string }) => PluginInstallNotice
     readonly binding?: () => number
+    /** What the person typed; the pinned form of this feed's entry by default. */
+    readonly spec?: string
+    /** Whether a turn is running; idle unless a case says otherwise. */
+    readonly busy?: () => boolean
     readonly ownVersion?: string
     readonly bundles?: BundleInfo[]
     readonly install?: () => Promise<ChangeResult>
@@ -519,6 +529,8 @@ for (const [fullscreen, columns, service] of [
   }): Rig {
     const lines: string[] = []
     const installs: InstallBundleOptions[] = []
+    const installSpecs: string[] = []
+    let inspections = 0
     const cancels: PluginInstallRequestId[] = []
     const exemptions: string[][] = []
     let install = options.install ?? (() => Promise.resolve(CHANGE))
@@ -526,10 +538,11 @@ for (const [fullscreen, columns, service] of [
     const log: Array<(chunk: PluginInstallLogChunk) => void> = []
     const service: PluginManagerView = {
       ...manager,
-      inspect: () => typeof options.inspect === 'function'
-        ? options.inspect()
-        : Promise.resolve(options.inspect ?? ACCEPTED),
-      installBundle: (_spec, settings) => { installs.push(settings ?? {}); return install() },
+      inspect: () => {
+        inspections += 1
+        return typeof options.inspect === 'function' ? options.inspect() : Promise.resolve(options.inspect ?? ACCEPTED)
+      },
+      installBundle: (spec, settings) => { installSpecs.push(spec); installs.push(settings ?? {}); return install() },
       cancelInstall: requestId => { cancels.push(requestId); return Promise.resolve({ status: 'cancelled' }) },
       listVersionExemptions: options.readExemptions ?? (() => ({ exemptions: {}, warnings: [] })),
       setVersionExemption: (packageVersion, runtimeVersion, enabled, acceptRisk) => {
@@ -540,10 +553,13 @@ for (const [fullscreen, columns, service] of [
     }
     const flow = createPluginInstallFlow({
       manager: service,
-      spec: 'verify-fresh-plugin',
+      // A precise `name@version` by default: only a spec that names the version
+      // can be the artifact the feed pinned (see the bare-name case below).
+      spec: options.spec ?? `${PLUGIN}@${VERSION}`,
       feed: options.feed,
       noticeOf: options.notice ?? (() => ({ kind: 'declared' })),
       binding: options.binding ?? (() => 0),
+      busy: options.busy ?? (() => false),
       onLines: batch => { lines.push(...batch) },
       events: {
         onState: (_requestId, listener) => { state.push(listener); return () => undefined },
@@ -553,7 +569,8 @@ for (const [fullscreen, columns, service] of [
       requestId: 'probe-request' as PluginInstallRequestId,
     })
     return {
-      flow, lines, installs, cancels, exemptions,
+      flow, lines, installs, installSpecs, cancels, exemptions,
+      get inspections(): number { return inspections },
       setInstall: next => { install = next },
       emitState: progress => { for (const listener of state) listener(progress) },
       emitLog: chunk => { for (const listener of log) listener(chunk) },
@@ -572,6 +589,51 @@ for (const [fullscreen, columns, service] of [
       rig.lines.join(' | '))
     check(`${tag}: the install carries the request id the flow owns`,
       rig.installs[0]?.requestId === rig.flow.requestId, JSON.stringify(rig.installs[0]))
+    check(`${tag}: the service is asked for the exact version that was inspected`,
+      rig.installSpecs[0] === `${PLUGIN}@${VERSION}`, JSON.stringify(rig.installSpecs))
+  }
+
+  // What the person confirmed is what the service is asked to install. A bare
+  // name, a range or a tag is resolved again by the install (and again by a
+  // retry), so it is not the pinned artifact — and the install is pinned to the
+  // version the inspection read, whatever the spec spelled.
+  for (const [label, spec] of [
+    ['a bare name', PLUGIN],
+    ['a range', `${PLUGIN}@^1`],
+    ['a tag', `${PLUGIN}@latest`],
+  ] as const) {
+    const rig = makeInstallRig({ feed: TRUSTED, spec, notice: () => ({ kind: 'declared' }) })
+    const step = await rig.flow.begin()
+    check(`${tag}: ${label} is not treated as the artifact the feed pinned`,
+      step.kind === 'confirm' && step.trust.kind === 'third-party' && step.trust.reason === 'version-mismatch',
+      JSON.stringify(step))
+    const after = await rig.flow.confirm()
+    check(`${tag}: ${label} installs the exact version the inspection read`,
+      after.kind === 'done' && JSON.stringify(rig.installSpecs) === JSON.stringify([`${PLUGIN}@${VERSION}`]),
+      JSON.stringify(rig.installSpecs))
+  }
+
+  // A turn is running: the install refuses before it asks anything. The check is
+  // repeated before the write, because a turn can start while the pane waits.
+  {
+    const rig = makeInstallRig({ feed: TRUSTED, busy: () => true })
+    const step = await rig.flow.begin()
+    check(`${tag}: a running turn refuses the install before any service call`,
+      step.kind === 'done' && rig.inspections === 0 && rig.installSpecs.length === 0,
+      `${step.kind} · inspections ${rig.inspections} · installs ${rig.installSpecs.length}`)
+    check(`${tag}: the refusal says what to do about it`,
+      rig.lines.includes(t('plugins-install-busy')), rig.lines.join(' | '))
+  }
+  {
+    let busy = false
+    const rig = makeInstallRig({ feed: TRUSTED, spec: PLUGIN, busy: () => busy })
+    const step = await rig.flow.begin()
+    check(`${tag}: an idle turn still asks first`, step.kind === 'confirm', JSON.stringify(step))
+    busy = true
+    const after = await rig.flow.confirm()
+    check(`${tag}: a turn that started while the pane was open stops the write`,
+      after.kind === 'done' && rig.installSpecs.length === 0 && rig.lines.includes(t('plugins-install-busy')),
+      `${after.kind} · ${rig.installSpecs.length} · ${rig.lines.join(' | ')}`)
   }
 
   // Fail closed: an unlisted name, a listed name at another version, and a feed
@@ -727,7 +789,9 @@ for (const [fullscreen, columns, service] of [
     check(`${tag}: a failed install reports the reason, the tail and the manual command`,
       step.kind === 'done' && rig.lines.some(line => line.includes('operation-error')) &&
       rig.lines.some(line => line.includes('last line')) &&
-      rig.lines.some(line => line.includes('dsh plugin --profile dsh-tui add verify-fresh-plugin')) &&
+      // The manual command names the spec that was actually attempted (the pinned
+      // version), so running it reproduces the install that failed.
+      rig.lines.some(line => line.includes(`dsh plugin --profile dsh-tui add ${PLUGIN}@${VERSION}`)) &&
       rig.lines.some(line => line.includes('dsh-tui safe --rescue')), rig.lines.join(' | '))
     check(`${tag}: the tail never carries the credentials of the registry it quotes`,
       !rig.lines.some(line => line.includes('probe-secret')), rig.lines.join(' | '))
@@ -887,16 +951,25 @@ for (const [fullscreen, columns, service] of [
     readonly feed: FirstPartyFeedLoad
     readonly notice: PluginInstallNotice
     readonly install: () => Promise<ChangeResult>
+    /** What the service answers for one spec; the fixture's registry answer by default. */
+    readonly inspect?: (spec: string) => Promise<PluginSpecInspection>
+    /** The request id of the Nth install in this Chat; one fixed id by default. */
+    readonly requestId?: (index: number) => PluginInstallRequestId
     /** 窄终端与全屏是终端可见改动的必测面（AGENTS.md）：默认 inline 100 列。 */
     readonly columns?: number
     readonly fullscreen?: boolean
   }) {
     const installs: InstallBundleOptions[] = []
+    const installSpecs: string[] = []
     const cancels: PluginInstallRequestId[] = []
+    let inspections = 0
     const service: PluginManagerView = {
       ...manager,
-      inspect: () => Promise.resolve(accepted),
-      installBundle: (_spec, settings) => { installs.push(settings ?? {}); return options.install() },
+      inspect: (spec: string) => {
+        inspections += 1
+        return options.inspect?.(spec) ?? Promise.resolve(accepted)
+      },
+      installBundle: (spec, settings) => { installSpecs.push(spec); installs.push(settings ?? {}); return options.install() },
       cancelInstall: requestId => { cancels.push(requestId); return Promise.resolve({ status: 'cancelled' }) },
       listBundles: () => Promise.resolve(bundles),
     }
@@ -906,9 +979,21 @@ for (const [fullscreen, columns, service] of [
       get: (name: string) => name === 'pluginManager' ? service : undefined,
       logger: { warn: () => undefined, info: () => undefined, debug: () => undefined },
     } as never
-    const channel = createChannel(ctx, makeAgent('plugin-install', 's-plugin-install') as never, {
+    // The session's event feed is the channel's only way in, so the listeners are
+    // kept: a case that needs `channel.working` starts a turn through them.
+    const listeners = new Set<(events: readonly unknown[], meta: { replay: boolean }) => void>()
+    const session = {
+      ...createDshSession(ctx, { agent: makeAgent('plugin-install', 's-plugin-install') as never }),
+      subscribe: (listener: (events: readonly unknown[], meta: { replay: boolean }) => void) => {
+        listeners.add(listener)
+        return () => listeners.delete(listener)
+      },
+      submit: () => Promise.resolve({ accepted: true }),
+    }
+    const channel = createChannel(ctx, session as never, {
       model: 'fake-model', provider: '', cwd: process.cwd(), activity: false,
     })
+    let flows = 0
     const instance = await render(React.createElement(Chat, {
       channel: channel as never, questionStore: new QuestionStore(), approvalStore: new ApprovalStore(),
       onExit: () => undefined, fullscreen: false, trajectorySeen: true,
@@ -916,22 +1001,38 @@ for (const [fullscreen, columns, service] of [
       onPluginInstall: (args, sink) => {
         const parsed = parsePluginArgs(args)
         if (parsed.kind !== 'install' || parsed.spec === '') return undefined
+        const index = flows
+        flows += 1
         return createPluginInstallFlow({
           manager: service,
           spec: parsed.spec,
           feed: options.feed,
           noticeOf: () => options.notice,
           binding: sink.binding,
+          busy: sink.busy,
           onLines: sink.onLines,
-          requestId: 'probe-pane' as PluginInstallRequestId,
+          requestId: options.requestId?.(index) ?? ('probe-pane' as PluginInstallRequestId),
         })
       },
     }))
     // 固定窗:pacing the key handlers attach after the first frame.
     await sleep(300)
+    /** One turn event onto the bound session; `channel.working` follows it. */
+    const turnEvent = (started: boolean): void => {
+      const event = started
+        ? { type: 'turn.start', turn: 1, origin: 'user', time: 1 }
+        : { type: 'turn.end', turn: 1, reason: { kind: 'completed' }, time: 2 }
+      for (const listener of listeners) listener([event], { replay: false })
+    }
     return {
-      installs, cancels, screen, hasText,
+      installs, installSpecs, cancels, screen, hasText,
       run,
+      get inspections(): number { return inspections },
+      working: (): boolean => channel.working === true,
+      /** Local rows titled after one report: one per push onto the bound session. */
+      reportRows: (title: string): number => channel.rows.filter(row => row.text === title).length,
+      turnStart: (): void => turnEvent(true),
+      turnEnd: (): void => turnEvent(false),
       async enter(): Promise<void> {
         await sleep(100) // 固定窗:墙钟 等共享的 80ms 模态 Enter 冷却到期（提交命令那次 Enter 会刷新它）
         stdin.write('\r')
@@ -954,7 +1055,7 @@ for (const [fullscreen, columns, service] of [
       install: () => Promise.resolve(CHANGE),
     })
     try {
-      await rig.run('/plugin install verify-fresh-plugin')
+      await rig.run(`/plugin install ${PLUGIN}@${VERSION}`)
       check(`${tag}: a first-party package with an unreadable declaration asks before installing`,
         await settled(() => rig.hasText('Install plugin') && rig.hasText(`To install: ${PLUGIN}@${VERSION}`)), rig.screen())
       check(`${tag}: the pane carries gate 1's notice`,
@@ -1018,7 +1119,7 @@ for (const [fullscreen, columns, service] of [
       install: () => new Promise<ChangeResult>(resolve => { resolveInstall = resolve }),
     })
     try {
-      await rig.run('/plugin install verify-fresh-plugin')
+      await rig.run(`/plugin install ${PLUGIN}@${VERSION}`)
       check(`${tag}: the install is in flight before Esc`, await settled(() => rig.installs.length === 1), rig.screen())
       await rig.escape()
       check(`${tag}: Esc mid-install asks the service to stop that request`,
@@ -1048,7 +1149,7 @@ for (const [fullscreen, columns, service] of [
       },
     })
     try {
-      await rig.run('/plugin install verify-fresh-plugin')
+      await rig.run(`/plugin install ${PLUGIN}@${VERSION}`)
       check(`${tag}: blocked build scripts are asked about in the pane`,
         await settled(() => rig.hasText('These build scripts need approval') && rig.hasText('esbuild')), rig.screen())
       check(`${tag}: the pane names the scripts it will allow`,
@@ -1063,14 +1164,153 @@ for (const [fullscreen, columns, service] of [
       await rig.done()
     }
   }
+
+  // A bare name that hits the feed is still asked about: the feed vouches for one
+  // exact artifact, and a bare name means "latest" at install time.
+  {
+    const rig = await mountInstallChat({
+      feed: firstParty,
+      notice: { kind: 'unjudged' },
+      install: () => Promise.resolve(CHANGE),
+    })
+    try {
+      await rig.run(`/plugin install ${PLUGIN}`)
+      check(`${tag}: a bare name that hits the feed is confirmed, not trusted`,
+        await settled(() => rig.hasText('Install plugin') && rig.hasText('full trust, no sandbox')), rig.screen())
+      check(`${tag}: a bare name installs nothing before the answer`,
+        rig.installs.length === 0, String(rig.installs.length))
+      await rig.enter()
+      check(`${tag}: confirming a bare name installs the exact version that was inspected`,
+        await settled(() => rig.installSpecs[0] === `${PLUGIN}@${VERSION}`), JSON.stringify(rig.installSpecs))
+    } finally {
+      await rig.done()
+    }
+  }
+
+  // Two flows, one pane: the first flow's late answer must not answer for the
+  // second. It used to close B's pane and take B's cancellation with it.
+  {
+    let resolveA: ((inspection: PluginSpecInspection) => void) | undefined
+    let resolveB: ((result: ChangeResult) => void) | undefined
+    const acceptedB = {
+      status: 'accepted', kind: 'registry', name: 'probe-b', version: '1.0.0',
+      bundle: true, registry: null,
+    } as const
+    const rig = await mountInstallChat({
+      feed: noFeed,
+      notice: { kind: 'unjudged' },
+      inspect: spec => spec === 'probe-a'
+        ? new Promise<PluginSpecInspection>(resolve => { resolveA = resolve })
+        : Promise.resolve(acceptedB),
+      install: () => new Promise<ChangeResult>(resolve => { resolveB = resolve }),
+      requestId: index => (index === 0 ? 'probe-race-a' : 'probe-race-b') as PluginInstallRequestId,
+    })
+    try {
+      await rig.run('/plugin install probe-a')
+      check(`${tag} race: the first inspection is still in flight`,
+        await settled(() => rig.hasText('Installing')), rig.screen())
+      await rig.escape()
+      check(`${tag} race: Esc closes the flow that asked`,
+        await settled(() => !rig.hasText('Install plugin')), rig.screen())
+      await rig.run('/plugin install probe-b')
+      check(`${tag} race: the second flow asks its own question`,
+        await settled(() => rig.hasText('To install: probe-b@1.0.0')), rig.screen())
+      await rig.enter()
+      check(`${tag} race: the second install is in flight`, await settled(() => rig.installs.length === 1), rig.screen())
+      resolveA?.({ status: 'accepted', kind: 'registry', name: 'probe-a', version: '1.0.0', bundle: true, registry: null })
+      // The late answer settles the first flow only: the second keeps its pane
+      // (where its cancellation lives) and never touches A's request id.
+      check(`${tag} race: a late answer from the first flow leaves the second alone`,
+        await settled(() => rig.hasText('Installing') && rig.cancels.length === 0), rig.screen())
+      await rig.escape()
+      check(`${tag} race: the second flow is still cancellable, by its own id`,
+        await settled(() => JSON.stringify(rig.cancels) === JSON.stringify(['probe-race-b'])), JSON.stringify(rig.cancels))
+      resolveB?.({ ...CHANGE, application: 'cancelled' })
+      check(`${tag} race: the cancelled install closes the pane`,
+        await settled(() => !rig.hasText('Install plugin')), rig.screen())
+    } finally {
+      await rig.done()
+    }
+  }
+
+  // A running turn: the install reaches no service at all, and the same command
+  // works once the turn is over.
+  {
+    const rig = await mountInstallChat({
+      feed: firstParty,
+      notice: { kind: 'unjudged' },
+      install: () => Promise.resolve(CHANGE),
+    })
+    try {
+      rig.turnStart()
+      check(`${tag} working: the turn is running`, await settled(() => rig.working()), String(rig.working()))
+      await rig.run(`/plugin install ${PLUGIN}@${VERSION}`)
+      check(`${tag} working: the refusal lands before any service call`,
+        await settled(() => rig.hasText(t('plugins-install-busy')))
+        && rig.inspections === 0 && rig.installs.length === 0,
+        `${rig.inspections} · ${rig.installs.length} · ${rig.screen()}`)
+      check(`${tag} working: no pane is left behind`, !rig.hasText('Install plugin'), rig.screen())
+      // The gate belongs to the install subcommand alone: the read-only report
+      // still answers while the turn runs.
+      await rig.run('/plugin list')
+      check(`${tag} working: the diagnostics command still reports`,
+        await settled(() => rig.reportRows('/plugin') === 1), `${rig.reportRows('/plugin')} · ${rig.screen()}`)
+      rig.turnEnd()
+      check(`${tag} working: the turn is over`, await settled(() => !rig.working()), String(rig.working()))
+      await sleep(150) // 固定窗:墙钟 等共享的 80ms 模态 Enter 冷却到期（上一条命令的 Enter 刷新了它）
+      await rig.run(`/plugin install ${PLUGIN}@${VERSION}`)
+      check(`${tag} working: the same command asks once the turn is over`,
+        await settled(() => rig.hasText(`To install: ${PLUGIN}@${VERSION}`)), rig.screen())
+      await rig.enter()
+      check(`${tag} working: and installs`, await settled(() => rig.installs.length === 1), rig.screen())
+    } finally {
+      await rig.done()
+    }
+  }
+
+  // The target is foreign text: a package manifest is a local file, so its name
+  // can carry newlines, ANSI and thousands of cells. The confirmation must keep
+  // its own title, target and key hint inside the viewport, and must not let the
+  // name become rows of its own.
+  {
+    const hostile = `probe\nINJECTED-ROW\n\u001b[31mRED\u001b[0m-${'宽'.repeat(1200)}`
+    for (const columns of [100, 50] as const) {
+      const rig = makeHarness(columns, false)
+      const app = await rig.render(React.createElement(PluginInstallPane, {
+        busy: false,
+        step: {
+          kind: 'confirm',
+          artifact: { name: hostile, version: '1.0.0', kind: 'path', bundle: null, registry: null },
+          trust: { kind: 'third-party', reason: 'unverifiable-source' },
+          notice: { kind: 'unjudged' },
+        } as never,
+      }))
+      try {
+        await sleep(300)
+        const lines = rig.screen().split('\n')
+        check(`${tag} ${columns} columns: the confirmation keeps its title`,
+          rig.hasText('Install plugin'), rig.screen())
+        check(`${tag} ${columns} columns: the target and the key hint stay readable`,
+          rig.hasText('To install: probe') && rig.hasText('esc cancel'), rig.screen())
+        check(`${tag} ${columns} columns: a newline in the name cannot add a row of its own`,
+          !lines.some(line => line.trim() === 'INJECTED-ROW'), rig.screen())
+        check(`${tag} ${columns} columns: the target stays a bounded band of rows`,
+          lines.filter(line => line.includes('宽')).length <= 3,
+          `${lines.filter(line => line.includes('宽')).length} · ${rig.screen()}`)
+      } finally {
+        app.unmount()
+        rig.term.dispose()
+      }
+    }
+  }
 }
 
 // ── The production wiring, driven for real (C-4) ─────────────────────────────
 // Everything above hands the flow a fixture feed and a fixture notice. This
 // section drives `createPluginInstallEntry` — the function the entry itself
 // passes to Chat — so the parts that only exist in the wiring are covered too:
-// the packaged feed as shipped, gate 1's declaration read, and the
-// profile-relative resolution of a `install <path>` spec.
+// the packaged feed as shipped, gate 1's declaration read from the target
+// directory, and the path forms the service accepts for a `install <path>` spec.
 {
   const tag = 'install entry'
   const manifest = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { name: string; version: string }
@@ -1082,11 +1322,22 @@ for (const [fullscreen, columns, service] of [
   function entryCtx(options: { readonly manager?: boolean; readonly baseUrl?: string } = {}) {
     const service: PluginManagerView = {
       ...manager,
-      // A path spec is read from the directory itself (kind `path`), a named one
-      // from the registry — the distinction the trust verdict turns on.
-      inspect: (spec: string) => Promise.resolve(spec.startsWith('.')
-        ? { status: 'accepted', kind: 'path', name: manifest.name, version: manifest.version, bundle: true, registry: null } as const
-        : acceptedRegistry),
+      // The real service's own contract, which a fixture has to obey or it proves
+      // nothing: an absolute path — bare, or behind pnpm's `file:` / `link:` — is
+      // read from the directory, a relative one is refused as `invalid-spec`
+      // before anything reads it, and anything else is a registry name.
+      inspect: (spec: string) => {
+        const path = spec.replace(/^(?:file|link):/u, '')
+        if (path.startsWith('/')) {
+          return Promise.resolve(path.endsWith('.tgz')
+            ? { status: 'accepted', kind: 'tarball', bundle: null, registry: null } as const
+            : { status: 'accepted', kind: 'path', name: manifest.name, version: manifest.version, bundle: true, registry: null } as const)
+        }
+        if (path.startsWith('.')) {
+          return Promise.resolve({ status: 'refused', problem: 'invalid-spec', reason: 'a local path must be absolute' } as const)
+        }
+        return Promise.resolve(acceptedRegistry)
+      },
       installBundle: () => Promise.resolve({ changed: true, application: 'restart-required', stage: 'install', target: manifest.name }),
       listBundles: () => Promise.resolve([]),
     }
@@ -1097,7 +1348,7 @@ for (const [fullscreen, columns, service] of [
       ...options.baseUrl === undefined ? {} : { baseUrl: options.baseUrl },
     } as never
   }
-  const sink = { binding: () => 0, onLines: () => undefined }
+  const sink = { binding: () => 0, busy: () => false, onLines: () => undefined }
 
   // No service: the entry hands back no flow, and the screen falls back to the
   // report (which is where the CLI route is printed).
@@ -1109,10 +1360,11 @@ for (const [fullscreen, columns, service] of [
   check(`${tag}: a bare install offers no flow (the report answers its usage)`,
     createPluginInstallEntry(entryCtx(), { profileName: 'probe', ownVersion: manifest.version })('install', sink) === undefined)
 
-  // The real wiring, the real packaged feed, and this very package's own pin:
-  // the feed vouches for it (first-party) while the declaration is unreadable
-  // before the install, so gate 1 still asks.
-  const own = createPluginInstallEntry(entryCtx(), { profileName: 'probe', ownVersion: manifest.version })('install test', sink)
+  // The real wiring, the real packaged feed, and this very package's own pin: the
+  // feed vouches for the exact version the spec names (first-party) while the
+  // declaration is unreadable before the install, so gate 1 still asks.
+  const own = createPluginInstallEntry(entryCtx(), { profileName: 'probe', ownVersion: manifest.version })(
+    `install ${manifest.name}@${manifest.version}`, sink)
   check(`${tag}: the entry builds a flow for an install form`, own !== undefined)
   if (own !== undefined) {
     const step = await own.begin()
@@ -1121,35 +1373,94 @@ for (const [fullscreen, columns, service] of [
       JSON.stringify(step))
     check(`${tag}: gate 1 still asks when the declaration cannot be read yet`,
       step.kind === 'confirm' && step.notice.kind === 'unjudged', JSON.stringify(step))
+    own.dispose()
   }
 
-  // A `install <path>` spec, resolved against a `file:` base URL — the shape
-  // `ctx.baseUrl` really has — with a directory that ships no declaration, and
-  // one that is not a directory at all.
+  // The same name without a version is a different question: "latest" is not the
+  // artifact the feed pinned (`tui-profile/feed/README.md`), even though the
+  // registry resolves it to the pinned version right now.
+  {
+    const bare = createPluginInstallEntry(entryCtx(), { profileName: 'probe', ownVersion: manifest.version })(
+      `install ${manifest.name}`, sink)
+    const step = await bare?.begin()
+    check(`${tag}: a bare name never earns the feed's trust, whatever it resolves to`,
+      step?.kind === 'confirm' && step.trust.kind === 'third-party' && step.trust.reason === 'version-mismatch',
+      JSON.stringify(step))
+    bare?.dispose()
+  }
+
+  // Gate 1 reads the target's own directory and nothing else: an old same-name
+  // package the profile can resolve must not answer for a new target, and the
+  // target's own declaration must be read when it has one.
+  {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-install-shadow-'))
+    const profile = join(root, 'profile')
+    const target = join(root, 'new-target')
+    const old = join(root, 'node_modules', '@probe', 'same-name')
+    for (const dir of [profile, target, old]) mkdirSync(dir, { recursive: true })
+    writeFileSync(join(profile, 'package.json'), JSON.stringify({ name: 'probe-profile', dependencies: {} }))
+    writeFileSync(join(target, 'package.json'), JSON.stringify({ name: '@probe/same-name', version: '2.0.0', dsh: { bundle: {} } }))
+    writeFileSync(join(old, 'package.json'), JSON.stringify({ name: '@probe/same-name', version: '1.0.0', main: 'index.js' }))
+    writeFileSync(join(old, 'dsh-plugin.json'), '{bad-old-declaration')
+    const factory = createPluginInstallEntry(
+      entryCtx({ baseUrl: pathToFileURL(`${profile}/`).href }),
+      { profileName: 'probe', ownVersion: manifest.version },
+    )
+    const shadowed = factory(`install ${target}`, sink)
+    const step = await shadowed?.begin()
+    check(`${tag}: an old same-name package does not answer for a new target`,
+      step?.kind === 'confirm' && step.notice.kind === 'undeclared', JSON.stringify(step))
+    shadowed?.dispose()
+    // …and the evidence is the target's own file when there is one.
+    writeFileSync(join(target, 'dsh-plugin.json'), '{not-a-declaration-either')
+    const declared = factory(`install ${target}`, sink)
+    const declaredStep = await declared?.begin()
+    check(`${tag}: the target's own declaration is the one that is judged`,
+      declaredStep?.kind === 'confirm' && declaredStep.notice.kind === 'invalid', JSON.stringify(declaredStep))
+    declared?.dispose()
+  }
+
+  // A `install <path>` spec in each form the service accepts: a bare absolute
+  // path, and pnpm's `file:` / `link:` spellings of the same directory. They must
+  // be judged alike — a prefix used to lose the declaration evidence behind it —
+  // and a relative one is refused before any of this, so it never reaches here.
   {
     const root = mkdtempSync(join(tmpdir(), 'dsh-install-entry-'))
-    const profile = join(root, 'profile')
-    const declared = join(profile, 'probe-plugin-dir')
-    mkdirSync(declared, { recursive: true })
-    writeFileSync(join(profile, 'probe.plugin.tgz'), '')
-    const base = pathToFileURL(`${profile}/`).href
-    const factory = createPluginInstallEntry(entryCtx({ baseUrl: base }), { profileName: 'probe', ownVersion: manifest.version })
+    const directory = join(root, 'probe-plugin-dir')
+    mkdirSync(directory, { recursive: true })
+    writeFileSync(join(root, 'probe.plugin.tgz'), '')
+    const factory = createPluginInstallEntry(entryCtx(), { profileName: 'probe', ownVersion: manifest.version })
 
-    const directory = factory('install ./probe-plugin-dir', sink)
-    const step = await directory?.begin()
-    check(`${tag}: a relative directory spec is resolved against the profile and judged undeclared`,
-      step?.kind === 'confirm' && step.notice.kind === 'undeclared', JSON.stringify(step))
-    check(`${tag}: a path spec is never first-party, whatever its manifest claims`,
-      step?.kind === 'confirm' && step.trust.kind === 'third-party' && step.trust.reason === 'unverifiable-source',
-      JSON.stringify(step))
+    for (const [label, spec] of [
+      ['a bare absolute path', directory],
+      ['a file: path', `file:${directory}`],
+      ['a link: path', `link:${directory}`],
+    ] as const) {
+      const flow = factory(`install ${spec}`, sink)
+      const step = await flow?.begin()
+      check(`${tag}: ${label} is judged undeclared`,
+        step?.kind === 'confirm' && step.notice.kind === 'undeclared', JSON.stringify(step))
+      check(`${tag}: ${label} is never first-party, whatever its manifest claims`,
+        step?.kind === 'confirm' && step.trust.kind === 'third-party' && step.trust.reason === 'unverifiable-source',
+        JSON.stringify(step))
+      flow?.dispose()
+    }
 
-    const tarball = factory('install ./probe.plugin.tgz', sink)
+    const tarball = factory(`install ${join(root, 'probe.plugin.tgz')}`, sink)
     const fileStep = await tarball?.begin()
     check(`${tag}: a spec that is not a directory stays unjudged, never "declares nothing"`,
       fileStep?.kind === 'confirm' && fileStep.notice.kind === 'unjudged', JSON.stringify(fileStep))
-    const missing = factory('install ./no-such-directory', sink)
+    tarball?.dispose()
+    const missing = factory(`install ${join(root, 'no-such-directory')}`, sink)
     check(`${tag}: a spec for a directory that is not there is unjudged too`,
       (await missing?.begin())?.kind === 'confirm', 'expected a decision, not a silent install')
+    missing?.dispose()
+    for (const relative of ['./probe-plugin-dir', 'file:./probe-plugin-dir', 'link:./probe-plugin-dir']) {
+      const flow = factory(`install ${relative}`, sink)
+      check(`${tag}: ${relative} is refused as the service refuses it, not resolved here`,
+        (await flow?.begin())?.kind === 'done', 'a relative path is `invalid-spec` upstream')
+      flow?.dispose()
+    }
   }
 }
 

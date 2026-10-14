@@ -37,11 +37,10 @@ import type {
   Registry,
 } from '@deepseek-ai/dsh-plugin-manager/types'
 import { statSync } from 'node:fs'
-import { isAbsolute, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { isAbsolute } from 'node:path'
 import { t } from '../i18n.js'
 import { installedTuiVersion, resolveDshProfileName } from '../update.js'
-import { COMPOSITION_PACKAGE, pluginDeclarationOf, type PluginInstallNotice } from './plugin-declaration.js'
+import { COMPOSITION_PACKAGE, type PluginInstallNotice } from './plugin-declaration.js'
 import { type FirstPartyFeedLoad, firstPartyVerdict, type FirstPartyVerdict, loadFirstPartyFeed } from './plugin-feed.js'
 import { newInstallRequestId, pluginInstallEvents, pluginManagerOf, type PluginInstallEvents, type PluginManagerView } from './plugin-manager.js'
 import { cell, declarationNoticeFor, parsePluginArgs } from './plugins-info.js'
@@ -85,6 +84,8 @@ export type PluginInstallStep =
 export interface PluginInstallSink {
   /** The session the flow's output belongs to; see `binding` below. */
   readonly binding: () => number
+  /** Whether a turn is running; see `busy` on the flow's options. */
+  readonly busy: () => boolean
   /** Where the flow's transcript lines go (already sanitized and capped). */
   readonly onLines: (lines: readonly string[]) => void
 }
@@ -100,6 +101,12 @@ export interface PluginInstallFlowOptions {
   readonly specDirectory?: ((spec: string) => string | undefined) | undefined
   /** The binding generation that asked; every asynchronous write is fenced to it. */
   readonly binding: () => number
+  /**
+   * Whether a turn is running. Installing changes the profile, and the change
+   * applies or reloads plugins under whatever is running, so the flow refuses
+   * while this is true — before the inspection, and again before the write.
+   */
+  readonly busy: () => boolean
   /** Where the flow's transcript lines go (already sanitized and capped). */
   readonly onLines: (lines: readonly string[]) => void
   /** The manager's install events, when the caller has a context to subscribe on. */
@@ -141,6 +148,35 @@ function failureReasonOf(result: ChangeResult): string {
   return 'unknown'
 }
 
+/**
+ * The version the person wrote in the spec, exactly as written — `undefined`
+ * when the spec names no version. A bare name is resolved to "latest" at
+ * install time, which is not the artifact the feed pinned: that is a
+ * `version-mismatch`, not a hit (`tui-profile/feed/README.md`).
+ *
+ * The name comes from the inspection rather than from a spec grammar of our
+ * own, so every form this cannot read — an alias, a git or tarball spec —
+ * yields `undefined`, a verdict that can only fall to third-party. Fail closed.
+ */
+function writtenVersionOf(spec: string, name: string | undefined): string | undefined {
+  if (name === undefined || !spec.startsWith(`${name}@`)) return undefined
+  return spec.slice(name.length + 1)
+}
+
+/**
+ * The spec the service is actually asked to install: the exact `name@version`
+ * the inspection read, for a registry package. A bare name, a tag or a range
+ * would be resolved again by the install — and again by a retry — so the
+ * artifact that lands could be one nobody inspected, judged or confirmed. A
+ * path, git or tarball spec has no registry version to pin and is installed as
+ * typed.
+ */
+function installSpecOf(read: PluginArtifact, spec: string): string {
+  return read.kind === 'registry' && read.name !== undefined && read.version !== undefined
+    ? `${read.name}@${read.version}`
+    : spec
+}
+
 export function createPluginInstallFlow(options: PluginInstallFlowOptions): PluginInstallFlow {
   const requestId = options.requestId ?? newInstallRequestId()
   const bindingAtStart = options.binding()
@@ -164,6 +200,16 @@ export function createPluginInstallFlow(options: PluginInstallFlowOptions): Plug
     options.onLines(lines)
   }
   const tailLines = (): string[] => logTail.map(line => `  ${line}`)
+  /**
+   * A turn is running: nothing is asked and no service is called. Checked at
+   * both ends of the wait — before the inspection, and again before the write —
+   * because a turn can start while the pane is waiting for an answer.
+   */
+  function refuseWhileBusy(): PluginInstallStep | undefined {
+    if (!options.busy()) return undefined
+    emit([t('plugins-install-busy')])
+    return { kind: 'done' }
+  }
 
   if (options.events !== undefined) {
     disposers.push(options.events.onState(requestId, progress => {
@@ -231,7 +277,15 @@ export function createPluginInstallFlow(options: PluginInstallFlowOptions): Plug
     // The kind is part of the question: only a registry artifact can be the
     // published one the feed lists (a directory or git checkout is read from
     // the manifest it ships, so it would vouch for itself).
-    const trust = firstPartyVerdict(options.feed, { name: read.name, version: read.version, kind: read.kind })
+    // The feed vouches for one exact artifact, so what it judges is the version
+    // the person WROTE — not the one the registry resolved: a bare name means
+    // "latest" at install time, which is not the pinned artifact, and a range or
+    // a tag is not one either (`tui-profile/feed/README.md`).
+    const trust = firstPartyVerdict(options.feed, {
+      name: read.name,
+      version: writtenVersionOf(options.spec, read.name),
+      kind: read.kind,
+    })
     if (trust.kind === 'first-party') {
       emit([t('plugins-install-trusted', { name: cell(trust.entry.name), version: cell(trust.entry.version) })])
     }
@@ -268,6 +322,11 @@ export function createPluginInstallFlow(options: PluginInstallFlowOptions): Plug
     // A person who closed the pane while the spec was still being read has not
     // asked for this install: the inspection's answer must not start one.
     if (read === undefined || stopped) return { kind: 'done' }
+    // The write is the point of no return, and a turn may have started while the
+    // pane waited for an answer: re-check here, not only at `begin()`.
+    const refused = refuseWhileBusy()
+    if (refused !== undefined) return refused
+    const installSpec = installSpecOf(read, options.spec)
     let result: ChangeResult
     try {
       const installOptions: InstallBundleOptions = {
@@ -276,7 +335,7 @@ export function createPluginInstallFlow(options: PluginInstallFlowOptions): Plug
         ...approvedBuilds === undefined ? {} : { approvedBuilds: [...approvedBuilds] },
       }
       installStarted = true
-      result = await options.manager.installBundle(options.spec, installOptions)
+      result = await options.manager.installBundle(installSpec, installOptions)
     } catch (error) {
       emit([t('plugins-install-failed', { reason: cell(error instanceof Error ? error.message : String(error)) })])
       return { kind: 'done' }
@@ -309,7 +368,7 @@ export function createPluginInstallFlow(options: PluginInstallFlowOptions): Plug
       emit([
         t('plugins-install-failed', { reason: failureReasonOf(result) }),
         ...tailLines(),
-        t('plugins-install-manual', { profile: cell(options.profileName ?? 'dsh-tui'), spec: cell(options.spec) }),
+        t('plugins-install-manual', { profile: cell(options.profileName ?? 'dsh-tui'), spec: cell(installSpec) }),
         t('plugins-install-rescue'),
       ])
       return { kind: 'done' }
@@ -378,6 +437,8 @@ export function createPluginInstallFlow(options: PluginInstallFlowOptions): Plug
   return {
     requestId,
     async begin() {
+      const refused = refuseWhileBusy()
+      if (refused !== undefined) return refused
       const read = await inspect()
       if (read === undefined) return { kind: 'done' }
       // The read can take a moment (a registry round trip): a cancel that lands
@@ -453,12 +514,14 @@ export function createPluginInstallEntry(
       // Read once per install: the feed is a packaged file, and a request that is
       // never made should never touch the disk.
       feed: loadFirstPartyFeed(),
-      noticeOf: target => declarationNoticeFor({
-        ...target.name === undefined ? {} : { declaration: pluginDeclarationOf(ctx, target.name) },
-        ...target.directory === undefined ? {} : { directory: target.directory },
-      }),
-      specDirectory: spec => specDirectoryOf(ctx, spec),
+      // Gate 1 reads the directory THIS spec names. A declaration resolved by
+      // name would be the profile's already-installed copy of that name — a
+      // different artifact from the one being installed (another version, or a
+      // local directory), so it is no evidence about this target.
+      noticeOf: target => declarationNoticeFor(target.directory === undefined ? {} : { directory: target.directory }),
+      specDirectory: spec => specDirectoryOf(spec),
       binding: sink.binding,
+      busy: sink.busy,
       onLines: sink.onLines,
       ownVersion: options.ownVersion ?? installedTuiVersion(),
       profileName: options.profileName ?? resolveDshProfileName(),
@@ -471,25 +534,17 @@ export function createPluginInstallEntry(
  * directory has a package-root declaration to read — a tarball or git spec must
  * stay unjudged rather than be reported as "declares nothing".
  *
- * A relative spec is relative to the profile: `ctx.baseUrl` is the loader's base
- * for these rows, and it arrives as a `file:` URL (or a plain path on some
- * hosts) — the same pair `requireBase()` in `admission-loader.ts` accepts.
- * `path.resolve` on a URL would invent a path that never exists.
+ * A path spec must be absolute: that is the service's own contract ("a local
+ * path must be absolute"), and a relative one is refused as `invalid-spec`
+ * before any of this matters, so there is no profile-relative resolution to do
+ * here. The one thing left to normalize is pnpm's `file:` / `link:` prefix,
+ * which names the same directory and must not lose its declaration evidence.
  */
-function specDirectoryOf(ctx: Context, spec: string): string | undefined {
-  if (!spec.startsWith('.') && !isAbsolute(spec)) return undefined
-  const baseUrl = (ctx as { baseUrl?: string }).baseUrl
-  let base = process.cwd()
-  if (baseUrl !== undefined && baseUrl !== '') {
-    try {
-      base = baseUrl.startsWith('file:') ? fileURLToPath(baseUrl) : baseUrl
-    } catch {
-      base = process.cwd()
-    }
-  }
-  const directory = resolve(base, spec)
+function specDirectoryOf(spec: string): string | undefined {
+  const path = spec.replace(/^(?:file|link):/u, '')
+  if (!isAbsolute(path)) return undefined
   try {
-    return statSync(directory).isDirectory() ? directory : undefined
+    return statSync(path).isDirectory() ? path : undefined
   } catch {
     return undefined
   }

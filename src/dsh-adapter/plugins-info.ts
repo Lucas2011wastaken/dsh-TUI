@@ -490,27 +490,32 @@ function declarationVerdict(deps: PluginsInfoDeps, packageName: string): Declara
  *
  * It runs the same parse/project/validate pipeline `check <path>` and the list
  * tags run — one implementation, so the surfaces cannot disagree — over the
- * declaration the caller could find. It deliberately stops before `negotiate`:
- * admission's five states are a statement about a *running* host, and the
- * standing tag in `/plugin` is where they are reported after the install. What
- * a person needs before installing is narrower and decidable: is there a
- * declaration at all, and does this profile's catalog accept it.
+ * declaration of the target directory the caller resolved. It deliberately stops
+ * before `negotiate`: admission's five states are a statement about a *running*
+ * host, and the standing tag in `/plugin` is where they are reported after the
+ * install. What a person needs before installing is narrower and decidable: is
+ * there a declaration at all, and does this profile's catalog accept it.
+ *
+ * The evidence is the target directory and nothing else. A declaration resolved
+ * by package name would be the profile's already-installed copy of that name —
+ * a different artifact from the one being installed (another version, or a local
+ * directory), which is how a stale same-name package used to answer for a new
+ * target.
  *
  * The two empty answers are not the same thing, and that is the point:
  *
  * - a directory the caller resolved (`install <path>` specs) either carries a
  *   package-root `dsh-plugin.json` or does not, so no file is `undeclared`;
- * - a package that is not in this profile yet ships no file this machine can
- *   read, so an empty answer there is `unjudged` — the flow cannot honestly
- *   claim a package it has never seen fails gate 1.
+ * - a target with no directory to read (a registry name, a tarball, a git spec)
+ *   ships no file this machine can read, so an empty answer there is `unjudged`
+ *   — the flow cannot honestly claim a package it has never seen fails gate 1.
  */
 export function declarationNoticeFor(
-  target: { readonly declaration?: PluginDeclaration | undefined; readonly directory?: string | undefined },
+  target: { readonly directory?: string | undefined },
 ): PluginInstallNotice {
-  const declaration = target.declaration ?? (target.directory === undefined ? undefined : pluginDeclarationIn(target.directory))
-  if (declaration === undefined) {
-    return target.directory !== undefined && target.declaration === undefined ? { kind: 'undeclared' } : { kind: 'unjudged' }
-  }
+  if (target.directory === undefined) return { kind: 'unjudged' }
+  const declaration = pluginDeclarationIn(target.directory)
+  if (declaration === undefined) return { kind: 'undeclared' }
   const admitted = admitDeclaration(declaration)
   return 'error' in admitted ? { kind: 'invalid', error: admitted.error } : { kind: 'declared' }
 }

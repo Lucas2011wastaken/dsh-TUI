@@ -1016,9 +1016,11 @@ export function Chat({
     dispatchOverlay({ type: 'close' })
   }
   /** 流程的下一步：`done` 没有可问的，直接收起浮层。 */
-  const settlePluginInstall = (step: PluginInstallStep): void => {
+  const settlePluginInstall = (flow: PluginInstallFlow, step: PluginInstallStep): void => {
     const view = pluginInstallRef.current
-    if (view === undefined) return
+    // 迟到的回答属于已经不在场的那次流程（取消 A，另起 B，A 的 inspect 才回来）：
+    // 既不能改当前这次的状态，也不能替它收起浮层——那会让在跑的安装失去取消入口。
+    if (view === undefined || view.flow !== flow) return
     if (step.kind === 'done') {
       // 收尾前先把「在跑」摘掉：浮层 effect 的清理据此决定要不要取消——装完了
       // 还留着 busy，清理就会去取消一个服务那边早已删掉的请求，并打出一行
@@ -1033,8 +1035,10 @@ export function Chat({
    * 流程自己兜住每一次服务调用；这里再兜一层，是防「没预料到的抛出」把进程
    * 带走（未处理的 rejection 会杀掉进程守卫），代价是一行说明加收起浮层。
    */
-  const guardPluginInstall = (next: Promise<PluginInstallStep>): void => {
-    void next.then(settlePluginInstall).catch((error: unknown) => {
+  const guardPluginInstall = (flow: PluginInstallFlow, next: Promise<PluginInstallStep>): void => {
+    void next.then(step => settlePluginInstall(flow, step)).catch((error: unknown) => {
+      // 异常路径同样核对身份：一次早已被取代的流程不该收起现在的浮层。
+      if (pluginInstallRef.current?.flow !== flow) return
       channel.pushLocal('/plugin', [t('plugins-install-failed', {
         reason: cleanScalarText(error, COMMAND_RESULT_CELLS),
       })])
@@ -1045,26 +1049,28 @@ export function Chat({
   const startPluginInstall = (rawArgs: string): boolean => {
     const flow = onPluginInstall?.(rawArgs, {
       binding: () => channel.agentBindingGeneration,
+      // 回合运行中改 profile 会触发应用／HMR：门禁在流程里（inspect 之前与写入之前各查一次）。
+      busy: () => channel.working,
       onLines: lines => channel.pushLocal('/plugin', lines),
     })
     if (flow === undefined) return false
     dispatchOverlay({ type: 'open', overlay: { kind: 'plugin-install' } })
     storePluginInstall({ flow, step: { kind: 'done' }, busy: true })
-    guardPluginInstall(flow.begin())
+    guardPluginInstall(flow, flow.begin())
     return true
   }
   const runPluginInstallStep = (next: Promise<PluginInstallStep>): void => {
     const view = pluginInstallRef.current
     if (view === undefined) return
     storePluginInstall({ ...view, busy: true })
-    guardPluginInstall(next)
+    guardPluginInstall(view.flow, next)
   }
   const cancelPluginInstall = (): void => {
     const view = pluginInstallRef.current
     if (view === undefined) return
     // 取消由服务自己结算（回滚 profile），浮层等它回答。
     storePluginInstall({ ...view, busy: true })
-    guardPluginInstall(view.flow.cancel())
+    guardPluginInstall(view.flow, view.flow.cancel())
   }
   const host = channel.backendChannels?.()
   const { rows: channelRows, open: openChannelPicker, pick: pickChannel, setMode: runBackendModeCommand, login: runBackendLogin } = useBackendChannels({

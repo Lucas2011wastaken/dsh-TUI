@@ -15,6 +15,15 @@ type IncompatibleRow = Extract<PluginInstallStep, { kind: 'incompatible' }>['pac
 const clean = (value: string): string => cleanRenderText(value, NOTICE_CELLS)
 
 /**
+ * The target's identity is the subject of the confirmation, and it is foreign
+ * text like everything else here: the name comes from the package's own
+ * manifest, so it can carry newlines or thousands of cells. Bounded to what a
+ * line can show — at 50 columns an unbounded name buries the title and the key
+ * hints, which are exactly what the person needs to answer the question.
+ */
+const TARGET_CELLS = 80
+
+/**
  * `/plugin install <spec>`: the pane that asks what the flow cannot answer on
  * its own (Stage C-4).
  *
@@ -46,7 +55,10 @@ export function PluginInstallPane({ step, busy }: { step: PluginInstallStep; bus
     const { artifact, trust, notice } = step
     const spec = artifact.name === undefined
       ? t('plugins-install-unidentified')
-      : `${artifact.name}${artifact.version === undefined ? '' : `@${artifact.version}`}`
+      : cleanRenderText(
+        `${artifact.name}${artifact.version === undefined ? '' : `@${artifact.version}`}`,
+        TARGET_CELLS,
+      )
     return (
       <Pane color="permission">
         <Box flexDirection="column">
