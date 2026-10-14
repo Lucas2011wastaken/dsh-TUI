@@ -71,6 +71,12 @@ export type FirstPartyReason =
   | 'not-listed'
   /** The name is listed, but not at this exact version (or at no version). */
   | 'version-mismatch'
+  /**
+   * The artifact is not a published one: a directory, tarball or git checkout
+   * can call itself anything, and its manifest is the artifact vouching for
+   * itself. The feed lists what we published, so it has nothing to say here.
+   */
+  | 'unverifiable-source'
 
 export type FirstPartyVerdict =
   | {
@@ -162,12 +168,18 @@ export function loadFirstPartyFeed(moduleUrl: string = import.meta.url): FirstPa
  * Whether an artifact is the exact one the feed pins. Pure: the feed is an
  * argument, so a caller can answer the same question for a fixture, and the
  * gate can drive every branch without a filesystem.
+ *
+ * Only a registry artifact can be first-party. A directory or git checkout is
+ * inspected from the manifest it ships, so treating its `name`/`version` as
+ * evidence would let whoever wrote that directory claim any feed entry and skip
+ * the trust confirmation — the one decision this verdict makes.
  */
 export function firstPartyVerdict(
   load: FirstPartyFeedLoad,
-  artifact: { readonly name?: string | undefined; readonly version?: string | undefined },
+  artifact: { readonly name?: string | undefined; readonly version?: string | undefined; readonly kind?: string | undefined },
 ): FirstPartyVerdict {
   if (load.kind !== 'ok') return { kind: 'third-party', reason: 'no-feed', detail: load.reason }
+  if (artifact.kind !== undefined && artifact.kind !== 'registry') return { kind: 'third-party', reason: 'unverifiable-source' }
   const name = artifact.name
   if (typeof name !== 'string' || name.length === 0) return { kind: 'third-party', reason: 'unidentified' }
   const entry = load.feed.entries.find(candidate => candidate.name === name)
@@ -176,12 +188,3 @@ export function firstPartyVerdict(
   return { kind: 'first-party', entry, corroboration: 'unavailable' }
 }
 
-/**
- * The scope part of a package name (`@scope` for `@scope/name`), or `undefined`
- * for an unscoped name. One reader, so the feed's own consistency check and any
- * caller that wants to show the publisher agree about what the scope is.
- */
-export function packageScopeOf(name: string): string | undefined {
-  const match = /^(@[^/]+)\/[^/]+$/u.exec(name)
-  return match?.[1]
-}

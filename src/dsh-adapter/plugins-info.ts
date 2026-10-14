@@ -436,31 +436,46 @@ type DeclarationVerdict =
   | { readonly kind: 'invalid'; readonly error: string }
   | { readonly kind: 'decided'; readonly decision: NegotiationDecision }
 
-/** Evaluate one declaration exactly as `check <path>` does. */
-function verdictOfDeclaration(deps: PluginsInfoDeps, declaration: PluginDeclaration): DeclarationVerdict {
+/**
+ * A declaration this profile can use: parsed, projected and validated against
+ * the admission catalog — the half `check <path>` and the list tags share. One
+ * implementation, so every surface that judges a declaration is judging the
+ * same thing; the caller decides what to do with the answer (the tag negotiates
+ * it further, the pre-install notice does not).
+ */
+function admitDeclaration(declaration: PluginDeclaration):
+  | { readonly error: string }
+  | { readonly manifest: ReturnType<typeof parseManifest>; readonly index: ReturnType<typeof createContractIndex> } {
   const data = loadSpecData()
-  if (data === undefined) return { kind: 'invalid', error: t('plugins-check-spec-unavailable') }
-  let manifest
+  if (data === undefined) return { error: t('plugins-check-spec-unavailable') }
+  let manifest: ReturnType<typeof parseManifest>
   try {
     manifest = parseManifest(declaration.source, { source: declaration.path })
     projectManifest(manifest)
   } catch (error) {
-    return { kind: 'invalid', error: cell(error instanceof Error ? error.message : String(error)) }
+    return { error: cell(error instanceof Error ? error.message : String(error)) }
   }
   const index = createContractIndex(data.registry, data.permissions)
   try {
     validatePlugin(index, manifest)
   } catch (error) {
-    return { kind: 'invalid', error: cell(error instanceof Error ? error.message : String(error)) }
+    return { error: cell(error instanceof Error ? error.message : String(error)) }
   }
+  return { manifest, index }
+}
+
+/** Evaluate one declaration exactly as `check <path>` does. */
+function verdictOfDeclaration(deps: PluginsInfoDeps, declaration: PluginDeclaration): DeclarationVerdict {
+  const admitted = admitDeclaration(declaration)
+  if ('error' in admitted) return { kind: 'invalid', error: admitted.error }
   const host = deps.host
   if (host === undefined) return { kind: 'invalid', error: t('plugins-check-host-unavailable') }
-  const granted = manifest.permissions.map(request => ({
+  const granted = admitted.manifest.permissions.map(request => ({
     name: request.name,
     scope: request.scope,
-    granted: deps.grants.allows({ componentId: manifest.id }, request.name, request.scope),
+    granted: deps.grants.allows({ componentId: admitted.manifest.id }, request.name, request.scope),
   }))
-  return { kind: 'decided', decision: negotiate(index, manifest, host.descriptor, granted) }
+  return { kind: 'decided', decision: negotiate(admitted.index, admitted.manifest, host.descriptor, granted) }
 }
 
 /** Evaluate a package's declaration exactly as `check <path>` does. */
@@ -496,21 +511,8 @@ export function declarationNoticeFor(
   if (declaration === undefined) {
     return target.directory !== undefined && target.declaration === undefined ? { kind: 'undeclared' } : { kind: 'unjudged' }
   }
-  const data = loadSpecData()
-  if (data === undefined) return { kind: 'invalid', error: t('plugins-check-spec-unavailable') }
-  let manifest
-  try {
-    manifest = parseManifest(declaration.source, { source: declaration.path })
-    projectManifest(manifest)
-  } catch (error) {
-    return { kind: 'invalid', error: cell(error instanceof Error ? error.message : String(error)) }
-  }
-  try {
-    validatePlugin(createContractIndex(data.registry, data.permissions), manifest)
-  } catch (error) {
-    return { kind: 'invalid', error: cell(error instanceof Error ? error.message : String(error)) }
-  }
-  return { kind: 'declared' }
+  const admitted = admitDeclaration(declaration)
+  return 'error' in admitted ? { kind: 'invalid', error: admitted.error } : { kind: 'declared' }
 }
 
 /**
@@ -682,11 +684,15 @@ export async function pluginServiceLines(
 ): Promise<string[]> {
   const parsed = parsePluginArgs(args)
   if (parsed.kind === 'check' || parsed.kind === 'unknown') return []
-  // The write path reports itself line by line as it runs (C-4): what is left
-  // for this half is the usage line the sync half already wrote.
-  if (parsed.kind === 'install') return []
   if (parsed.kind === 'info' && parsed.spec === '') return []
+  // With no service the report is the diagnostics plus the reason and the CLI
+  // route, whatever the form asked for — the write path included: the flow that
+  // would run it lives in the entry, and without a service the entry hands back
+  // no flow, so this is the sentence the person reads.
   if (manager === undefined) return [t('plugins-service-unavailable')]
+  // The write path reports itself line by line as it runs (C-4): with a service
+  // present, this half has nothing to add to it.
+  if (parsed.kind === 'install') return []
   // The service belongs to the host: a refusal or a crash there must not take
   // the diagnostics half down with it. Every call funnels into one line, so a
   // rejected promise still leaves a readable report instead of an unhandled

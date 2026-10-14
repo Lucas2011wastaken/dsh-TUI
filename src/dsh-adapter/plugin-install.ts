@@ -26,6 +26,7 @@
  *   resume mid-install must not write pnpm output into the new session's
  *   transcript; the run itself is a profile-level operation and keeps going.
  */
+import type { Context } from '@deepseek-ai/cordis'
 import type {
   ChangeResult,
   IncompatiblePlugin,
@@ -35,11 +36,15 @@ import type {
   PluginSpecInspection,
   Registry,
 } from '@deepseek-ai/dsh-plugin-manager/types'
+import { statSync } from 'node:fs'
+import { isAbsolute, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { t } from '../i18n.js'
-import { COMPOSITION_PACKAGE, type PluginInstallNotice } from './plugin-declaration.js'
-import { type FirstPartyFeedLoad, firstPartyVerdict, type FirstPartyVerdict } from './plugin-feed.js'
-import { newInstallRequestId, type PluginInstallEvents, type PluginManagerView } from './plugin-manager.js'
-import { cell } from './plugins-info.js'
+import { installedTuiVersion, resolveDshProfileName } from '../update.js'
+import { COMPOSITION_PACKAGE, pluginDeclarationOf, type PluginInstallNotice } from './plugin-declaration.js'
+import { type FirstPartyFeedLoad, firstPartyVerdict, type FirstPartyVerdict, loadFirstPartyFeed } from './plugin-feed.js'
+import { newInstallRequestId, pluginInstallEvents, pluginManagerOf, type PluginInstallEvents, type PluginManagerView } from './plugin-manager.js'
+import { cell, declarationNoticeFor, parsePluginArgs } from './plugins-info.js'
 
 /** How many lines of pnpm's output the failure report keeps. */
 export const INSTALL_LOG_TAIL = 6
@@ -223,7 +228,10 @@ export function createPluginInstallFlow(options: PluginInstallFlowOptions): Plug
 
   /** Gate 3's routing and gate 1's notice: ask, or go on when nothing is askable. */
   function route(read: PluginArtifact): PluginInstallStep {
-    const trust = firstPartyVerdict(options.feed, { name: read.name, version: read.version })
+    // The kind is part of the question: only a registry artifact can be the
+    // published one the feed lists (a directory or git checkout is read from
+    // the manifest it ships, so it would vouch for itself).
+    const trust = firstPartyVerdict(options.feed, { name: read.name, version: read.version, kind: read.kind })
     if (trust.kind === 'first-party') {
       emit([t('plugins-install-trusted', { name: cell(trust.entry.name), version: cell(trust.entry.version) })])
     }
@@ -237,6 +245,21 @@ export function createPluginInstallFlow(options: PluginInstallFlowOptions): Plug
     // confirmation means. It does not skip the ledger or the list.
     if (trust.kind === 'first-party' && notice.kind === 'declared') return { kind: 'done' }
     return { kind: 'confirm', artifact: read, trust, notice }
+  }
+
+  /**
+   * The profile's current exemptions. `listVersionExemptions()` is the one
+   * service call that answers synchronously, so it is also the one that can
+   * throw past a `catch` on a promise: read it defensively and say so, because
+   * the pane shows what it returns.
+   */
+  function exemptionsNow(): VersionExemptions {
+    try {
+      return options.manager.listVersionExemptions()
+    } catch (error) {
+      emit([t('plugins-install-exemptions-unreadable', { reason: cell(error instanceof Error ? error.message : String(error)) })])
+      return { exemptions: {}, warnings: [] }
+    }
   }
 
   /** Install, then turn the service's own result into the next step. */
@@ -273,7 +296,7 @@ export function createPluginInstallFlow(options: PluginInstallFlowOptions): Plug
           packages: incompatible.map(entry => `${cell(entry.name)}@${cell(entry.version)}`).join(', '),
           runtime: cell(incompatible[0]?.runtimeVersion ?? ''),
         })])
-        return { kind: 'incompatible', packages: incompatible, exemptions: options.manager.listVersionExemptions() }
+        return { kind: 'incompatible', packages: incompatible, exemptions: exemptionsNow() }
       }
       const output = result.packageResult?.output
       if (output !== undefined) {
@@ -333,7 +356,15 @@ export function createPluginInstallFlow(options: PluginInstallFlowOptions): Plug
     const packages = [...incompatible]
     try {
       for (const entry of packages) {
-        await options.manager.setVersionExemption(`${entry.name}@${entry.version}`, entry.runtimeVersion, true, true)
+        // A refusal is in-band (`application: 'failed'`): a stale runtime
+        // version, an unrepairable compatibility file, a missing --accept-risk.
+        // Reporting it as granted and retrying would send the person in a loop
+        // that cannot succeed.
+        const outcome = await options.manager.setVersionExemption(`${entry.name}@${entry.version}`, entry.runtimeVersion, true, true)
+        if (outcome.application === 'failed') {
+          emit([t('plugins-install-failed', { reason: failureReasonOf(outcome) })])
+          return { kind: 'done' }
+        }
       }
     } catch (error) {
       emit([t('plugins-install-failed', { reason: cell(error instanceof Error ? error.message : String(error)) })])
@@ -369,6 +400,9 @@ export function createPluginInstallFlow(options: PluginInstallFlowOptions): Plug
       return stopped ? { kind: 'done' } : riskAndRetry()
     },
     async cancel() {
+      // Already stopped: a second Esc must not ask again (the first answer is
+      // the one that gets reported).
+      if (stopped) return { kind: 'done' }
       stopped = true
       // Nothing was handed to the service yet: there is no run to stop, and
       // asking it to cancel one would only answer "not-running".
@@ -386,5 +420,77 @@ export function createPluginInstallFlow(options: PluginInstallFlowOptions): Plug
     dispose() {
       for (const dispose of disposers.splice(0)) dispose()
     },
+  }
+}
+
+/**
+ * The `/plugin install` entry the screen calls: `/plugin`'s argument text in, a
+ * flow out — or `undefined` for anything that is not an install form, and for a
+ * launch with no profile plugin service to install through (the screen then
+ * runs the read-only report, which is where the CLI route is printed).
+ *
+ * This is the one place that knows how the flow is wired to the running
+ * composition: the host service and its events, the packaged feed, gate 1's
+ * declaration reader, and the profile-relative resolution of a `install <path>`
+ * spec. It lives beside the flow rather than in the entry so a regression can
+ * drive the real wiring with a fixture context — the parts that only exist here
+ * (the feed load, the declaration read, the `file:` base URL) are exactly the
+ * ones a fixture-only battery would otherwise never touch.
+ */
+export function createPluginInstallEntry(
+  ctx: Context,
+  options: { readonly profileName?: string | undefined; readonly ownVersion?: string | undefined } = {},
+): (args: string, sink: PluginInstallSink) => PluginInstallFlow | undefined {
+  return (args, sink) => {
+    const parsed = parsePluginArgs(args)
+    if (parsed.kind !== 'install' || parsed.spec === '') return undefined
+    const manager = pluginManagerOf(ctx)
+    if (manager === undefined) return undefined
+    return createPluginInstallFlow({
+      manager,
+      events: pluginInstallEvents(ctx),
+      spec: parsed.spec,
+      // Read once per install: the feed is a packaged file, and a request that is
+      // never made should never touch the disk.
+      feed: loadFirstPartyFeed(),
+      noticeOf: target => declarationNoticeFor({
+        ...target.name === undefined ? {} : { declaration: pluginDeclarationOf(ctx, target.name) },
+        ...target.directory === undefined ? {} : { directory: target.directory },
+      }),
+      specDirectory: spec => specDirectoryOf(ctx, spec),
+      binding: sink.binding,
+      onLines: sink.onLines,
+      ownVersion: options.ownVersion ?? installedTuiVersion(),
+      profileName: options.profileName ?? resolveDshProfileName(),
+    })
+  }
+}
+
+/**
+ * The directory a `install <path>` spec names, when it names one. Only a
+ * directory has a package-root declaration to read — a tarball or git spec must
+ * stay unjudged rather than be reported as "declares nothing".
+ *
+ * A relative spec is relative to the profile: `ctx.baseUrl` is the loader's base
+ * for these rows, and it arrives as a `file:` URL (or a plain path on some
+ * hosts) — the same pair `requireBase()` in `admission-loader.ts` accepts.
+ * `path.resolve` on a URL would invent a path that never exists.
+ */
+function specDirectoryOf(ctx: Context, spec: string): string | undefined {
+  if (!spec.startsWith('.') && !isAbsolute(spec)) return undefined
+  const baseUrl = (ctx as { baseUrl?: string }).baseUrl
+  let base = process.cwd()
+  if (baseUrl !== undefined && baseUrl !== '') {
+    try {
+      base = baseUrl.startsWith('file:') ? fileURLToPath(baseUrl) : baseUrl
+    } catch {
+      base = process.cwd()
+    }
+  }
+  const directory = resolve(base, spec)
+  try {
+    return statSync(directory).isDirectory() ? directory : undefined
+  } catch {
+    return undefined
   }
 }

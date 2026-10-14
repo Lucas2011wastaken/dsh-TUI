@@ -1434,6 +1434,10 @@ const dict = {
     zh: '已为 {{count}} 个包登记精确版本豁免（accept-risk），正在重试安装',
     en: 'Recorded an exact-version exemption for {{count}} package(s) (accept-risk); retrying the install',
   },
+  'plugins-install-exemptions-unreadable': {
+    zh: '读不到当前的版本豁免清单：{{reason}}（面板按"没有豁免"继续）',
+    en: 'Could not read the current version exemptions: {{reason}} (the pane continues as if there were none)',
+  },
   'plugins-install-done': { zh: '已安装 {{bundle}}：{{state}}', en: 'Installed {{bundle}}: {{state}}' },
   'plugins-install-state-applied': { zh: '已应用', en: 'applied' },
   'plugins-install-state-restart': { zh: '需要重启', en: 'restart required' },

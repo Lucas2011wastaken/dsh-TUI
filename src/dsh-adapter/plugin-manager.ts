@@ -48,8 +48,13 @@ export interface PluginManagerView {
   listPlugins(): Promise<PluginInfo[]>
   /** The registries an installation asks, in order. */
   registries(): Promise<PluginRegistries>
-  /** What a spec names, read before installing it. */
-  inspect(spec: string, options?: InspectOptions, signal?: AbortSignal): Promise<PluginSpecInspection>
+  /**
+   * What a spec names, read before installing it. The host bounds the lookup
+   * with its own timeout; nothing here passes an `AbortSignal`, so a cancel
+   * during the read stops the flow rather than the request (there is nothing to
+   * install yet either way).
+   */
+  inspect(spec: string, options?: InspectOptions): Promise<PluginSpecInspection>
   /**
    * Install one spec into the profile. The call owns the whole run: it resolves
    * only once pnpm (or the git check) has finished and the profile was restored

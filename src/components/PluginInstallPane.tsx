@@ -1,6 +1,7 @@
 import React from 'react'
 import { t } from '../i18n.js'
 import { Box, Text } from '../ui.js'
+import { cleanRenderText, NOTICE_CELLS } from '../channel/sanitize.js'
 import type { PluginInstallStep, VersionExemptions } from '../dsh-adapter/plugin-install.js'
 import { HintLine } from './design-system/HintLine.js'
 import { LoadingState } from './design-system/LoadingState.js'
@@ -9,6 +10,9 @@ import { Pane } from './design-system/Pane.js'
 /** One package the running host refuses: the shape the step carries, named
  *  through the step so this file needs no upstream types of its own. */
 type IncompatibleRow = Extract<PluginInstallStep, { kind: 'incompatible' }>['packages'][number]
+
+/** Foreign text on its way to the screen: control sequences stripped, bounded. */
+const clean = (value: string): string => cleanRenderText(value, NOTICE_CELLS)
 
 /**
  * `/plugin install <spec>`: the pane that asks what the flow cannot answer on
@@ -73,7 +77,7 @@ export function PluginInstallPane({ step, busy }: { step: PluginInstallStep; bus
           <Text color="remember" bold>{t('plugins-install-pane-title')}</Text>
           <Box marginTop={1} flexDirection="column">
             <Text>{t('plugins-install-builds-title')}</Text>
-            {step.builds.map(build => <Text key={build} dimColor>{`  ${build}`}</Text>)}
+            {step.builds.map(build => <Text key={build} dimColor>{`  ${clean(build)}`}</Text>)}
           </Box>
         </Box>
         <Text dimColor italic><HintLine text={t('plugins-install-key-builds')} /></Text>
@@ -103,20 +107,31 @@ export function PluginInstallPane({ step, busy }: { step: PluginInstallStep; bus
   return null
 }
 
-/** One package the running host refuses, with the peers it fails. */
+/**
+ * One package the running host refuses, with the peers it fails.
+ *
+ * Every field here is foreign text — a package name, a version, a peer range
+ * the author wrote — and the pane is a render path like any other, so each one
+ * goes through the same sanitizer the rest of the interface uses before it can
+ * reach the screen.
+ */
 function describe(entry: IncompatibleRow): string {
-  const peers = Object.entries(entry.peers).map(([name, range]) => `${name} ${range}`).join(', ')
-  return `  ${entry.name}@${entry.version} (running ${entry.runtimeVersion}${peers === '' ? '' : `; needs ${peers}`})`
+  const peers = Object.entries(entry.peers)
+    .map(([name, range]) => `${clean(name)} ${clean(range)}`)
+    .join(', ')
+  return `  ${clean(entry.name)}@${clean(entry.version)} (running ${clean(entry.runtimeVersion)}${peers === '' ? '' : `; needs ${peers}`})`
 }
 
 /**
  * The profile's compatibility file as rows. The file maps `package@version` to
  * the runtime versions exempted for it, and a corrupt one answers warnings
  * instead — both shapes are the person's business here, because this is the
- * step where they decide whether to add another.
+ * step where they decide whether to add another. The file is user-editable and
+ * carries whatever somebody typed, so its rows are sanitized too.
  */
 function exemptionLines(exemptions: VersionExemptions): string[] {
-  const rows = Object.entries(exemptions.exemptions).map(([packageVersion, runtimes]) => `  ${packageVersion} → ${runtimes.join(', ')}`)
+  const rows = Object.entries(exemptions.exemptions)
+    .map(([packageVersion, runtimes]) => `  ${clean(packageVersion)} → ${runtimes.map(runtime => clean(runtime)).join(', ')}`)
   if (rows.length === 0 && exemptions.warnings.length === 0) return [`  ${t('plugins-info-registries-none')}`]
-  return [...rows, ...exemptions.warnings.map(warning => `  ${warning}`)]
+  return [...rows, ...exemptions.warnings.map(warning => `  ${clean(warning)}`)]
 }

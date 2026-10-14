@@ -93,7 +93,13 @@ export type PluginInstallNotice =
   | { readonly kind: 'declared' }
   /** Read, and the package ships no package-root `dsh-plugin.json`. */
   | { readonly kind: 'undeclared' }
-  /** Read, and this profile cannot accept it (parse/validate/negotiate). */
+  /**
+   * Read, and this profile cannot accept it: it does not parse, does not
+   * project, or fails the admission catalog's validation. The five-state
+   * negotiation is deliberately not part of this answer — it is a statement
+   * about a *running* host, and the standing tag in `/plugin` reports it after
+   * the install.
+   */
   | { readonly kind: 'invalid'; readonly error: string }
   /** Nothing on disk to read yet: the answer arrives with the install. */
   | { readonly kind: 'unjudged' }

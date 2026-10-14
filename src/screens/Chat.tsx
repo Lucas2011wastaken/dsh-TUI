@@ -1020,10 +1020,26 @@ export function Chat({
     const view = pluginInstallRef.current
     if (view === undefined) return
     if (step.kind === 'done') {
+      // 收尾前先把「在跑」摘掉：浮层 effect 的清理据此决定要不要取消——装完了
+      // 还留着 busy，清理就会去取消一个服务那边早已删掉的请求，并打出一行
+      // 「没有在跑的安装」，与刚发生的事矛盾。
+      storePluginInstall({ ...view, step, busy: false })
       closePluginInstall()
       return
     }
     storePluginInstall({ ...view, step, busy: false })
+  }
+  /**
+   * 流程自己兜住每一次服务调用；这里再兜一层，是防「没预料到的抛出」把进程
+   * 带走（未处理的 rejection 会杀掉进程守卫），代价是一行说明加收起浮层。
+   */
+  const guardPluginInstall = (next: Promise<PluginInstallStep>): void => {
+    void next.then(settlePluginInstall).catch((error: unknown) => {
+      channel.pushLocal('/plugin', [t('plugins-install-failed', {
+        reason: cleanScalarText(error, COMMAND_RESULT_CELLS),
+      })])
+      closePluginInstall()
+    })
   }
   /** 开始一次安装；`false` 表示这段输入不是 install 形式（或本启动没有服务）。 */
   const startPluginInstall = (rawArgs: string): boolean => {
@@ -1034,21 +1050,21 @@ export function Chat({
     if (flow === undefined) return false
     dispatchOverlay({ type: 'open', overlay: { kind: 'plugin-install' } })
     storePluginInstall({ flow, step: { kind: 'done' }, busy: true })
-    void flow.begin().then(settlePluginInstall)
+    guardPluginInstall(flow.begin())
     return true
   }
   const runPluginInstallStep = (next: Promise<PluginInstallStep>): void => {
     const view = pluginInstallRef.current
     if (view === undefined) return
     storePluginInstall({ ...view, busy: true })
-    void next.then(settlePluginInstall)
+    guardPluginInstall(next)
   }
   const cancelPluginInstall = (): void => {
     const view = pluginInstallRef.current
     if (view === undefined) return
     // 取消由服务自己结算（回滚 profile），浮层等它回答。
     storePluginInstall({ ...view, busy: true })
-    void view.flow.cancel().then(settlePluginInstall)
+    guardPluginInstall(view.flow.cancel())
   }
   const host = channel.backendChannels?.()
   const { rows: channelRows, open: openChannelPicker, pick: pickChannel, setMode: runBackendModeCommand, login: runBackendLogin } = useBackendChannels({

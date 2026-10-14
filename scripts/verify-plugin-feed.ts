@@ -9,8 +9,12 @@
  *      （范围一律拒绝）；本包自身的条目必须存在且与本包 `package.json` 的版本一致
  *      ——"一个版本钉死一份清单"因此是机器可查的事实，而不是口头承诺；
  *   D. 判定：命中 / 版本不符 / 未列出 / 名字缺失 / 清单不可用，五条分支逐条断言，
- *      **fail-closed**：除命中之外一律 third-party；
- *   E. 坏基线由施工记录逐条实测（见 `.local/doc/stage-c4-plan.md` §9）。
+ *      **fail-closed**：除命中之外一律 third-party；非 registry 来源（本地目录 /
+ *      tarball / git）单独一条 —— 它自己的 manifest 会替自己背书，不能当证据；
+ *   E. 坏基线：八条注入实测于 commit `236cbe85`（"feed 目录摘出 files / 版本写成范围 /
+ *      scope 与包名不符 / 判定跳过版本比较 / 未命中嫡系也不问确认 / 确认步 Esc 仍发起安装 /
+ *      流程不按 binding 加栅栏 / 同步抛错被吞"）；本文件负责其中前三条，
+ *      施工图（未入库）只作过程记录。
  *
  * 清单是**包管理**层的策展名单，不是协议数据：本门禁不读 `tui-profile/registry/`，
  * 也不改它（C-2 已冻结）。
@@ -21,7 +25,7 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { firstPartyVerdict, loadFirstPartyFeed, packageScopeOf, type FirstPartyFeedLoad } from '../src/dsh-adapter/plugin-feed.js'
+import { firstPartyVerdict, loadFirstPartyFeed, type FirstPartyFeedLoad } from '../src/dsh-adapter/plugin-feed.js'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const FEED_DIR = 'tui-profile/feed'
@@ -52,8 +56,12 @@ const EXACT_VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u
 const PACKAGE_NAME = /^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/u
 for (const entry of feed.entries) {
   check(`feed entry ${entry.name} is a well-formed package name`, PACKAGE_NAME.test(entry.name), entry.name)
+  // The scope rule is spelled out here rather than read from the module under
+  // test: an assertion that asks the implementation what the rule is proves
+  // nothing about the rule.
+  const scoped = /^@[^/]+\/[^/]+$/u.test(entry.name)
   check(`feed entry ${entry.name} is scoped and its scope field matches the name verbatim`,
-    packageScopeOf(entry.name) !== undefined && packageScopeOf(entry.name) === entry.scope,
+    scoped && entry.name.slice(0, entry.name.indexOf('/')) === entry.scope,
     `${entry.name} / ${entry.scope}`)
   check(`feed entry ${entry.name} pins an exact version, not a range`,
     EXACT_VERSION.test(entry.version), entry.version)
@@ -64,18 +72,25 @@ const own = feed.entries.find(entry => entry.name === manifest.name)
 check('the feed pins the package this release publishes, at the version it publishes',
   own !== undefined && own.version === manifest.version, `${JSON.stringify(own)} vs ${manifest.name}@${manifest.version}`)
 
-// ── D. 判定的五条分支 ─────────────────────────────────────────────────────────
-const hit = firstPartyVerdict(load, { name: manifest.name, version: manifest.version })
+// ── D. 判定的分支 ───────────────────────────────────────────────────────────
+const hit = firstPartyVerdict(load, { name: manifest.name, version: manifest.version, kind: 'registry' })
 check('a listed name at the pinned version is first-party',
   hit.kind === 'first-party' && hit.entry.version === manifest.version && hit.corroboration === 'unavailable', JSON.stringify(hit))
 check('the pinned name at another version is third-party (a range is not a hit)',
-  firstPartyVerdict(load, { name: manifest.name, version: '0.0.1' }).kind === 'third-party', JSON.stringify(hit))
+  firstPartyVerdict(load, { name: manifest.name, version: '0.0.1', kind: 'registry' }).kind === 'third-party', JSON.stringify(hit))
 check('the pinned name with no version at all is third-party ("latest" is not the pinned artifact)',
-  firstPartyVerdict(load, { name: manifest.name }).kind === 'third-party')
+  firstPartyVerdict(load, { name: manifest.name, kind: 'registry' }).kind === 'third-party')
 check('an unlisted name is third-party',
-  firstPartyVerdict(load, { name: 'verify-not-on-the-feed', version: '1.0.0' }).kind === 'third-party')
+  firstPartyVerdict(load, { name: 'verify-not-on-the-feed', version: '1.0.0', kind: 'registry' }).kind === 'third-party')
 check('a spec that names no package is third-party',
   firstPartyVerdict(load, {}).kind === 'third-party')
+// A directory or git checkout ships the manifest it is judged by: it would be
+// vouching for itself, so the feed has nothing to say about it.
+for (const kind of ['path', 'tarball', 'git'] as const) {
+  const verdict = firstPartyVerdict(load, { name: manifest.name, version: manifest.version, kind })
+  check(`a ${kind} spec is third-party even when it claims a pinned name@version`,
+    verdict.kind === 'third-party' && verdict.reason === 'unverifiable-source', JSON.stringify(verdict))
+}
 
 // ── E. 清单不可用 / 形状不认识：一律 fail closed ─────────────────────────────
 /** 一份临时清单，放在只有第二个候选能命中的布局里（与编译产物同形）。 */
@@ -85,22 +100,27 @@ function fixture(source: string): string {
   writeFileSync(join(root, FEED_DIR, 'first-party.json'), source)
   return pathToFileURL(join(root, 'lib', 'types', 'dsh-adapter', 'probe.js')).href
 }
-const MALFORMED: readonly (readonly [string, string])[] = [
-  ['未知顶层字段（拼写错误会让清单静默变空）', JSON.stringify({ feedVersion: 1, entires: [] })],
-  ['未知 feedVersion', JSON.stringify({ feedVersion: 2, entries: [{ name: '@probe/x', scope: '@probe', version: '1.0.0' }] })],
-  ['条目缺字段', JSON.stringify({ feedVersion: 1, entries: [{ name: '@probe/x', version: '1.0.0' }] })],
-  ['条目带未知字段', JSON.stringify({ feedVersion: 1, entries: [{ name: '@probe/x', scope: '@probe', version: '1.0.0', extra: 1 }] })],
-  ['空清单', JSON.stringify({ feedVersion: 1, entries: [] })],
-  ['不是 JSON', '{ nope'],
+/**
+ * 每份坏清单都指名它该触发的**那条**规则：只断言"不可用"会让 fixture 路径写错
+ * （于是"文件缺失"也满足条件）时整段照样全绿。
+ */
+const MALFORMED: readonly (readonly [string, string, string])[] = [
+  ['未知顶层字段（拼写错误会让清单静默变空）', JSON.stringify({ feedVersion: 1, entires: [] }), 'unexpected top-level fields'],
+  ['未知 feedVersion', JSON.stringify({ feedVersion: 2, entries: [{ name: '@probe/x', scope: '@probe', version: '1.0.0' }] }), 'unknown feedVersion'],
+  ['条目缺字段', JSON.stringify({ feedVersion: 1, entries: [{ name: '@probe/x', version: '1.0.0' }] }), 'unrecognized entry'],
+  ['条目带未知字段', JSON.stringify({ feedVersion: 1, entries: [{ name: '@probe/x', scope: '@probe', version: '1.0.0', extra: 1 }] }), 'unrecognized entry'],
+  ['空清单', JSON.stringify({ feedVersion: 1, entries: [] }), 'no entries'],
+  ['不是 JSON', '{ nope', 'not JSON'],
 ]
-for (const [label, source] of MALFORMED) {
+for (const [label, source, expected] of MALFORMED) {
   const broken: FirstPartyFeedLoad = loadFirstPartyFeed(fixture(source))
-  check(`an unavailable feed is reported as such (${label})`,
-    broken.kind === 'unavailable' && broken.reason.length > 0, JSON.stringify(broken))
+  check(`an unavailable feed names the rule it broke (${label})`,
+    broken.kind === 'unavailable' && broken.reason.includes(expected), JSON.stringify(broken))
   check(`an unavailable feed never vouches for anything (${label})`,
-    firstPartyVerdict(broken, { name: '@probe/x', version: '1.0.0' }).kind === 'third-party')
+    firstPartyVerdict(broken, { name: '@probe/x', version: '1.0.0', kind: 'registry' }).kind === 'third-party')
 }
+const missing = loadFirstPartyFeed(pathToFileURL(join(mkdtempSync(join(tmpdir(), 'dsh-no-feed-')), 'lib', 'types', 'dsh-adapter', 'probe.js')).href)
 check('a missing feed file is unavailable, not silently empty',
-  loadFirstPartyFeed(pathToFileURL(join(mkdtempSync(join(tmpdir(), 'dsh-no-feed-')), 'lib', 'types', 'dsh-adapter', 'probe.js')).href).kind === 'unavailable')
+  missing.kind === 'unavailable' && missing.reason.includes('missing'), JSON.stringify(missing))
 
 console.log(`verify-plugin-feed OK (${passed} checks)`)
