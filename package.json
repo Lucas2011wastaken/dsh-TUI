@@ -167,6 +167,7 @@
     "verify:plugin-commands": "node --import tsx/esm scripts/verify-plugin-commands.ts",
     "verify:plugin-negotiation": "node --import tsx/esm scripts/verify-plugin-negotiation.ts",
     "verify:plugin-feed": "node --import tsx/esm scripts/verify-plugin-feed.ts",
+    "verify:plugin-guard": "node --import tsx/esm scripts/verify-plugin-guard.ts",
     "verify:plugin-lifecycle": "node --import tsx/esm scripts/verify-plugin-lifecycle.ts",
     "verify:plugin-panels": "node --import tsx/esm scripts/verify-plugin-panels.tsx",
     "verify:runtime-themes": "node --import tsx/esm scripts/verify-runtime-themes.ts",
