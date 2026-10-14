@@ -131,7 +131,7 @@ export interface PluginInstallFlow {
   approve(builds: readonly string[]): Promise<PluginInstallStep>
   /** Answer an `incompatible` step: exempt these exact versions and retry. */
   acceptRisk(): Promise<PluginInstallStep>
-  /** Stop the run and wait until the profile is back. */
+  /** Stop the run and wait until the profile is back; a repeated call waits for the same one. */
   cancel(): Promise<PluginInstallStep>
   /** Release the event subscriptions. */
   dispose(): void
@@ -191,6 +191,13 @@ export function createPluginInstallFlow(options: PluginInstallFlowOptions): Plug
   let stopped = false
   /** Whether `installBundle` was actually called: before that there is nothing to cancel. */
   let installStarted = false
+  /**
+   * The one cancellation in flight. A repeated Esc waits for the same rollback
+   * rather than reporting the flow over: the service has a single request to
+   * stop, and a `done` that arrives before the profile is back would let the
+   * screen close the pane over work that is still going on.
+   */
+  let cancelling: Promise<PluginInstallStep> | undefined
   const disposers: Array<() => void> = []
 
   /** Whether the session that asked is still bound; false drops every write. */
@@ -211,6 +218,26 @@ export function createPluginInstallFlow(options: PluginInstallFlowOptions): Plug
     return { kind: 'done' }
   }
 
+  /**
+   * pnpm's output arrives chunk by chunk, and a URL's credentials can straddle
+   * two of them: a line is evidence only once it is whole, because the one
+   * renderer that strips them (`redactText`) reads URLs, and a fragment that
+   * lost its `scheme://user:` head is not one. Lines are assembled per job and
+   * stream, and the fragment an unfinished stream leaves behind is settled once
+   * the run is over — by then it IS the whole line.
+   */
+  const partials = new Map<string, string>()
+  const pushLogLine = (line: string): void => {
+    const text = cell(line)
+    if (text.trim() === '') return
+    logTail.push(text)
+    while (logTail.length > INSTALL_LOG_TAIL) logTail.shift()
+  }
+  const flushLogTail = (): void => {
+    for (const rest of partials.values()) pushLogLine(rest)
+    partials.clear()
+  }
+
   if (options.events !== undefined) {
     disposers.push(options.events.onState(requestId, progress => {
       if (progress.phase === 'installing' && progress.attempt !== undefined) {
@@ -228,12 +255,12 @@ export function createPluginInstallFlow(options: PluginInstallFlowOptions): Plug
     // Raw pnpm output is noise on a working install and the only evidence on a
     // failed one: keep the last lines and report them with the failure.
     disposers.push(options.events.onLog(requestId, chunk => {
-      for (const line of chunk.text.split(/\r?\n/u)) {
-        const text = cell(line)
-        if (text.trim() === '') continue
-        logTail.push(text)
-      }
-      while (logTail.length > INSTALL_LOG_TAIL) logTail.shift()
+      const key = `${chunk.jobId}\u0000${chunk.stream}`
+      const parts = `${partials.get(key) ?? ''}${chunk.text}`.split(/\r?\n/u)
+      const rest = parts.pop() ?? ''
+      if (rest === '') partials.delete(key)
+      else partials.set(key, rest)
+      for (const line of parts) pushLogLine(line)
     }))
   }
 
@@ -339,7 +366,18 @@ export function createPluginInstallFlow(options: PluginInstallFlowOptions): Plug
     } catch (error) {
       emit([t('plugins-install-failed', { reason: cell(error instanceof Error ? error.message : String(error)) })])
       return { kind: 'done' }
+    } finally {
+      // The run is over: whatever its last chunk left unfinished is whole now.
+      flushLogTail()
     }
+    // An approval the service accepted is spent. It is written into the profile
+    // before pnpm runs and echoed back as `result.approvedBuilds`, and offering
+    // it again is refused as `stale-approval` — which would make the retry after
+    // an `incompatible` failure impossible. The service writes every name or
+    // none (`stale-approval` aborts the batch), so consuming what it echoed is
+    // the same as dropping the batch. A rejected call leaves `result` undefined
+    // and keeps them: nothing landed, and that path has no retry.
+    if (result.approvedBuilds !== undefined) approvedBuilds = undefined
     // The cancel path reports itself; an install that ends `cancelled` after it
     // must not report a second, contradictory ending.
     if (result.application === 'cancelled') return { kind: 'done' }
@@ -359,11 +397,9 @@ export function createPluginInstallFlow(options: PluginInstallFlowOptions): Plug
       }
       const output = result.packageResult?.output
       if (output !== undefined) {
-        for (const line of output.split(/\r?\n/u).slice(-INSTALL_LOG_TAIL)) {
-          const text = cell(line)
-          if (text.trim() !== '') logTail.push(text)
-        }
-        while (logTail.length > INSTALL_LOG_TAIL) logTail.shift()
+        // The service's own capture is whole already: one funnel for the tail, so
+        // the chunked path and this one cannot disagree about what a line is.
+        for (const line of output.split(/\r?\n/u).slice(-INSTALL_LOG_TAIL)) pushLogLine(line)
       }
       emit([
         t('plugins-install-failed', { reason: failureReasonOf(result) }),
@@ -461,22 +497,29 @@ export function createPluginInstallFlow(options: PluginInstallFlowOptions): Plug
       return stopped ? { kind: 'done' } : riskAndRetry()
     },
     async cancel() {
-      // Already stopped: a second Esc must not ask again (the first answer is
-      // the one that gets reported).
+      // A cancel already in flight is the answer to this one too: answering it
+      // here would settle the flow (and let the pane close) before the profile
+      // is back. Checked first, because `stopped` is already set by then.
+      if (cancelling !== undefined) return cancelling
+      // Already stopped, with nothing in flight: a second Esc must not ask
+      // again (the first answer is the one that gets reported).
       if (stopped) return { kind: 'done' }
       stopped = true
       // Nothing was handed to the service yet: there is no run to stop, and
       // asking it to cancel one would only answer "not-running".
       if (!installStarted) return { kind: 'done' }
-      try {
-        const outcome = await options.manager.cancelInstall(requestId)
-        emit([t(outcome.status === 'cancelled'
-          ? 'plugins-install-cancelled'
-          : outcome.status === 'too-late' ? 'plugins-install-cancel-too-late' : 'plugins-install-cancel-not-running')])
-      } catch (error) {
-        emit([t('plugins-install-cancel-failed', { reason: cell(error instanceof Error ? error.message : String(error)) })])
-      }
-      return { kind: 'done' }
+      cancelling = (async (): Promise<PluginInstallStep> => {
+        try {
+          const outcome = await options.manager.cancelInstall(requestId)
+          emit([t(outcome.status === 'cancelled'
+            ? 'plugins-install-cancelled'
+            : outcome.status === 'too-late' ? 'plugins-install-cancel-too-late' : 'plugins-install-cancel-not-running')])
+        } catch (error) {
+          emit([t('plugins-install-cancel-failed', { reason: cell(error instanceof Error ? error.message : String(error)) })])
+        }
+        return { kind: 'done' }
+      })()
+      return cancelling
     },
     dispose() {
       for (const dispose of disposers.splice(0)) dispose()

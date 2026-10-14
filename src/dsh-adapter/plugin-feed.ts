@@ -187,4 +187,3 @@ export function firstPartyVerdict(
   if (artifact.version !== entry.version) return { kind: 'third-party', reason: 'version-mismatch' }
   return { kind: 'first-party', entry, corroboration: 'unavailable' }
 }
-

@@ -26,6 +26,7 @@ import type {
   InstallBundleOptions,
   PluginEntryId,
   PluginInfo,
+  PluginInstallCancellation,
   PluginInstallLogChunk,
   PluginInstallProgress,
   PluginInstallRequestId,
@@ -523,6 +524,8 @@ for (const [fullscreen, columns, service] of [
     readonly ownVersion?: string
     readonly bundles?: BundleInfo[]
     readonly install?: () => Promise<ChangeResult>
+    /** Defers the service's answer to `cancelInstall`: the rollback's own clock. */
+    readonly cancel?: () => Promise<PluginInstallCancellation>
     /** Overrides the exemptions reader (including one that throws synchronously). */
     readonly readExemptions?: () => { exemptions: Record<string, string[]>; warnings: string[] }
     readonly exempt?: (packageVersion: string, runtimeVersion: string) => Promise<ChangeResult>
@@ -543,7 +546,10 @@ for (const [fullscreen, columns, service] of [
         return typeof options.inspect === 'function' ? options.inspect() : Promise.resolve(options.inspect ?? ACCEPTED)
       },
       installBundle: (spec, settings) => { installSpecs.push(spec); installs.push(settings ?? {}); return install() },
-      cancelInstall: requestId => { cancels.push(requestId); return Promise.resolve({ status: 'cancelled' }) },
+      cancelInstall: requestId => {
+        cancels.push(requestId)
+        return options.cancel?.() ?? Promise.resolve({ status: 'cancelled' } as const)
+      },
       listVersionExemptions: options.readExemptions ?? (() => ({ exemptions: {}, warnings: [] })),
       setVersionExemption: (packageVersion, runtimeVersion, enabled, acceptRisk) => {
         exemptions.push([packageVersion, runtimeVersion, String(enabled), String(acceptRisk)])
@@ -797,6 +803,61 @@ for (const [fullscreen, columns, service] of [
       !rig.lines.some(line => line.includes('probe-secret')), rig.lines.join(' | '))
   }
 
+  // pnpm writes a stream chunk by chunk, and a credential can straddle two of
+  // them. Redaction reads URLs, so a fragment that lost its `scheme://user:`
+  // head is not one — the line has to be whole before it is judged. Both split
+  // positions are covered: inside the userinfo, and inside a query token.
+  for (const [label, chunks] of [
+    ['userinfo', ['fetch https://reader:', 'probe-secret@registry.example.com/x\n']],
+    ['a query token', ['GET https://registry.example.com/x?token=', 'probe-secret\n']],
+  ] as const) {
+    const rig = makeInstallRig({
+      feed: TRUSTED,
+      install: () => {
+        for (const text of chunks) {
+          rig.emitLog({
+            requestId: rig.flow.requestId, jobId: 'job', argv: ['pnpm'], cwd: '/probe',
+            stream: 'stdout', text,
+          })
+        }
+        return Promise.resolve({
+          ...CHANGE,
+          application: 'failed',
+          error: { code: 'operation-error', diagnostic: 'pnpm exited 1' },
+        })
+      },
+    })
+    const step = await rig.flow.begin()
+    check(`${tag}: a credential split across log chunks (${label}) stays out of the report`,
+      step.kind === 'done' && !rig.lines.some(line => line.includes('probe-secret')),
+      rig.lines.join(' | '))
+    check(`${tag}: the same URL is still reported, redacted, once its chunks are joined (${label})`,
+      rig.lines.some(line => line.includes('https://registry.example.com/x')), rig.lines.join(' | '))
+  }
+
+  // The other end of the same rule: a stream that ends without a newline has
+  // still said its last line, and the report keeps it.
+  {
+    const rig = makeInstallRig({
+      feed: TRUSTED,
+      install: () => {
+        rig.emitLog({
+          requestId: rig.flow.requestId, jobId: 'job', argv: ['pnpm'], cwd: '/probe',
+          stream: 'stderr', text: 'last line without a newline',
+        })
+        return Promise.resolve({
+          ...CHANGE,
+          application: 'failed',
+          error: { code: 'operation-error', diagnostic: 'pnpm exited 1' },
+        })
+      },
+    })
+    const step = await rig.flow.begin()
+    check(`${tag}: a final line with no newline is still reported`,
+      step.kind === 'done' && rig.lines.some(line => line.includes('last line without a newline')),
+      rig.lines.join(' | '))
+  }
+
   // A service that throws before it hands back a promise: contained like a rejection.
   {
     const rig = makeInstallRig({ feed: TRUSTED, install: () => { throw new Error(SYNC_FAILURE) } })
@@ -830,6 +891,37 @@ for (const [fullscreen, columns, service] of [
     await pending
     check(`${tag}: an install that ends cancelled does not report a second ending`,
       !rig.lines.some(line => line.includes('Install failed')), rig.lines.join(' | '))
+  }
+
+  // Two Escs, one rollback. The service's answer is the whole of the wait, so a
+  // second cancel answers only when the first one does: a `done` that lands
+  // before the profile is restored is what lets the screen close the pane (and
+  // hand the prompt back) over work that is still going on.
+  {
+    let resolveCancel: ((value: PluginInstallCancellation) => void) | undefined
+    let resolveInstall: ((result: ChangeResult) => void) | undefined
+    const rig = makeInstallRig({
+      feed: TRUSTED,
+      install: () => new Promise<ChangeResult>(resolve => { resolveInstall = resolve }),
+      cancel: () => new Promise<PluginInstallCancellation>(resolve => { resolveCancel = resolve }),
+    })
+    const pending = rig.flow.begin()
+    await tick()
+    const first = rig.flow.cancel()
+    const second = rig.flow.cancel()
+    let secondSettled = false
+    void second.then(() => { secondSettled = true })
+    await tick()
+    check(`${tag}: a repeated cancel waits for the rollback instead of answering early`,
+      !secondSettled && rig.cancels.length === 1, `settled ${secondSettled} · ${rig.cancels.length}`)
+    resolveCancel?.({ status: 'cancelled' })
+    resolveInstall?.({ ...CHANGE, application: 'cancelled' })
+    await pending
+    check(`${tag}: both cancels settle on the one answer`,
+      (await first).kind === 'done' && (await second).kind === 'done', `${secondSettled}`)
+    check(`${tag}: the rollback is still announced exactly once`,
+      rig.lines.filter(line => line.includes(t('plugins-install-cancelled'))).length === 1,
+      rig.lines.join(' | '))
   }
 
   // Closing the pane while the spec is still being read: the inspection's answer
@@ -950,7 +1042,10 @@ for (const [fullscreen, columns, service] of [
   async function mountInstallChat(options: {
     readonly feed: FirstPartyFeedLoad
     readonly notice: PluginInstallNotice
-    readonly install: () => Promise<ChangeResult>
+    /** What one install answers; the options it was handed are the fixture's view of `approvedBuilds`. */
+    readonly install: (settings: InstallBundleOptions) => Promise<ChangeResult>
+    /** Defers the service's answer to `cancelInstall`: the rollback's own clock. */
+    readonly cancel?: () => Promise<PluginInstallCancellation>
     /** What the service answers for one spec; the fixture's registry answer by default. */
     readonly inspect?: (spec: string) => Promise<PluginSpecInspection>
     /** The request id of the Nth install in this Chat; one fixed id by default. */
@@ -969,8 +1064,16 @@ for (const [fullscreen, columns, service] of [
         inspections += 1
         return options.inspect?.(spec) ?? Promise.resolve(accepted)
       },
-      installBundle: (spec, settings) => { installSpecs.push(spec); installs.push(settings ?? {}); return options.install() },
-      cancelInstall: requestId => { cancels.push(requestId); return Promise.resolve({ status: 'cancelled' }) },
+      installBundle: (spec, settings) => {
+        const installOptions = settings ?? {}
+        installSpecs.push(spec)
+        installs.push(installOptions)
+        return options.install(installOptions)
+      },
+      cancelInstall: requestId => {
+        cancels.push(requestId)
+        return options.cancel?.() ?? Promise.resolve({ status: 'cancelled' } as const)
+      },
       listBundles: () => Promise.resolve(bundles),
     }
     const { term, stdin, screen, hasText, run, render } = makeHarness(options.columns ?? 100, options.fullscreen ?? false)
@@ -994,11 +1097,14 @@ for (const [fullscreen, columns, service] of [
       model: 'fake-model', provider: '', cwd: process.cwd(), activity: false,
     })
     let flows = 0
-    const instance = await render(React.createElement(Chat, {
+    // The rig is the host here: it decides the layout AND hands it to the screen,
+    // so the two cannot drift apart the way `fullscreen: false` let them (the
+    // fullscreen case was rendering an inline Chat under a fullscreen label).
+    const chatProps = {
       channel: channel as never, questionStore: new QuestionStore(), approvalStore: new ApprovalStore(),
-      onExit: () => undefined, fullscreen: false, trajectorySeen: true,
+      onExit: () => undefined, fullscreen: options.fullscreen ?? false, trajectorySeen: true,
       kernelEntries: kernelEntriesOf(listBackends()),
-      onPluginInstall: (args, sink) => {
+      onPluginInstall: (args: string, sink: PluginInstallSink) => {
         const parsed = parsePluginArgs(args)
         if (parsed.kind !== 'install' || parsed.spec === '') return undefined
         const index = flows
@@ -1014,7 +1120,8 @@ for (const [fullscreen, columns, service] of [
           requestId: options.requestId?.(index) ?? ('probe-pane' as PluginInstallRequestId),
         })
       },
-    }))
+    }
+    const instance = await render(React.createElement(Chat, chatProps))
     // 固定窗:pacing the key handlers attach after the first frame.
     await sleep(300)
     /** One turn event onto the bound session; `channel.working` follows it. */
@@ -1028,6 +1135,8 @@ for (const [fullscreen, columns, service] of [
       installs, installSpecs, cancels, screen, hasText,
       run,
       get inspections(): number { return inspections },
+      /** What the screen was actually handed (not what the case asked for). */
+      chatFullscreen: (): boolean => chatProps.fullscreen === true,
       working: (): boolean => channel.working === true,
       /** Local rows titled after one report: one per push onto the bound session. */
       reportRows: (title: string): number => channel.rows.filter(row => row.text === title).length,
@@ -1080,8 +1189,13 @@ for (const [fullscreen, columns, service] of [
   }
 
   // A third-party package: the trust confirmation is the pane's reason to exist,
-  // and Esc before answering installs nothing. Run in the three layouts the
-  // screen has to survive: inline at 100 and 50 columns, and fullscreen.
+  // and Esc before answering installs nothing — Enter installs. Run in the three
+  // layouts the screen has to survive: inline at 100 and 50 columns, and
+  // fullscreen. The layout is the screen's, not just the host's: `chatFullscreen`
+  // reads what Chat was handed, so a case tagged fullscreen cannot quietly test
+  // an inline screen again (the pane's own frame is the same either way — what
+  // `fullscreen` moves lives in the side panel and the whole-screen key paths,
+  // both outside this overlay — so the wiring is the only proof there is).
   for (const [fullscreen, columns] of [[false, 100], [false, 50], [true, 100]] as const) {
     const layout = `${fullscreen ? 'fullscreen' : 'inline'} ${columns}`
     const rig = await mountInstallChat({
@@ -1092,9 +1206,13 @@ for (const [fullscreen, columns, service] of [
       fullscreen,
     })
     try {
+      check(`${tag} ${layout}: the screen was given the layout under test`,
+        rig.chatFullscreen() === fullscreen, String(rig.chatFullscreen()))
       await rig.run('/plugin install verify-fresh-plugin')
       check(`${tag} ${layout}: an unlisted package is asked to confirm trust`,
         await settled(() => rig.hasText('Install plugin') && rig.hasText('full trust, no sandbox')), rig.screen())
+      check(`${tag} ${layout}: the pane names the package it is about to install`,
+        rig.hasText('To install:') && rig.hasText(PLUGIN), rig.screen())
       check(`${tag} ${layout}: the trust pane says the package will not auto-update`,
         rig.hasText('will not auto-update'), rig.screen())
       check(`${tag} ${layout}: the pane keeps its key hint on screen`,
@@ -1104,6 +1222,16 @@ for (const [fullscreen, columns, service] of [
         await settled(() => !rig.hasText('Install plugin')), rig.screen())
       check(`${tag} ${layout}: Esc on the confirmation installs nothing`,
         rig.installs.length === 0, String(rig.installs.length))
+      // The positive half in the same layout: the pane's Enter is what installs.
+      await rig.run('/plugin install verify-fresh-plugin')
+      check(`${tag} ${layout}: the pane comes back for the answer`,
+        await settled(() => rig.hasText('Install plugin')), rig.screen())
+      await rig.enter()
+      check(`${tag} ${layout}: Enter installs what the pane named, in this layout`,
+        await settled(() => rig.hasText(`Installed ${PLUGIN}`)), rig.screen())
+      check(`${tag} ${layout}: the install ran once, in this layout`,
+        rig.installs.length === 1 && rig.installSpecs[0] === `${PLUGIN}@${VERSION}`,
+        `${rig.installs.length} · ${JSON.stringify(rig.installSpecs)}`)
     } finally {
       await rig.done()
     }
@@ -1128,6 +1256,39 @@ for (const [fullscreen, columns, service] of [
         await settled(() => rig.screen().includes(t('plugins-install-cancelled'))), rig.screen())
       resolveInstall?.({ ...CHANGE, application: 'cancelled' })
       check(`${tag}: the pane closes once the service confirms the cancellation`,
+        await settled(() => !rig.hasText('Install plugin')), rig.screen())
+    } finally {
+      await rig.done()
+    }
+  }
+
+  // Two Escs, one rollback, at the screen level: the pane is the only place the
+  // cancellation can be watched from, and it must stay until the service says
+  // the profile is back — closing it early hands the prompt back over work that
+  // is still going on.
+  {
+    let resolveCancel: ((value: PluginInstallCancellation) => void) | undefined
+    let resolveInstall: ((result: ChangeResult) => void) | undefined
+    const rig = await mountInstallChat({
+      feed: firstParty,
+      notice: { kind: 'declared' },
+      install: () => new Promise<ChangeResult>(resolve => { resolveInstall = resolve }),
+      cancel: () => new Promise<PluginInstallCancellation>(resolve => { resolveCancel = resolve }),
+    })
+    try {
+      await rig.run(`/plugin install ${PLUGIN}@${VERSION}`)
+      check(`${tag}: the install is in flight before the first Esc`,
+        await settled(() => rig.installs.length === 1), rig.screen())
+      await rig.escape()
+      check(`${tag}: the first Esc hands the run to the service`,
+        await settled(() => rig.cancels.length === 1), JSON.stringify(rig.cancels))
+      await rig.escape()
+      check(`${tag}: a second Esc does not close the pane over the rollback`,
+        rig.hasText('Install plugin') && rig.cancels.length === 1,
+        `${JSON.stringify(rig.cancels)} · ${rig.screen()}`)
+      resolveCancel?.({ status: 'cancelled' })
+      resolveInstall?.({ ...CHANGE, application: 'cancelled' })
+      check(`${tag}: the pane closes once the rollback is back`,
         await settled(() => !rig.hasText('Install plugin')), rig.screen())
     } finally {
       await rig.done()
@@ -1160,6 +1321,72 @@ for (const [fullscreen, columns, service] of [
       check(`${tag}: the retry carries the approved build scripts`,
         rig.installs.length === 2 && JSON.stringify(rig.installs[1]?.approvedBuilds) === '["esbuild"]',
         JSON.stringify(rig.installs))
+    } finally {
+      await rig.done()
+    }
+  }
+
+  // The approval is spent the moment the service takes it: it is written into
+  // the profile before pnpm runs (and echoed back as `result.approvedBuilds`),
+  // and a name that is no longer pending is refused as `stale-approval`. So a
+  // component that turns out to be incompatible has to be risked with an
+  // approval that already landed — offering it again would refuse the retry and
+  // leave the install unfinishable. The fixture enforces the service's own rule,
+  // so losing this cannot pass as a green retry.
+  {
+    const allowed = new Set<string>()
+    let attempt = 0
+    const rig = await mountInstallChat({
+      feed: firstParty,
+      notice: { kind: 'declared' },
+      install: settings => {
+        attempt += 1
+        const approved = settings.approvedBuilds ?? []
+        if (approved.some(name => allowed.has(name))) {
+          return Promise.resolve({ ...CHANGE, application: 'failed', error: { code: 'stale-approval' } })
+        }
+        for (const name of approved) allowed.add(name)
+        if (attempt === 1) {
+          return Promise.resolve({
+            ...CHANGE,
+            application: 'failed',
+            error: { code: 'operation-error', diagnostic: 'Ignored build scripts: esbuild' },
+            pendingBuilds: ['esbuild'],
+          })
+        }
+        if (attempt === 2) {
+          return Promise.resolve({
+            ...CHANGE,
+            application: 'failed',
+            approvedBuilds: [...approved],
+            error: {
+              code: 'incompatible-version',
+              incompatible: [{
+                name: 'probe-component', version: '1.0.0', runtimeVersion: '0.2.0-rc.2',
+                peers: { '@deepseek-ai/dsh': '>=99.0.0' },
+              }],
+            },
+          })
+        }
+        return Promise.resolve(CHANGE)
+      },
+    })
+    try {
+      await rig.run(`/plugin install ${PLUGIN}@${VERSION}`)
+      check(`${tag}: the blocked build scripts come first`,
+        await settled(() => rig.hasText('These build scripts need approval')), rig.screen())
+      await rig.enter()
+      check(`${tag}: the approved scripts reach the service once`,
+        await settled(() => rig.installs.length === 2 &&
+          JSON.stringify(rig.installs[1]?.approvedBuilds) === '["esbuild"]'), JSON.stringify(rig.installs))
+      check(`${tag}: an incompatible component is reported after the approval landed`,
+        await settled(() => rig.hasText('Incompatible packages:') && rig.hasText('probe-component')), rig.screen())
+      await rig.enter()
+      check(`${tag}: the retry after a risk does not resubmit the spent approval`,
+        await settled(() => rig.installs.length === 3 && rig.installs[2]?.approvedBuilds === undefined),
+        JSON.stringify(rig.installs))
+      check(`${tag}: the install finishes once the risk is accepted`,
+        await settled(() => rig.hasText(`Installed ${PLUGIN}`)), rig.screen())
     } finally {
       await rig.done()
     }
