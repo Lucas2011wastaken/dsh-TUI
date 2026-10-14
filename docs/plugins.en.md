@@ -61,9 +61,19 @@ Also an experimental public surface:
   (`BackendSpec`, `validateBackendSpec`, `backendAdmission`) and conformance
   (`TUI-BACKEND-001`) are usable, and the **admission chain (manifest →
   registry → descriptor) is wired**; what is still missing is the step that
-  reads a mounted bundle's declaration into the registry and the kernel picker
-  (the install chain), so "install a third-party backend, restart, see it in the
-  picker" does not hold end to end yet.
+  reads a mounted bundle's declaration into the registry and the kernel picker,
+  so "install a third-party backend, restart, see it in the picker" does not hold
+  end to end yet.
+- **Installing a package is available in the terminal itself (C-4)**: `/plugin
+  install <spec>` goes through the host's `ctx.pluginManager` — a pre-install
+  notice, a trust confirmation decided by provenance of the package (the judge is
+  the packaged `tui-profile/feed/first-party.json`, decided offline; anything it
+  cannot vouch for falls back to the confirmation), `esc` to cancel (the service
+  rolls the profile back), build scripts approved in the pane, and an
+  **exact-version exemption** for an incompatible version. **Known gaps**:
+  provenance is only a one-vote-to-veto seam with no online check at all (the
+  host service exposes no such API), and with no service the pane prints the CLI
+  command and the reason instead of **running `dsh plugin` on the user's behalf**.
 - `grants` is now the narrower `HostGrantFacade`; see that PR for migration
   details.
 - On `TuiSceneProps.channel` (`ChannelUi`), `minimal` / `setMinimal()` were
