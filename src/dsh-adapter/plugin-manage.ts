@@ -157,7 +157,12 @@ export interface PluginManageFlow {
   begin(): Promise<PluginManageStep>
   /** Answer a `confirm` step: proceed with the write. */
   confirm(): Promise<PluginManageStep>
-  /** Release anything the flow holds (nothing today; the install flow's shape). */
+  /**
+   * Release anything the flow holds. Nothing today, and deliberately not a stop
+   * button: these three actions have no cancellation, and a write already handed
+   * to the service settles on its own (the install flow's `dispose` is the same
+   * shape, plus the subscriptions it really does hold).
+   */
   dispose(): void
 }
 
@@ -282,7 +287,6 @@ export function createPluginManageFlow(options: PluginManageFlowOptions): Plugin
   let target: PluginManageTarget | undefined
   /** What the report calls it: its own name, never the argument text. */
   let label = ''
-  let stopped = false
 
   /** Whether the session that asked is still bound; false drops every write. */
   const live = (): boolean => options.binding() === bindingAtStart
@@ -395,7 +399,7 @@ export function createPluginManageFlow(options: PluginManageFlowOptions): Plugin
   /** Write through the service, then turn its result into the next step. */
   async function run(): Promise<PluginManageStep> {
     const current = target
-    if (current === undefined || stopped) return { kind: 'done' }
+    if (current === undefined) return { kind: 'done' }
     // The write is the point of no return, and a turn may have started while the
     // pane waited for an answer: re-check here, not only at `begin()`.
     const refused = refuseWhileBusy()
@@ -486,17 +490,13 @@ export function createPluginManageFlow(options: PluginManageFlowOptions): Plugin
     async begin() {
       const refused = refuseWhileBusy()
       if (refused !== undefined) return refused
-      const step = await decide()
-      // The read can take a moment: a stop that lands while it is in flight ends
-      // the flow here, before anything is asked or written.
-      if (stopped) return { kind: 'done' }
-      return step
+      return decide()
     },
     async confirm() {
-      return stopped ? { kind: 'done' } : run()
+      return run()
     },
     dispose() {
-      // Nothing subscribed today. Kept so both write flows have the same shape.
+      // Nothing subscribed today; see the interface's own note.
     },
   }
 }
