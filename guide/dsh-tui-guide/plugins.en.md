@@ -80,6 +80,32 @@ Also an experimental public surface:
   host service exposes no such API), and with no service the transcript reports
   the CLI command and the reason instead of **running `dsh plugin` on the user's
   behalf** (no pane opens: there is no flow to drive).
+- **Lifecycle actions are available in the terminal itself (C-5)**: `/plugin remove
+  <bundle>`, `/plugin enable <name|id>` and `/plugin disable <name|id>` go through the
+  same host service. **A bundle and a row are two levels**: a bundle is a composition
+  layer (the profile manifest's `dsh.profile.bundles`), a row is one patch entry's
+  `disabled`. The argument resolves against one snapshot, a bundle name first and
+  exactly, then `entryId` → `patchId` → module name; nothing that matches is reported
+  with what is addressable rather than guessed at. **Gate 2** (this application may not
+  switch itself off) refuses three kinds of target hard — the bundle providing this app,
+  the host layer `@deepseek-ai/dsh-base`, and the rows this package itself provides —
+  with a reason line and **no service call at all**, and it does so whether or not hot
+  reload is live (the host's own `stop-profile` guard only fires without HMR, and this
+  profile runs `patchReload: live`). `enable` is never refused by gate 2: it is the
+  repair action, and refusing it would seal off the only in-UI way back from a profile
+  somebody edited by hand. The host's own lock (`management-required` / `unaddressable`)
+  refuses both directions and its reason is quoted as given. **Confirmation follows the
+  source**: a third-party `enable` and any `remove` are confirmed (a removal lists the
+  rows and overrides it drops), while `disable` asks only about a row the host layer
+  owns (switching one off unloads services this app injects). A first-party `enable`
+  (the feed pins that exact `name@version`) skips the question and **still lands an audit
+  line** — skipping the question is not skipping the record. These actions have **no
+  cancellation**: the service offers none, so `esc` only closes the pane while the write
+  finishes and reports itself into the transcript (same session). **Known gaps**: a
+  removal deletes no user data — `~/.dsh-tui/backends/<id>/`, grants and storage
+  namespaces are **reported once** and left for the person to delete; when a package's
+  declaration cannot be read, the flow says it could not judge rather than claiming the
+  removal was clean.
 - `grants` is now the narrower `HostGrantFacade`; see that PR for migration
   details.
 - On `TuiSceneProps.channel` (`ChannelUi`), `minimal` / `setMinimal()` were

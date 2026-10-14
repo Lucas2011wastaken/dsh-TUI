@@ -62,6 +62,22 @@
   已写入的豁免保留。**已知缺口**：provenance 只留了「一票否决」的缝、
   没有任何在线校验（宿主服务不暴露这类 API）；服务缺席时由转录给出 CLI 命令与原因
   （不弹面板：没有可驱动的流程），**不在 TUI 内代跑 `dsh plugin`**。
+- **生命周期动作已在终端里可用（C-5）**：`/plugin remove <bundle>`、`/plugin enable
+  <名称|id>`、`/plugin disable <名称|id>` 走同一套宿主服务。**bundle 与行是两级语义**：
+  bundle 是组合层（写 profile 清单的 `dsh.profile.bundles`），行是 patch 的 `disabled`；
+  解析顺序是 bundle 名精确匹配优先，其次 `entryId` → `patchId` → 模块名，都不中就给可寻址
+  清单、不猜。**门禁 2**（不能自己杀自己）在 TUI 侧硬拒三类目标——提供本应用的 bundle、
+  宿主层 `@deepseek-ai/dsh-base`、本包自己提供的行——拒绝时给一行原因且**不发起任何服务
+  调用**，与 HMR 是否生效无关（上游 `stop-profile` 守卫只在没有 HMR 时生效，本 profile 是
+  `patchReload: live`，所以那道守卫靠不住）。`enable` 不因门禁 2 被拒：它是复原动作，把手工
+  改坏的 profile 关在门外等于封死唯一的 UI 退路；上游自己的锁（`management-required` /
+  `unaddressable`）则两个方向都拒，并原样转述上游的理由。**确认按来源分流**：第三方
+  `enable` 与任何 `remove` 都要确认（卸载列出它会动的行数与覆盖数），`disable` 只对宿主层
+  自己的行问一句（关掉它会卸载本应用注入的服务）；嫡系（feed 命中精确 `name@version`）
+  `enable` 免确认但**仍落一行审计**——免确认 ≠ 免记录/免展示。这些动作**没有取消面**：
+  服务不提供，Esc 只关面板，写入照旧跑完并（在同一会话里）把结果写进转录。**已知缺口**：
+  卸载不删用户数据——`~/.dsh-tui/backends/<id>/`、grants、存储命名空间只**报告一次**，由
+  用户自己决定删不删；包内声明读不到时明说「判断不了」，不制造「已清理」的假象。
 - `grants` 收窄为 `HostGrantFacade`，迁移细节见该 PR。
 - `TuiSceneProps.channel`（`ChannelUi`）上的 `minimal` / `setMinimal()` 已更名为
   `minimalUi` / `setMinimalUi()`；旧名保留为 **deprecated 别名**，读写同一个

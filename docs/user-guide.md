@@ -367,7 +367,7 @@ dsh-tui
 | `/hooks` | 无 | 占位：DSH hooks 未在组合中挂载时给出说明 |
 | `/mcp` | 无 | MCP 连接状态（工具按 `mcp__服务器__工具` 分组）；未配置时给出 `cordis.patch.yml` 插入示例 |
 | `/skills` | 无 | 技能目录选择器（名称+来源+简述），Enter 将可直调技能以 `/name ` 填回输入行 |
-| `/plugin` | `list` · `install <spec>` · `check <dsh-plugin.json 路径>` · `info <id 或 spec>` · `registries` | `list` 简洁列出你装的额外插件（不含安装自带）；无参给完整诊断：信任横幅 + host 描述符 + 授权矩阵 + 台账 + profile 的 bundle/行（预留为插件管理面板，后续段实现）；`install <spec>` 把插件装进当前 profile：装前提醒 + 信任确认，嫡系包按随包清单免确认，`esc` 收起面板（安装中尝试取消并等待写操作结束；来不及时等待安装完成，已登记的版本豁免保留），构建脚本被拦时在面板里批准，版本不兼容时可登记精确版本豁免；`check` 校验清单并给兼容状态，`info` 查已装条目或待装 spec，`registries` 列安装源 |
+| `/plugin` | `list` · `install <spec>` · `remove <bundle>` · `enable <名称\|id>` · `disable <名称\|id>` · `check <dsh-plugin.json 路径>` · `info <id 或 spec>` · `registries` | `list` 简洁列出你装的额外插件（不含安装自带），并给详情 / 卸载 / 启用 / 关闭的指引；无参给完整诊断：信任横幅 + host 描述符 + 授权矩阵 + 台账 + profile 的 bundle/行；`install <spec>` 把插件装进当前 profile：装前提醒 + 信任确认，嫡系包按随包清单免确认，`esc` 收起面板（安装中尝试取消并等待写操作结束；来不及时等待安装完成，已登记的版本豁免保留），构建脚本被拦时在面板里批准，版本不兼容时可登记精确版本豁免；`remove` / `enable` / `disable` 是生命周期动作：bundle 名精确匹配优先，其次 `entryId` / `patchId` / 模块名；门禁 2 对「提供本应用的 bundle / 宿主层 dsh-base / 本包自己的行」硬拒并给原因（零服务调用），第三方启用与任何卸载要确认。**这三个动作没有取消**：`esc` 只关面板，写入照旧跑完并把结果写进转录；卸载不会删掉 `~/.dsh-tui` 下你自己的数据，有残留时报告一次。`check` 校验清单并给兼容状态，`info` 查已装条目或待装 spec，`registries` 列安装源 |
 | `/update` | 无 | 更新 TUI 并自动重启恢复会话（仅 `dsh --profile` 启动可用；回合运行中会拒绝） |
 | `/terminal-setup` | 无 | 终端配置建议（Windows Terminal ≥110 列、粘贴键位） |
 

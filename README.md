@@ -408,6 +408,10 @@ During installation, `esc` attempts cancellation and keeps the pane open until t
 
 Failed installs show up to six redacted log lines; lines larger than 16 KiB are omitted with a notice.
 
+Managing what is installed: `/plugin remove <bundle>`, `/plugin enable <name | row id>` and `/plugin disable <name | row id>`. A bundle is a composition layer and a row is one patch entry, so the two are separate actions, and a bundle name is matched before any row identity. **Gate 2 refuses the three ways this app could switch itself off** — removing or disabling the bundle that provides it, the host layer `dsh-base`, or one of its own rows — and says which rule it broke, without calling the service at all; that holds whether or not hot reload is live, which is the path the host's own guard misses. `enable` is never refused by gate 2 (it is the repair action). Confirmation follows the source: a third-party enable and any removal ask first, `disable` asks only about a host-layer row, and a first-party enable skips the question but still lands an audit line.
+
+These three actions have no cancellation — the service offers none — so `esc` only closes the pane while the write finishes and reports itself into the transcript. Enable and disable have no CLI verb either (the service writes them into the profile's own files), and a removal never deletes your own data: anything left under `~/.dsh-tui` is reported once and left for you to delete.
+
 ## Documentation
 
 - **Start** — [Getting started](docs/getting-started.en.md) · [VS Code](docs/vscode.en.md)
