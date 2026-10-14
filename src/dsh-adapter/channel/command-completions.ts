@@ -139,10 +139,17 @@ export function createCommandCompletions(deps: {
         { name: 'list', description: 'List the plugins this profile added', descriptionKey: 'sugg-plugin-list-desc' },
         { name: 'info', description: 'Describe an installed plugin or an install spec', descriptionKey: 'sugg-plugin-info-desc' },
         { name: 'install', description: 'Install a plugin bundle into this profile', descriptionKey: 'sugg-plugin-install-desc' },
+        { name: 'remove', description: 'Uninstall a plugin bundle from this profile', descriptionKey: 'sugg-plugin-remove-desc' },
+        { name: 'disable', description: 'Switch a plugin bundle or row off', descriptionKey: 'sugg-plugin-disable-desc' },
+        { name: 'enable', description: 'Switch a plugin bundle or row back on', descriptionKey: 'sugg-plugin-enable-desc' },
         { name: 'registries', description: 'Show where installations ask', descriptionKey: 'sugg-plugin-registries-desc' },
         { name: 'check', description: 'Validate a plugin manifest without installing it', descriptionKey: 'sugg-plugin-check-desc' },
       ]
-      if (path.length === 2 && path[0] === 'plugin' && path[1] === 'info') {
+      // The three lifecycle forms take the same installed list as `info`: what
+      // they act on is what the profile holds, and an absent service answers an
+      // empty list rather than a throw.
+      if (path.length === 2 && path[0] === 'plugin'
+        && (path[1] === 'info' || path[1] === 'remove' || path[1] === 'enable' || path[1] === 'disable')) {
         deps.plugin?.warmPluginNames()
         return deps.plugin?.pluginNames() ?? []
       }

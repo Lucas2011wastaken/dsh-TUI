@@ -37,9 +37,10 @@ import { existsSync } from 'node:fs'
 import type { Context } from '@deepseek-ai/cordis'
 import type { BundleInfo, ChangeResult, PluginEntryId, PluginInfo } from '@deepseek-ai/dsh-plugin-manager/types'
 import { t, type I18nKey } from '../i18n.js'
+import { resolveDshProfileName } from '../update.js'
 import { backendDataDir } from '../utils/paths.js'
 import { pluginDeclarationOf } from './plugin-declaration.js'
-import { type FirstPartyFeedLoad, firstPartyVerdict } from './plugin-feed.js'
+import { type FirstPartyFeedLoad, firstPartyVerdict, loadFirstPartyFeed } from './plugin-feed.js'
 import {
   HOST_BUNDLE,
   type PluginGuardAction,
@@ -47,8 +48,8 @@ import {
   type PluginGuardRefusal,
   type PluginGuardTarget,
 } from './plugin-guard.js'
-import type { PluginManagerView } from './plugin-manager.js'
-import { cell, pluginFootprintContains } from './plugins-info.js'
+import { pluginManagerOf, type PluginManagerView } from './plugin-manager.js'
+import { cell, parsePluginArgs, pluginFootprintContains } from './plugins-info.js'
 
 /** The three lifecycle actions. */
 export type PluginManageAction = PluginGuardAction
@@ -484,6 +485,47 @@ export function createPluginManageFlow(options: PluginManageFlowOptions): Plugin
     dispose() {
       // Nothing subscribed today. Kept so both write flows have the same shape.
     },
+  }
+}
+
+/**
+ * The `/plugin remove|enable|disable` entry the screen calls: `/plugin`'s
+ * argument text in, a flow out — or `undefined` for anything that is not one of
+ * the three forms, and for a launch with no profile plugin service to act
+ * through (the screen then runs the read-only report, which is where the CLI
+ * route is printed).
+ *
+ * This is the one place that knows how a removal is wired to the running
+ * composition, and the only place that touches the person's own data. The
+ * residue watch is built here, **while the bundle is still installed**: the
+ * declaration that names its data directory and its plugin identity is a file
+ * inside the package, so it is unreadable once the bundle has left.
+ */
+export function createPluginManageEntry(
+  ctx: Context,
+  options: { readonly profileName?: string | undefined } = {},
+): (args: string, sink: PluginManageSink) => PluginManageFlow | undefined {
+  return (args, sink) => {
+    const parsed = parsePluginArgs(args)
+    if (parsed.kind !== 'remove' && parsed.kind !== 'enable' && parsed.kind !== 'disable') return undefined
+    if (parsed.target === '') return undefined
+    const manager = pluginManagerOf(ctx)
+    if (manager === undefined) return undefined
+    return createPluginManageFlow({
+      manager,
+      action: parsed.kind,
+      target: parsed.target,
+      // Read once per action: the feed is a packaged file, and a request that is
+      // never made should never touch the disk.
+      feed: loadFirstPartyFeed(),
+      binding: sink.binding,
+      busy: sink.busy,
+      onLines: sink.onLines,
+      profileName: options.profileName ?? resolveDshProfileName(),
+      // Only a removal has anything to leave behind, and only a removal has a
+      // package to read the declaration from.
+      residueOf: parsed.kind === 'remove' ? name => residueWatchOf(ctx, name) : undefined,
+    })
   }
 }
 

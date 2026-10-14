@@ -123,8 +123,10 @@ import { ModePicker } from '../components/ModePicker.js'
 import { KernelPicker } from '../components/KernelPicker.js'
 import { SdkInstallWizard, type SdkInstallPhase } from '../components/SdkInstallWizard.js'
 import { PluginInstallPane } from '../components/PluginInstallPane.js'
+import { PluginManagePane } from '../components/PluginManagePane.js'
 import type { SdkInstaller, SdkInstallSurface } from '../agent/backend.js'
 import type { PluginInstallFlow, PluginInstallSink, PluginInstallStep } from '../dsh-adapter/plugin-install.js'
+import type { PluginManageFlow, PluginManageSink, PluginManageStep } from '../dsh-adapter/plugin-manage.js'
 import { usePluginWriteFlow } from './chat/usePluginWriteFlow.js'
 import { ChannelPicker } from '../components/ChannelPicker.js'
 import type { KernelEntry, KernelStatus } from '../components/kernelCatalog.js'
@@ -394,6 +396,7 @@ export function Chat({
   kernelEntries = EMPTY_KERNEL_ENTRIES,
   onResolveSdkInstall,
   onPluginInstall,
+  onPluginManage,
   kernelPinned,
   fullscreen = false,
   trajectorySeen: trajectorySeenProp,
@@ -487,6 +490,17 @@ export function Chat({
    * the transcript.
    */
   onPluginInstall?: (args: string, sink: PluginInstallSink) => PluginInstallFlow | undefined
+  /**
+   * `/plugin remove|enable|disable <target>` (C-5): the lifecycle write path,
+   * wired to `createPluginManageEntry`. `undefined` means the input is none of
+   * those three forms, or this launch has no profile plugin service — the screen
+   * then runs the read-only report, which is where the CLI route is printed.
+   *
+   * The sink is the install sink's twin minus cancellation: these three actions
+   * have none to offer, so `sink.binding` / `sink.busy` / `sink.onLines` are the
+   * whole contract.
+   */
+  onPluginManage?: (args: string, sink: PluginManageSink) => PluginManageFlow | undefined
   /** 启动参数（Config 行 / DSH_TUI_BACKEND）压过了记忆：选择器明说。 */
   kernelPinned?: boolean
   /**
@@ -1013,6 +1027,32 @@ export function Chat({
     const view = pluginInstall.view
     if (view === undefined) return
     pluginInstall.run(view.flow.cancel())
+  }
+  /**
+   * `/plugin remove|enable|disable <target>` 的步骤态（C-5）：与装链路同一副骨架，
+   * 只有两条差异——没有 `cancelOnClose`（这三个动作服务不给取消面，写也是一次就
+   * 结算的 profile 操作，关掉浮层它照旧跑完并把结果写进转录），以及 Enter 只有
+   * 「确认」一种答案。
+   */
+  const pluginManage = usePluginWriteFlow<PluginManageStep, PluginManageFlow>({
+    overlayKind: 'plugin-manage',
+    overlay,
+    dispatchOverlay,
+    pushLocal: lines => channel.pushLocal('/plugin', lines),
+    initialStep: { kind: 'done' },
+    failureLine: error => t('plugins-manage-failed', { reason: cleanScalarText(error, COMMAND_RESULT_CELLS) }),
+  })
+  /** 开始一次生命周期动作；`false` 表示这段输入不是那三种形式（或本启动没有服务）。 */
+  const startPluginManage = (rawArgs: string): boolean => {
+    const flow = onPluginManage?.(rawArgs, {
+      binding: () => channel.agentBindingGeneration,
+      // 回合运行中改 profile 会触发应用／HMR：门禁在流程里（解析之前与写入之前各查一次）。
+      busy: () => channel.working,
+      onLines: lines => channel.pushLocal('/plugin', lines),
+    })
+    if (flow === undefined) return false
+    pluginManage.start(flow, flow.begin())
+    return true
   }
   const host = channel.backendChannels?.()
   const { rows: channelRows, open: openChannelPicker, pick: pickChannel, setMode: runBackendModeCommand, login: runBackendLogin } = useBackendChannels({
@@ -3584,6 +3624,12 @@ export function Chat({
         // `/plugin install <spec>` is the one form that needs a flow of its own
         // (C-4). Anything else — and any launch whose entry has no service to
         // install through — falls through to the read-only report below.
+        // The three lifecycle forms (C-5) and the install form each need a flow
+        // of their own. They are mutually exclusive by their subcommand, so
+        // trying one and then the other cannot take the wrong path; anything
+        // else — and any launch whose entry has no service — falls through to
+        // the read-only report below.
+        if (startPluginManage(rawInput)) return true
         if (startPluginInstall(rawInput)) return true
         // The bundle/row half comes from the host plugin service, so the
         // report is async (the `/agents` case reads the same way). `pushLocal`
@@ -5106,6 +5152,28 @@ export function Chat({
       }
       return
     }
+    if (overlay.kind === 'plugin-manage') {
+      // 生命周期浮层（C-5）：只有「确认」一种答案，写入中除 Esc 外不接键。
+      // 与装链路的关键差异是**没有取消**：这三个动作服务不提供取消面，写也是一次
+      // 就结算的 profile 操作，所以 Esc 只关面板，流程照旧跑完并把结果（仍按发起时
+      // 的 binding 加栅栏）写进转录；浮层没了就不再更新步骤态。
+      const view = pluginManage.view
+      if (view === undefined || view.busy) {
+        if (key.escape) {
+          pluginManage.close()
+          event.stopImmediatePropagation()
+        }
+        return
+      }
+      if (plainReturn) {
+        pluginManage.run(view.flow.confirm())
+        event.stopImmediatePropagation()
+      } else if (key.escape) {
+        pluginManage.close()
+        event.stopImmediatePropagation()
+      }
+      return
+    }
     if (overlay.kind === 'channel') {
       // 名册不冻在 overlay 里（channelRows 是渲染期派生值）：切换/导入后
       // 选择器自己就刷新成新状态，不需要重开。
@@ -5879,6 +5947,11 @@ export function Chat({
           {overlay.kind === 'plugin-install' && pluginInstall.view !== undefined && (
             <Box flexDirection="column" marginTop={1}>
               <PluginInstallPane step={pluginInstall.view.step} busy={pluginInstall.view.busy} />
+            </Box>
+          )}
+          {overlay.kind === 'plugin-manage' && pluginManage.view !== undefined && (
+            <Box flexDirection="column" marginTop={1}>
+              <PluginManagePane step={pluginManage.view.step} busy={pluginManage.view.busy} />
             </Box>
           )}
           {overlay.kind === 'channel' && (

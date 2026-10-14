@@ -272,8 +272,11 @@ for (const [fullscreen, columns, service] of [
       // cannot see: the completion tree must fall back to its static forms
       // instead of taking the keystroke path down with the raw throw.
       await type('/plugin ')
+      // Two static rows, not the whole table: the popup viewport holds five of
+      // the eight forms at this terminal height, and what this asserts is that
+      // the static half survived the throw at all.
       check(`${tag}: a synchronously throwing service leaves the static forms`,
-        await settled(() => hasText('plugin list') && hasText('plugin registries')), screen())
+        await settled(() => hasText('plugin list') && hasText('plugin remove')), screen())
       await clear()
     }
     if (service === 'present') {
@@ -302,13 +305,26 @@ for (const [fullscreen, columns, service] of [
       // slash and the composer with one, so the Tab assertion below reads the
       // composer alone.
       await type('/plugin ')
-      check(`${tag}: the popup offers the list and registries forms`,
-        await settled(() => hasText('plugin list') && hasText('plugin registries')), screen())
+      // C-5 把子命令从 5 条加到 8 条，本用例的 12 行终端只放得下前 5 条：可见的
+      // 是「浏览 / 查详情 / 安装 / 卸载 / 关闭」，余下三条落到折叠线以下（列表
+      // 自己带 ↓N），由下面的「打字即达」断言补上。
+      check(`${tag}: the popup leads with the actions, the lifecycle forms included`,
+        await settled(() => hasText('plugin list') && hasText('plugin info') && hasText('plugin install') &&
+          hasText('plugin remove') && hasText('plugin disable')), screen())
       if (columns >= 100) {
         check(`${tag}: the popup describes the forms`,
-          hasText(t('sugg-plugin-list-desc')) && hasText(t('sugg-plugin-registries-desc')) &&
-          hasText(t('sugg-plugin-install-desc')), screen())
+          hasText(t('sugg-plugin-list-desc')) && hasText(t('sugg-plugin-install-desc')) &&
+          hasText(t('sugg-plugin-remove-desc')) && hasText(t('sugg-plugin-disable-desc')), screen())
       }
+      await type('regi')
+      check(`${tag}: a form below the fold is still reachable by typing it`,
+        await settled(() => hasText('plugin registries')), screen())
+      if (columns >= 100) {
+        check(`${tag}: the narrowed popup still describes the form`,
+          hasText(t('sugg-plugin-registries-desc')), screen())
+      }
+      await clear()
+      await type('/plugin ')
       await type('info ')
       check(`${tag}: info completes the names the profile added`,
         await settled(() => hasText('plugin info verify-plugin-undeclared')), screen())

@@ -345,6 +345,15 @@ export type PluginArgs =
   | { readonly kind: 'registries' }
   /** `/plugin install <spec>`: the write path (C-4), which the UI drives. */
   | { readonly kind: 'install'; readonly spec: string }
+  /**
+   * The three lifecycle forms (C-5), which the UI drives through
+   * `dsh-adapter/plugin-manage.ts`. `target` is the raw argument: a bundle name
+   * or a row identity, resolved by the flow against the profile it reads rather
+   * than by a grammar here.
+   */
+  | { readonly kind: 'remove'; readonly target: string }
+  | { readonly kind: 'enable'; readonly target: string }
+  | { readonly kind: 'disable'; readonly target: string }
   | { readonly kind: 'unknown'; readonly sub: string }
 
 /** Route `/plugin`'s argument text: one parser, so both halves of the report agree. */
@@ -357,6 +366,9 @@ export function parsePluginArgs(args: string): PluginArgs {
   if (sub === 'info') return { kind: 'info', spec: rest.join(' ') }
   if (sub === 'registries') return { kind: 'registries' }
   if (sub === 'install') return { kind: 'install', spec: rest.join(' ') }
+  if (sub === 'remove') return { kind: 'remove', target: rest.join(' ') }
+  if (sub === 'enable') return { kind: 'enable', target: rest.join(' ') }
+  if (sub === 'disable') return { kind: 'disable', target: rest.join(' ') }
   return { kind: 'unknown', sub: sub ?? '' }
 }
 
@@ -390,6 +402,12 @@ export function pluginsInfoLines(args: string, deps: PluginsInfoDeps): string[] 
   // the UI drives the rest — this half stays the diagnostics it always was.
   if (parsed.kind === 'install') {
     if (parsed.spec === '') lines.push(t('plugins-install-usage'))
+    return lines
+  }
+  // The three lifecycle forms (C-5) report themselves as they run, like an
+  // install: a bare one is a usage error, and this half stays the diagnostics.
+  if (parsed.kind === 'remove' || parsed.kind === 'enable' || parsed.kind === 'disable') {
+    if (parsed.target === '') lines.push(t('plugins-manage-usage', { sub: parsed.kind }))
     return lines
   }
 
@@ -728,9 +746,9 @@ export async function pluginServiceLines(
   // would run it lives in the entry, and without a service the entry hands back
   // no flow, so this is the sentence the person reads.
   if (manager === undefined) return [t('plugins-service-unavailable')]
-  // The write path reports itself line by line as it runs (C-4): with a service
-  // present, this half has nothing to add to it.
-  if (parsed.kind === 'install') return []
+  // The write paths report themselves line by line as they run (C-4 / C-5): with
+  // a service present, this half has nothing to add to them.
+  if (parsed.kind === 'install' || parsed.kind === 'remove' || parsed.kind === 'enable' || parsed.kind === 'disable') return []
   // The service belongs to the host: a refusal or a crash there must not take
   // the diagnostics half down with it. Every call funnels into one line, so a
   // rejected promise still leaves a readable report instead of an unhandled

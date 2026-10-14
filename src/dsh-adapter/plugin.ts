@@ -17,6 +17,7 @@ import { kernelEntriesOf } from '../components/kernelCatalog.js'
 import { openBackendStartup, prepareBackendStartup, probeKernels, installSurfaceFor } from './backends.js'
 import { backendLabel, isBackendIdSyntax, isRegisteredBackend, listBackends, listOfferedBackends, loadBackend, parseBackendChoice, unloadBackends } from './backend-registry.js'
 import { createPluginInstallEntry } from './plugin-install.js'
+import { createPluginManageEntry } from './plugin-manage.js'
 import { formatSessionRef } from '../agent/refs.js'
 import type { AgentEvent } from '../agent/events.js'
 import type { AgentSession } from '../agent/session.js'
@@ -2412,6 +2413,14 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
     // install through; the screen then runs the read-only report instead.
     onPluginInstall: createPluginInstallEntry(ctx, {
       ownVersion: installedTuiVersion(),
+      profileName: profile ?? resolveDshProfileName(),
+    }),
+    // `/plugin remove|enable|disable` (C-5): the lifecycle write path. Wired the
+    // same way and for the same reason — the entry is where the real profile, the
+    // declaration read and the data directory meet, so a regression can drive
+    // them with a fixture context. `undefined` ⇒ not one of those forms, or no
+    // service to act through; the screen then runs the read-only report.
+    onPluginManage: createPluginManageEntry(ctx, {
       profileName: profile ?? resolveDshProfileName(),
     }),
     kernelPinned: backendPinned,
