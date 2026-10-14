@@ -1286,7 +1286,7 @@ for (const [fullscreen, columns, service] of [
         } as never,
       }))
       try {
-        await sleep(300)
+        await sleep(300) // 固定窗:pacing 首帧渲染完再读屏（无头终端一次节流渲染的窗口）
         const lines = rig.screen().split('\n')
         check(`${tag} ${columns} columns: the confirmation keeps its title`,
           rig.hasText('Install plugin'), rig.screen())
