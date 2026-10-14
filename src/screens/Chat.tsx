@@ -125,6 +125,7 @@ import { SdkInstallWizard, type SdkInstallPhase } from '../components/SdkInstall
 import { PluginInstallPane } from '../components/PluginInstallPane.js'
 import type { SdkInstaller, SdkInstallSurface } from '../agent/backend.js'
 import type { PluginInstallFlow, PluginInstallSink, PluginInstallStep } from '../dsh-adapter/plugin-install.js'
+import { usePluginWriteFlow } from './chat/usePluginWriteFlow.js'
 import { ChannelPicker } from '../components/ChannelPicker.js'
 import type { KernelEntry, KernelStatus } from '../components/kernelCatalog.js'
 import type { KernelBackendId } from '../kernelPrefs.js'
@@ -372,17 +373,6 @@ const EMPTY_KERNEL_ENTRIES: readonly KernelEntry[] = []
  *  image, so the same image staged twice is dismissed per token. */
 function peekKey(image: TranscriptImage, title: string | undefined): string {
   return `${title ?? ''} ${image.id}`
-}
-
-/**
- * One `/plugin install` in progress (C-4): the flow, the step it is waiting on,
- * and whether a service call is in flight. The flow writes its own transcript
- * lines, so this is only what the pane has to render and what the keys act on.
- */
-interface PluginInstallView {
-  readonly flow: PluginInstallFlow
-  readonly step: PluginInstallStep
-  readonly busy: boolean
 }
 
 export function Chat({
@@ -988,63 +978,20 @@ export function Chat({
     })
   }
   /**
-   * `/plugin install <spec>` 的步骤态（C-4）。与 SDK 向导同族：异步状态留在
-   * Chat，浮层只渲染它；ref 是回调里的真源，state 只驱动重绘。
-   *
-   * 流程自己把每一行写进转录（按发起时的 binding 加栅栏），所以这里只保存
-   * 「下一步要问什么」；`busy` 表示正在跑一次安装/取消，此时除 Esc 外不接键。
+   * `/plugin install <spec>` 的步骤态（C-4）。六件套（ref / state / 收尾 / 结算 /
+   * 栅栏 / 起步）与 manage 侧共用 `usePluginWriteFlow`，两处的差异只有「关浮层
+   * 要不要取消」与「Enter 调哪个方法」。
    */
-  const pluginInstallRef = React.useRef<PluginInstallView | undefined>(undefined)
-  const [pluginInstall, setPluginInstall] = React.useState<PluginInstallView | undefined>(undefined)
-  const pluginOverlay = overlay.kind === 'plugin-install' ? overlay : undefined
-  const storePluginInstall = (next: PluginInstallView | undefined): void => {
-    pluginInstallRef.current = next
-    setPluginInstall(next)
-  }
-  /** 浮层关闭即收尾：在途安装必须取消，否则 profile 会停在半装状态。 */
-  React.useEffect(() => {
-    if (pluginOverlay === undefined) return
-    return () => {
-      const view = pluginInstallRef.current
-      pluginInstallRef.current = undefined
-      view?.flow.dispose()
-      if (view?.busy === true) void view.flow.cancel()
-      setPluginInstall(undefined)
-    }
-  }, [pluginOverlay])
-  const closePluginInstall = (): void => {
-    dispatchOverlay({ type: 'close' })
-  }
-  /** 流程的下一步：`done` 没有可问的，直接收起浮层。 */
-  const settlePluginInstall = (flow: PluginInstallFlow, step: PluginInstallStep): void => {
-    const view = pluginInstallRef.current
-    // 迟到的回答属于已经不在场的那次流程（取消 A，另起 B，A 的 inspect 才回来）：
-    // 既不能改当前这次的状态，也不能替它收起浮层——那会让在跑的安装失去取消入口。
-    if (view === undefined || view.flow !== flow) return
-    if (step.kind === 'done') {
-      // 收尾前先把「在跑」摘掉：浮层 effect 的清理据此决定要不要取消——装完了
-      // 还留着 busy，清理就会去取消一个服务那边早已删掉的请求，并打出一行
-      // 「没有在跑的安装」，与刚发生的事矛盾。
-      storePluginInstall({ ...view, step, busy: false })
-      closePluginInstall()
-      return
-    }
-    storePluginInstall({ ...view, step, busy: false })
-  }
-  /**
-   * 流程自己兜住每一次服务调用；这里再兜一层，是防「没预料到的抛出」把进程
-   * 带走（未处理的 rejection 会杀掉进程守卫），代价是一行说明加收起浮层。
-   */
-  const guardPluginInstall = (flow: PluginInstallFlow, next: Promise<PluginInstallStep>): void => {
-    void next.then(step => settlePluginInstall(flow, step)).catch((error: unknown) => {
-      // 异常路径同样核对身份：一次早已被取代的流程不该收起现在的浮层。
-      if (pluginInstallRef.current?.flow !== flow) return
-      channel.pushLocal('/plugin', [t('plugins-install-failed', {
-        reason: cleanScalarText(error, COMMAND_RESULT_CELLS),
-      })])
-      closePluginInstall()
-    })
-  }
+  const pluginInstall = usePluginWriteFlow<PluginInstallStep, PluginInstallFlow>({
+    overlayKind: 'plugin-install',
+    overlay,
+    dispatchOverlay,
+    pushLocal: lines => channel.pushLocal('/plugin', lines),
+    initialStep: { kind: 'done' },
+    // 装了半截就关浮层会把 profile 留在半装状态：取消由服务自己结算（回滚）。
+    cancelOnClose: flow => flow.cancel(),
+    failureLine: error => t('plugins-install-failed', { reason: cleanScalarText(error, COMMAND_RESULT_CELLS) }),
+  })
   /** 开始一次安装；`false` 表示这段输入不是 install 形式（或本启动没有服务）。 */
   const startPluginInstall = (rawArgs: string): boolean => {
     const flow = onPluginInstall?.(rawArgs, {
@@ -1054,23 +1001,18 @@ export function Chat({
       onLines: lines => channel.pushLocal('/plugin', lines),
     })
     if (flow === undefined) return false
-    dispatchOverlay({ type: 'open', overlay: { kind: 'plugin-install' } })
-    storePluginInstall({ flow, step: { kind: 'done' }, busy: true })
-    guardPluginInstall(flow, flow.begin())
+    pluginInstall.start(flow, flow.begin())
     return true
   }
-  const runPluginInstallStep = (next: Promise<PluginInstallStep>): void => {
-    const view = pluginInstallRef.current
-    if (view === undefined) return
-    storePluginInstall({ ...view, busy: true })
-    guardPluginInstall(view.flow, next)
-  }
+  /**
+   * 取消在途安装。取消由服务自己结算（回滚 profile），浮层等它回答。
+   * 「还没开始装」（confirm 步）时不该走这里：服务那边没有可取消的请求，
+   * 只会打出一行「没有在跑的安装」——那条路径直接 `pluginInstall.close()`。
+   */
   const cancelPluginInstall = (): void => {
-    const view = pluginInstallRef.current
+    const view = pluginInstall.view
     if (view === undefined) return
-    // 取消由服务自己结算（回滚 profile），浮层等它回答。
-    storePluginInstall({ ...view, busy: true })
-    guardPluginInstall(view.flow, view.flow.cancel())
+    pluginInstall.run(view.flow.cancel())
   }
   const host = channel.backendChannels?.()
   const { rows: channelRows, open: openChannelPicker, pick: pickChannel, setMode: runBackendModeCommand, login: runBackendLogin } = useBackendChannels({
@@ -5125,7 +5067,7 @@ export function Chat({
     if (overlay.kind === 'plugin-install') {
       // 装链路浮层（C-4）：一次安装的每一步都是显式的——确认、批准构建脚本、
       // 接受版本风险；取消由服务自己结算（回滚 profile），期间除 Esc 外不接键。
-      const view = pluginInstallRef.current
+      const view = pluginInstall.view
       if (view === undefined || view.busy) {
         if (key.escape) {
           cancelPluginInstall()
@@ -5135,31 +5077,31 @@ export function Chat({
       }
       if (view.step.kind === 'confirm') {
         if (plainReturn) {
-          runPluginInstallStep(view.flow.confirm())
+          pluginInstall.run(view.flow.confirm())
           event.stopImmediatePropagation()
         } else if (key.escape) {
           // 还没开始装：收起浮层即可，不去服务那边取消一个不存在的安装。
-          closePluginInstall()
+          pluginInstall.close()
           event.stopImmediatePropagation()
         }
       } else if (view.step.kind === 'build-blocked') {
         if (plainReturn) {
-          runPluginInstallStep(view.flow.approve(view.step.builds))
+          pluginInstall.run(view.flow.approve(view.step.builds))
           event.stopImmediatePropagation()
         } else if (key.escape) {
-          closePluginInstall()
+          pluginInstall.close()
           event.stopImmediatePropagation()
         }
       } else if (view.step.kind === 'incompatible') {
         if (plainReturn) {
-          runPluginInstallStep(view.flow.acceptRisk())
+          pluginInstall.run(view.flow.acceptRisk())
           event.stopImmediatePropagation()
         } else if (key.escape) {
-          closePluginInstall()
+          pluginInstall.close()
           event.stopImmediatePropagation()
         }
       } else if (key.escape) {
-        closePluginInstall()
+        pluginInstall.close()
         event.stopImmediatePropagation()
       }
       return
@@ -5934,9 +5876,9 @@ export function Chat({
               <SdkInstallWizard phase={sdkPhase} />
             </Box>
           )}
-          {overlay.kind === 'plugin-install' && pluginInstall !== undefined && (
+          {overlay.kind === 'plugin-install' && pluginInstall.view !== undefined && (
             <Box flexDirection="column" marginTop={1}>
-              <PluginInstallPane step={pluginInstall.step} busy={pluginInstall.busy} />
+              <PluginInstallPane step={pluginInstall.view.step} busy={pluginInstall.view.busy} />
             </Box>
           )}
           {overlay.kind === 'channel' && (
