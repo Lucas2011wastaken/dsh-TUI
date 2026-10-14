@@ -59,8 +59,6 @@ export interface PluginManagerView {
   installBundle(spec: string, options?: InstallBundleOptions): Promise<ChangeResult>
   /** Stop an installation this manager owns and wait until its files are back. */
   cancelInstall(requestId: PluginInstallRequestId): Promise<PluginInstallCancellation>
-  /** Activate or deactivate an installed bundle layer (the "Enable now" action). */
-  setBundleEnabled(name: string, enabled: boolean): Promise<ChangeResult>
   /** The exact-version exemptions the profile's compatibility file carries. */
   listVersionExemptions(): { exemptions: Record<string, string[]>; warnings: string[] }
   /** Grant or revoke one `package@version` × runtime exemption. */

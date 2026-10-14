@@ -148,6 +148,8 @@ export function createPluginInstallFlow(options: PluginInstallFlowOptions): Plug
   /** The lines of pnpm output kept for a failure report. */
   const logTail: string[] = []
   let stopped = false
+  /** Whether `installBundle` was actually called: before that there is nothing to cancel. */
+  let installStarted = false
   const disposers: Array<() => void> = []
 
   /** Whether the session that asked is still bound; false drops every write. */
@@ -240,7 +242,9 @@ export function createPluginInstallFlow(options: PluginInstallFlowOptions): Plug
   /** Install, then turn the service's own result into the next step. */
   async function run(): Promise<PluginInstallStep> {
     const read = artifact
-    if (read === undefined) return { kind: 'done' }
+    // A person who closed the pane while the spec was still being read has not
+    // asked for this install: the inspection's answer must not start one.
+    if (read === undefined || stopped) return { kind: 'done' }
     let result: ChangeResult
     try {
       const installOptions: InstallBundleOptions = {
@@ -248,6 +252,7 @@ export function createPluginInstallFlow(options: PluginInstallFlowOptions): Plug
         ...options.registry === undefined ? {} : { registry: options.registry },
         ...approvedBuilds === undefined ? {} : { approvedBuilds: [...approvedBuilds] },
       }
+      installStarted = true
       result = await options.manager.installBundle(options.spec, installOptions)
     } catch (error) {
       emit([t('plugins-install-failed', { reason: cell(error instanceof Error ? error.message : String(error)) })])
@@ -344,6 +349,10 @@ export function createPluginInstallFlow(options: PluginInstallFlowOptions): Plug
     async begin() {
       const read = await inspect()
       if (read === undefined) return { kind: 'done' }
+      // The read can take a moment (a registry round trip): a cancel that lands
+      // while it is in flight stops the flow here, before anything is asked or
+      // installed.
+      if (stopped) return { kind: 'done' }
       const step = route(read)
       return step.kind === 'confirm' ? step : run()
     },
@@ -361,6 +370,9 @@ export function createPluginInstallFlow(options: PluginInstallFlowOptions): Plug
     },
     async cancel() {
       stopped = true
+      // Nothing was handed to the service yet: there is no run to stop, and
+      // asking it to cancel one would only answer "not-running".
+      if (!installStarted) return { kind: 'done' }
       try {
         const outcome = await options.manager.cancelInstall(requestId)
         emit([t(outcome.status === 'cancelled'

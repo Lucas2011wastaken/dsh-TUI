@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { statSync } from 'node:fs'
 import { isAbsolute, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import React from 'react'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import type { Agent, AgentHandle } from '@deepseek-ai/dsh-agent'
@@ -2437,7 +2438,21 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
           // Only a directory has a package-root declaration to read: a tarball
           // path must stay unjudged, never "declares nothing".
           if (!spec.startsWith('.') && !isAbsolute(spec)) return undefined
-          const directory = resolve(ctx.baseUrl ?? process.cwd(), spec)
+          // A relative spec is relative to the profile: `ctx.baseUrl` is the
+          // loader's base for these rows, and it arrives as a `file:` URL (or a
+          // plain path on some hosts) — the same pair `requireBase()` in
+          // `admission-loader.ts` accepts. `path.resolve` on a URL would invent
+          // a path that never exists, so the base is converted first.
+          const baseUrl = (ctx as { baseUrl?: string }).baseUrl
+          let base = process.cwd()
+          if (baseUrl !== undefined && baseUrl !== '') {
+            try {
+              base = baseUrl.startsWith('file:') ? fileURLToPath(baseUrl) : baseUrl
+            } catch {
+              base = process.cwd()
+            }
+          }
+          const directory = resolve(base, spec)
           try {
             return statSync(directory).isDirectory() ? directory : undefined
           } catch {

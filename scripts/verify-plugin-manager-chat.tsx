@@ -119,7 +119,6 @@ const manager: PluginManagerView = {
   // The write half (C-4). The read-only forms never reach these; the install
   // flow below hands in its own service so every write stays assertable.
   installBundle: () => Promise.resolve({ changed: true, application: 'restart-required', stage: 'install', target: 'verify-fresh-plugin' }),
-  setBundleEnabled: () => Promise.resolve({ changed: true, application: 'restart-required', stage: 'enable', target: 'verify-fresh-plugin' }),
   cancelInstall: () => Promise.resolve({ status: 'cancelled' }),
   listVersionExemptions: () => ({ exemptions: {}, warnings: [] }),
   setVersionExemption: () => Promise.resolve({ changed: true, application: 'restart-required', stage: 'enable', target: 'verify-fresh-plugin' }),
@@ -417,6 +416,10 @@ for (const [fullscreen, columns, service] of [
     await run('/plugin bogus')
     check(`${tag}: an unknown subcommand names every supported form`,
       await settled(() => hasText('Unknown subcommand: bogus') && hasText('registries')), screen())
+    // …including the write path: a form the list forgets is a form nobody
+    // discovers (the list is prose, so nothing else can catch it).
+    check(`${tag}: the unknown-subcommand list names the install form`,
+      await settled(() => hasText('install <spec>')), screen())
   } finally {
     instance.unmount()
     channel.releaseContributions()
@@ -697,6 +700,28 @@ for (const [fullscreen, columns, service] of [
     await pending
     check(`${tag}: an install that ends cancelled does not report a second ending`,
       !rig.lines.some(line => line.includes('Install failed')), rig.lines.join(' | '))
+  }
+
+  // Closing the pane while the spec is still being read: the inspection's answer
+  // must not start an install, and there is nothing in flight to cancel.
+  {
+    let resolveInspect: ((value: PluginSpecInspection) => void) | undefined
+    const rig = makeInstallRig({
+      feed: TRUSTED,
+      inspect: () => new Promise<PluginSpecInspection>(resolve => { resolveInspect = resolve }),
+    })
+    const pending = rig.flow.begin()
+    await tick()
+    const step = await rig.flow.cancel()
+    resolveInspect?.(ACCEPTED)
+    check(`${tag}: cancelling while the spec is still being read installs nothing`,
+      (await pending).kind === 'done' && step.kind === 'done' && rig.installs.length === 0,
+      `${rig.installs.length} installs · ${rig.lines.join(' | ')}`)
+    check(`${tag}: cancelling before anything started does not ask the service to cancel`,
+      rig.cancels.length === 0, JSON.stringify(rig.cancels))
+    check(`${tag}: nothing claims an install was cancelled when none had started`,
+      !rig.lines.some(line => line.includes('Install cancelled') || line.includes('realign it')),
+      rig.lines.join(' | '))
   }
 
   // The fence: a session that moved on gets no further lines, and the run goes on.
