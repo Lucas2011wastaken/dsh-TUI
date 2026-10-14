@@ -1283,6 +1283,13 @@ for (const [fullscreen, columns, service] of [
       check(`${tag}: the first Esc hands the run to the service`,
         await settled(() => rig.cancels.length === 1), JSON.stringify(rig.cancels))
       await rig.escape()
+      // 固定窗:探针 断言「状态不得改变」：第二次 Esc 唯一被允许的效果就是等待，
+      // 它没有可轮询的完成条件，所以只能等一个观察窗再断言面板仍在。断言紧贴
+      // 按键读屏是假绿：错误基线上 `cancel()` 立刻 done，Chat 关面板、还输入，
+      // 但那次关闭要经 React → 节流渲染（16ms 帧）→ xterm 异步解析才落到屏幕，
+      // 立即读到的仍是关屏之前的旧帧——缺陷在断言眼下发生。窗口要覆盖那条链，
+      // 250ms 约十五帧，慢 runner 上也不会读到旧屏幕。
+      await sleep(250)
       check(`${tag}: a second Esc does not close the pane over the rollback`,
         rig.hasText('Install plugin') && rig.cancels.length === 1,
         `${JSON.stringify(rig.cancels)} · ${rig.screen()}`)
