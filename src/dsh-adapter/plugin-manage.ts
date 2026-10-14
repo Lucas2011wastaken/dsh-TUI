@@ -41,6 +41,7 @@ import { resolveDshProfileName } from '../update.js'
 import { backendDataDir, DATA_DIR } from '../utils/paths.js'
 import { COMPOSITION_PACKAGE, pluginDeclarationOf } from './plugin-declaration.js'
 import { type FirstPartyFeedLoad, firstPartyVerdict, loadFirstPartyFeed } from './plugin-feed.js'
+import { failureReasonOf } from './plugin-install.js'
 import {
   HOST_BUNDLE,
   type PluginGuardAction,
@@ -164,18 +165,6 @@ export interface PluginManageFlow {
    * shape, plus the subscriptions it really does hold).
    */
   dispose(): void
-}
-
-/** The reason line for a result that failed, from the most specific field it carries. */
-function failureReasonOf(result: ChangeResult): string {
-  const error = result.error
-  if (error !== undefined) {
-    return error.diagnostic === undefined || result.packageResult?.truncated === true
-      ? error.code : `${error.code} — ${cell(error.diagnostic)}`
-  }
-  if (result.packageResult?.kind !== undefined) return result.packageResult.kind
-  if (result.failedAt !== undefined) return result.failedAt
-  return 'unknown'
 }
 
 /**

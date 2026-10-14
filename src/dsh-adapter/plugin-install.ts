@@ -139,8 +139,14 @@ export interface PluginInstallFlow {
   dispose(): void
 }
 
-/** The reason line for a result that failed, from the most specific field it carries. */
-function failureReasonOf(result: ChangeResult): string {
+/**
+ * The reason line for a result that failed, from the most specific field it
+ * carries. Exported because the lifecycle flow (`./plugin-manage.ts`) writes
+ * through the same `change()` funnel and reports the same shapes — and because
+ * the credential reasoning below is exactly the kind of rule that must not exist
+ * in two copies: a removal runs pnpm too.
+ */
+export function failureReasonOf(result: ChangeResult): string {
   const error = result.error
   if (error !== undefined) {
     // A failed package run repeats its byte-limited, interleaved capture in the

@@ -1657,6 +1657,28 @@ for (const [fullscreen, columns, service] of [
       has(incompatible, t('plugins-manage-manual-profile', { profile: 'probe-profile', target: THIRD })),
       incompatible.lines.join(' | '))
   }
+  // A removal runs pnpm too, so the failure reason it prints goes through the very
+  // rule the install flow's report does: a package run's capture can begin halfway
+  // through a credential-bearing URL, and reusing it as the diagnostic would put
+  // that fragment in the transcript. One implementation, two callers.
+  {
+    const secret = 'manage-cutoff-secret'
+    const full = `fetch https://reader:${'p'.repeat(1000)}${secret}@registry.example.com/x ${'x'.repeat(16200)}\ncomplete captured line\n`
+    const bytes = Buffer.from(full)
+    const output = bytes.subarray(bytes.length - 16384).toString('utf8')
+    const rig = await manage('remove', THIRD, {
+      change: () => Promise.resolve({
+        changed: false, application: 'failed', stage: 'remove', target: THIRD,
+        error: { code: 'operation-error', diagnostic: output },
+        packageResult: { exitCode: 1, output, truncated: true, logPath: '/probe/log' },
+      }),
+    }, true)
+    check(`${tag}: a failed removal never prints a capture that starts inside a credential`,
+      !rig.lines.some(line => line.includes(secret)), rig.lines.join(' | '))
+    check(`${tag}: …but it still names the structured reason`,
+      has(rig, t('plugins-manage-failed', { reason: 'operation-error' })), rig.lines.join(' | '))
+  }
+
   // A rejected call and one that throws before returning a promise both have to
   // leave a readable line: the second is the shape `.catch` cannot see.
   {
