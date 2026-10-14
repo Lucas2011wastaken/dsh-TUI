@@ -335,6 +335,13 @@ for (const [fullscreen, columns, service] of [
     if (service === 'absent') {
       check(`${tag}: absent service keeps the diagnostics and explains itself`,
         hasText(t('plugins-matrix-note')) && hasText('ctx.pluginManager'), screen())
+      // The write path degrades to the same place (C-4): an install form this
+      // composition cannot run through the service answers with the CLI route
+      // instead of pretending to install.
+      await clear()
+      await run('/plugin install verify-fresh-plugin')
+      check(`${tag}: an install form without the service points at the CLI`,
+        await settled(() => hasText('dsh plugin --profile dsh-tui') && hasText('ctx.pluginManager')), screen())
       continue
     }
     if (columns >= 100) {
