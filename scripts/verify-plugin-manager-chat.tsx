@@ -821,6 +821,9 @@ for (const [fullscreen, columns, service] of [
     readonly feed: FirstPartyFeedLoad
     readonly notice: PluginInstallNotice
     readonly install: () => Promise<ChangeResult>
+    /** 窄终端与全屏是终端可见改动的必测面（AGENTS.md）：默认 inline 100 列。 */
+    readonly columns?: number
+    readonly fullscreen?: boolean
   }) {
     const installs: InstallBundleOptions[] = []
     const service: PluginManagerView = {
@@ -829,7 +832,7 @@ for (const [fullscreen, columns, service] of [
       installBundle: (_spec, settings) => { installs.push(settings ?? {}); return options.install() },
       listBundles: () => Promise.resolve(bundles),
     }
-    const { term, stdin, screen, hasText, run, render } = makeHarness(100, false)
+    const { term, stdin, screen, hasText, run, render } = makeHarness(options.columns ?? 100, options.fullscreen ?? false)
     const ctx = {
       on: () => () => undefined,
       get: (name: string) => name === 'pluginManager' ? service : undefined,
@@ -902,23 +905,30 @@ for (const [fullscreen, columns, service] of [
   }
 
   // A third-party package: the trust confirmation is the pane's reason to exist,
-  // and Esc before answering installs nothing.
-  {
+  // and Esc before answering installs nothing. Run in the three layouts the
+  // screen has to survive: inline at 100 and 50 columns, and fullscreen.
+  for (const [fullscreen, columns] of [[false, 100], [false, 50], [true, 100]] as const) {
+    const layout = `${fullscreen ? 'fullscreen' : 'inline'} ${columns}`
     const rig = await mountInstallChat({
       feed: noFeed,
       notice: { kind: 'unjudged' },
       install: () => Promise.resolve(CHANGE),
+      columns,
+      fullscreen,
     })
     try {
       await rig.run('/plugin install verify-fresh-plugin')
-      check(`${tag}: an unlisted package is asked to confirm trust`,
+      check(`${tag} ${layout}: an unlisted package is asked to confirm trust`,
         await settled(() => rig.hasText('Install plugin') && rig.hasText('full trust, no sandbox')), rig.screen())
-      check(`${tag}: the trust pane says the package will not auto-update`,
+      check(`${tag} ${layout}: the trust pane says the package will not auto-update`,
         rig.hasText('will not auto-update'), rig.screen())
+      check(`${tag} ${layout}: the pane keeps its key hint on screen`,
+        rig.hasText('esc cancel'), rig.screen())
       await rig.escape()
-      check(`${tag}: Esc on the confirmation closes the pane`,
+      check(`${tag} ${layout}: Esc on the confirmation closes the pane`,
         await settled(() => !rig.hasText('Install plugin')), rig.screen())
-      check(`${tag}: Esc on the confirmation installs nothing`, rig.installs.length === 0, String(rig.installs.length))
+      check(`${tag} ${layout}: Esc on the confirmation installs nothing`,
+        rig.installs.length === 0, String(rig.installs.length))
     } finally {
       await rig.done()
     }
