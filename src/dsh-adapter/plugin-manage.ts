@@ -36,6 +36,7 @@
 import { existsSync } from 'node:fs'
 import type { Context } from '@deepseek-ai/cordis'
 import type { BundleInfo, ChangeResult, PluginEntryId, PluginInfo } from '@deepseek-ai/dsh-plugin-manager/types'
+import { validateBackendSpec } from '../adapter/spec/tui-contributions.js'
 import { t, type I18nKey } from '../i18n.js'
 import { resolveDshProfileName } from '../update.js'
 import { backendDataDir, DATA_DIR } from '../utils/paths.js'
@@ -393,6 +394,15 @@ export function createPluginManageFlow(options: PluginManageFlowOptions): Plugin
     // pane waited for an answer: re-check here, not only at `begin()`.
     const refused = refuseWhileBusy()
     if (refused !== undefined) return refused
+    let residue: PluginResidueWatch | undefined
+    if (current.kind === 'bundle' && current.action === 'remove') {
+      try {
+        // The declaration is inside the package that the write removes.
+        residue = options.residueOf?.(current.name)
+      } catch {
+        // An unreadable declaration leaves the removal's residue unjudged.
+      }
+    }
     let result: ChangeResult
     try {
       result = await write(current)
@@ -421,9 +431,9 @@ export function createPluginManageFlow(options: PluginManageFlowOptions): Plugin
       ])
       return { kind: 'done' }
     }
-    // The profile's files did not move: the target was already in the state the
-    // action asks for. Reported as such rather than dressed up as a change.
-    if (!result.changed) {
+    // A disk no-op says nothing about higher-priority overrides or a pending
+    // restart. Only an applied no-op is already in the requested state.
+    if (!result.changed && result.application === 'applied') {
       emit([t('plugins-manage-unchanged', { target: label })])
       return { kind: 'done' }
     }
@@ -434,7 +444,7 @@ export function createPluginManageFlow(options: PluginManageFlowOptions): Plugin
       t(APPLIED_KEYS[current.action], { target: label, state: t(stateKey) }),
       ...result.application === 'restart-required' ? [t('plugins-install-restart-hint')] : [],
     ])
-    if (current.kind === 'bundle' && current.action === 'remove') reportResidue(current.name)
+    if (current.kind === 'bundle' && current.action === 'remove') reportResidue(current.name, residue)
     return { kind: 'done' }
   }
 
@@ -456,8 +466,7 @@ export function createPluginManageFlow(options: PluginManageFlowOptions): Plugin
    * removal would be noise, and for a bundle that never had a backend it would
    * also answer a question nobody asked.
    */
-  function reportResidue(name: string): void {
-    const watch = options.residueOf?.(name)
+  function reportResidue(name: string, watch: PluginResidueWatch | undefined): void {
     if (watch === undefined) {
       emit([t('plugins-manage-residue-unjudged', { target: cell(name) })])
       return
@@ -538,7 +547,7 @@ export function createPluginManageEntry(
  *
  * The declaration says who the plugin is: its `id` is the identity the grants
  * file, the effect ledger and the storage namespaces record, and each
- * `x-dsh-tui` Backend contribution's `id` names the `<dataDir>/backends/<id>`
+ * `x-dsh-tui` Backend contribution's `spec.id` names the `<dataDir>/backends/<id>`
  * directory that backend writes to (`src/utils/paths.ts`). Read now, checked
  * later.
  *
@@ -575,9 +584,8 @@ export function residueWatchOf(ctx: Context, name: string, dataRoot: string = DA
 
 /**
  * The backend ids a declaration contributes. Only a `Backend` entry names one,
- * and only through its `id`: anything else in an `x-dsh-tui` array is another
- * contribution family with other fields, and reading an id out of one of those
- * would invent a directory that was never written.
+ * and only through its validated `spec.id`. The outer `id` identifies the
+ * contribution, not the backend whose data directory the host creates.
  */
 function backendIdsIn(record: Record<string, unknown> | undefined): string[] {
   const contributes = record?.contributes
@@ -589,7 +597,11 @@ function backendIdsIn(record: Record<string, unknown> | undefined): string[] {
     if (entry === null || typeof entry !== 'object') continue
     const candidate = entry as Record<string, unknown>
     if (candidate.kind !== 'Backend') continue
-    if (typeof candidate.id === 'string' && candidate.id !== '') ids.add(candidate.id)
+    try {
+      ids.add(validateBackendSpec(candidate.spec).id)
+    } catch {
+      // An invalid Backend spec does not identify a backend data directory.
+    }
   }
   return [...ids]
 }

@@ -4,7 +4,7 @@
  * `registries`, the removed old name, and what happens when the service is
  * absent or refuses every call.
  *
- * The service is a fake: nothing here installs, removes, or enables anything.
+ * The service is a fake: package removals touch only temporary fixtures.
  * The declared-and-supported branch of the tag goes through the same
  * parse/validate/negotiate path `check <path>` uses, which
  * `verify-plugin-negotiation` already exercises against real fixtures and a
@@ -12,6 +12,8 @@
  *
  * Run: node --import tsx/esm scripts/verify-plugin-manager-chat.tsx
  */
+import './lib/fake-home.mjs'
+
 process.env.FORCE_COLOR = '3'
 process.env.DSH_TUI_LANG = 'en'
 
@@ -1565,6 +1567,22 @@ for (const [fullscreen, columns, service] of [
     })
     check(`${tag}: an overridden write says HMR is live, in the install flow's own words`,
       has(overridden, t('plugins-install-state-overridden')), overridden.lines.join(' | '))
+    // Repeating an action can leave the patch unchanged while the running host
+    // still overrides it or still needs a restart. The two outcomes are independent.
+    for (const action of ['enable', 'disable'] as const) {
+      for (const application of ['overridden', 'restart-required'] as const) {
+        for (const changed of [true, false]) {
+          const rig = await manage(action, 'entry-third', {
+            change: () => Promise.resolve({ changed, application, stage: 'enable', target: 'entry-third' }),
+          }, true)
+          const state = t(application === 'overridden' ? 'plugins-install-state-overridden' : 'plugins-install-state-restart')
+          check(`${tag}: ${action} with changed=${String(changed)} preserves ${application}`,
+            has(rig, t(action === 'enable' ? 'plugins-manage-enabled' : 'plugins-manage-disabled', { target: THIRD, state })) &&
+            !has(rig, t('plugins-manage-unchanged', { target: THIRD })) &&
+            (application !== 'restart-required' || has(rig, t('plugins-install-restart-hint'))), rig.lines.join(' | '))
+        }
+      }
+    }
   }
 
   // The write that changed nothing: the profile is already in that state, and the
@@ -1755,6 +1773,11 @@ for (const [fullscreen, columns, service] of [
     const brokenWatch = await manage('remove', THIRD, { residue: () => () => { throw new Error('EACCES') } }, true)
     check(`${tag}: a footprint check that throws is "not judged", never "nothing left"`,
       has(brokenWatch, t('plugins-manage-residue-unjudged', { target: THIRD })), brokenWatch.lines.join(' | '))
+    const unreadable = await manage('remove', THIRD, { residue: () => { throw new Error('EACCES') } }, true)
+    check(`${tag}: a declaration read failure still removes the bundle and reports unjudged residue`,
+      unreadable.calls.join(',') === `removeBundle:${THIRD}` &&
+      has(unreadable, t('plugins-manage-removed', { target: THIRD, state: t('plugins-install-state-applied') })) &&
+      has(unreadable, t('plugins-manage-residue-unjudged', { target: THIRD })), unreadable.lines.join(' | '))
     const notARemoval = await manage('disable', THIRD, { residue: () => () => [LEFTOVER] })
     check(`${tag}: only a removal looks for residue`,
       !has(notARemoval, LEFTOVER), notARemoval.lines.join(' | '))
@@ -2757,8 +2780,9 @@ for (const [fullscreen, columns, service] of [
 {
   const tag = 'manage entry'
   const manifest = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { name: string; version: string }
-  const COMPONENT_ID = 'com.probe.managed-plugin'
-  const BACKEND_ID = 'probe-managed-backend'
+  const DECLARATION: unknown = JSON.parse(readFileSync(new URL('../tui-profile/conformance/fixtures/valid-backend-contribution.json', import.meta.url), 'utf8'))
+  const COMPONENT_ID = 'com.example.backend-plugin'
+  const BACKEND_ID = 'example-agent'
   const ROW_ENTRY = 'probe-row-entry'
   const calls: string[] = []
   /**
@@ -2790,7 +2814,7 @@ for (const [fullscreen, columns, service] of [
   const sink = { binding: () => 0, busy: () => false, onLines: () => undefined }
 
   /** A profile whose install tree holds one declared plugin package. */
-  function probeProfile(declaration: unknown | undefined): { readonly ctx: never; readonly name: string; readonly root: string } {
+  function probeProfile(declaration: unknown | undefined, service: PluginManagerView = PROBE_SERVICE): { readonly ctx: never; readonly name: string; readonly root: string } {
     const root = mkdtempSync(join(tmpdir(), 'dsh-manage-entry-'))
     const profile = join(root, 'profile')
     const installed = join(profile, 'node_modules', '@probe', 'managed-plugin')
@@ -2803,15 +2827,11 @@ for (const [fullscreen, columns, service] of [
       name: '@probe/managed-plugin',
       ctx: {
         on: () => () => undefined,
-        get: (name: string) => name === 'pluginManager' ? PROBE_SERVICE : undefined,
+        get: (name: string) => name === 'pluginManager' ? service : undefined,
         logger: { warn: () => undefined, info: () => undefined, debug: () => undefined },
         baseUrl: pathToFileURL(`${profile}/`).href,
       } as never,
     }
-  }
-  const DECLARATION = {
-    id: COMPONENT_ID,
-    contributes: { 'x-dsh-tui': [{ kind: 'Backend', id: BACKEND_ID }] },
   }
 
   {
@@ -2924,6 +2944,43 @@ for (const [fullscreen, columns, service] of [
     check(`${tag}: a non-Backend contribution never names a backend data directory`,
       residueWatchOf(other.ctx, other.name, dataRoot)?.().every(path => path !== backendDataDir(BACKEND_ID, dataRoot)) === true,
       JSON.stringify(residueWatchOf(other.ctx, other.name, dataRoot)?.()))
+    for (const spec of [undefined, { id: '../escape' }]) {
+      const invalid = probeProfile({ id: '', contributes: { 'x-dsh-tui': [{ kind: 'Backend', id: BACKEND_ID, spec }] } })
+      check(`${tag}: an invalid Backend spec never invents a data directory`,
+        residueWatchOf(invalid.ctx, invalid.name, dataRoot) === undefined)
+    }
+  }
+
+  // Drive the production entry across the removal itself: the declaration is
+  // gone when the write finishes, and the leftover appears during that write.
+  {
+    const leftover = backendDataDir(BACKEND_ID)
+    const service: PluginManagerView = {
+      ...PROBE_SERVICE,
+      removeBundle: name => {
+        rmSync(join(profile.root, 'profile', 'node_modules', '@probe', 'managed-plugin'), { recursive: true })
+        mkdirSync(leftover, { recursive: true })
+        return Promise.resolve({ changed: true, application: 'applied', stage: 'remove', target: name })
+      },
+    }
+    const profile = probeProfile(DECLARATION, service)
+    const lines: string[] = []
+    const flow = createPluginManageEntry(profile.ctx)(`remove ${profile.name}`, {
+      ...sink, onLines: batch => { lines.push(...batch) },
+    })
+    try {
+      check(`${tag}: removal waits for confirmation before touching the package`,
+        (await flow?.begin())?.kind === 'confirm' && residueWatchOf(profile.ctx, profile.name) !== undefined)
+      await flow?.confirm()
+      check(`${tag}: removal reports data left after its declaration became unreadable`,
+        residueWatchOf(profile.ctx, profile.name) === undefined &&
+        lines.includes(t('plugins-manage-residue', { paths: leftover })) &&
+        !lines.includes(t('plugins-manage-residue-unjudged', { target: profile.name })), lines.join(' | '))
+    } finally {
+      flow?.dispose()
+      rmSync(leftover, { recursive: true, force: true })
+      rmSync(profile.root, { recursive: true, force: true })
+    }
   }
 }
 

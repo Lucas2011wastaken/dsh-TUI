@@ -23,8 +23,8 @@ export const DATA_DIR = join(homeDir(), '.dsh-tui')
 
 /**
  * Where one backend keeps its own files: `<dataRoot>/backends/<id>`, keyed by
- * the backend's declared id (`BackendContribution.id`, the `x-dsh-tui` entry's
- * `id` field). The single construction point, so a check for what a removal
+ * the backend's declared id (the `x-dsh-tui` Backend entry's `spec.id` field).
+ * The single construction point, so a check for what a removal
  * left behind reads the same path the backend wrote to (C-5).
  *
  * `dataRoot` defaults to this profile's own `~/.dsh-tui`. It is a parameter so
