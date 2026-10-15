@@ -45,7 +45,11 @@ export interface LocalCommand {
 
 export type LocalizedDescriptions = Readonly<Partial<Record<'zh' | 'en', string>>>
 
-/** A concrete completion row, including the text inserted by Tab/Enter. */
+/**
+ * A concrete completion row: the line Enter runs and the text Tab inserts — an
+ * example row (`CommandCompletionNode.example`) runs the line it names instead
+ * and hands Tab the draft unchanged.
+ */
 export interface CommandCompletion extends LocalCommand {
   replacement: string
   commandLine: string

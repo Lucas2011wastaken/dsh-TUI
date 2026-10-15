@@ -347,6 +347,16 @@ pnpm smoke
 
 在 TUI 里装插件：`/plugin install <包名 | 路径 | git URL>`。动作全走宿主 profile 插件管理器——装前提醒、信任确认、可取消的进度、构建脚本批准与精确版本豁免；命中**随包发布的嫡系清单**（`tui-profile/feed/first-party.json`，一个版本钉死一份、离线可判）的包跳过信任确认，且只有写明该精确版本的 spec 才算命中：裸包名、标签或范围会在安装时被重新解析，因此一律先让人确认。确认的是哪一件就装哪一件——安装会钉住 inspect 读到的精确 `name@version`；回合仍在运行时拒绝安装（先结束它，或用 `/new`）。同样的动作在命令行仍可用（`dsh plugin --profile dsh-tui …`）。
 
+一个 spec 是下面三种之一：
+
+```sh
+/plugin install /path/to/repo
+/plugin install https://github.com/exam/ple.git
+/plugin install @scope/package@1.2.3
+```
+
+输入 `/plugin install ` 时补全浮窗会列出这三种形状，`/plugin info ` 则在已装名之后跟上同样三条。它们是示例、不是候选：`Tab` 让草稿逐字保持原样（半截 spec 也不会被替换），`Enter` 打印用法行——示例既插不进草稿，也不会被误装。
+
 安装期间按 `esc` 会尝试取消，面板等写操作结束后才关闭；取消来不及时会等待安装完成。版本豁免登记期间取消会等待当前写入，停止后续登记和安装重试；已写入的豁免保留。
 
 安装失败时最多显示六行脱敏日志；超过 16 KiB 的单行会整行省略并提示。

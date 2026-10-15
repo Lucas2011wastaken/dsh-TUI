@@ -2233,6 +2233,10 @@ const dict = {
   'sugg-plugin-remove-desc': { zh: '把这个插件从 profile 卸载', en: 'Uninstall a plugin bundle from this profile' },
   'sugg-plugin-enable-desc': { zh: '重新启用一个 bundle 或行', en: 'Switch a plugin bundle or row back on' },
   'sugg-plugin-disable-desc': { zh: '关闭一个 bundle 或行', en: 'Switch a plugin bundle or row off' },
+  // /plugin install | info 的参数位（示例 spec 的形状，不是可插入的候选）
+  'sugg-plugin-spec-path-desc': { zh: '示例：本地目录或仓库路径', en: 'Example: a local directory' },
+  'sugg-plugin-spec-git-desc': { zh: '示例：git 仓库 URL', en: 'Example: a git URL' },
+  'sugg-plugin-spec-package-desc': { zh: '示例：registry 包名（@版本 可钉死）', en: 'Example: a registry package, @version pins it' },
   'panel-unavailable-hint': { zh: '侧栏需要全屏且内容区 ≥93 列；该面板没有整屏形态', en: 'Sidebar needs fullscreen and ≥93 content columns; this panel has no fullscreen form' },
   // Model / display
   'cmd-desc-activity': { zh: '切换工作状态指示器预设' },

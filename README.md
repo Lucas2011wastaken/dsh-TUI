@@ -404,6 +404,16 @@ Seam grading and API notes: [Plugin development](docs/plugins.en.md). The organi
 
 Installing a plugin from inside the TUI: `/plugin install <package | path | git url>`. It goes through the host's profile plugin manager — a pre-install notice, a trust confirmation, cancellable progress, build-script approval and exact-version exemptions. Packages on the first-party feed this package ships (`tui-profile/feed/first-party.json`, pinned per release and decided offline) skip the trust confirmation, and only a spec that names that exact version qualifies: a bare name, a tag or a range is resolved again at install time, so it is confirmed with the person instead. What was confirmed is what gets installed — the run pins the exact `name@version` the inspection read — and a turn that is still running refuses the install (finish it, or `/new`, first). The same actions remain available from the CLI (`dsh plugin --profile dsh-tui …`).
 
+A spec names one of three things:
+
+```sh
+/plugin install /path/to/repo
+/plugin install https://github.com/exam/ple.git
+/plugin install @scope/package@1.2.3
+```
+
+Typing `/plugin install ` lists these three shapes in the completion popup, and the same shapes follow the installed names on `/plugin info `. They are examples, never candidates: `Tab` leaves the draft exactly as it is (a half-typed spec is not replaced either) and `Enter` prints the usage line, so no example can be inserted or installed by accident.
+
 During installation, `esc` attempts cancellation and keeps the pane open until the write settles; if cancellation is too late, it waits for the installation to finish. During exemption registration, it waits for the current write and stops subsequent grants and the retry. Exemptions already written remain.
 
 Failed installs show up to six redacted log lines; lines larger than 16 KiB are omitted with a notice.

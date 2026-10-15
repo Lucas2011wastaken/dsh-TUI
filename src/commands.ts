@@ -25,6 +25,15 @@ export interface CommandCompletionNode {
   tag?: string
   /** Optional i18n key; plugin nodes normally rely on fallback text. */
   descriptionKey?: string
+  /**
+   * Mark this row as a syntax EXAMPLE rather than a candidate, and name the
+   * line Enter runs for it (`{ runs: '/plugin install' }` — a bare subcommand
+   * answers with its own usage line). What the row spells out is a shape, not
+   * something this person typed, so Tab hands the draft back untouched instead
+   * of writing the placeholder in: `/plugin install ` shows the three spec
+   * shapes, and neither Tab nor Enter can install the example.
+   */
+  example?: { readonly runs: string }
 }
 
 export type CommandChildren = (canonicalPath: readonly string[]) => readonly CommandCompletionNode[]
@@ -506,6 +515,10 @@ export function completeCommands(
     if (completionToken === undefined || !tokenOk(completionToken)) return []
     const path = [...tokens, completionToken]
     const commandLine = `/${path.join(' ')}`
+    // An example row runs what it names (the subcommand itself, so Enter prints
+    // usage) and inserts nothing: `replacement` echoes the draft it was given,
+    // which also keeps a half-typed spec from being replaced by the placeholder.
+    const example = candidate.example
     return [{
       name: path.join(' '),
       description: candidate.description,
@@ -514,8 +527,8 @@ export function completeCommands(
       ...(candidate.tag === undefined && candidate.aliases?.length
         ? { tag: `aliases: ${candidate.aliases.join(', ')}` }
         : candidate.tag === undefined ? {} : { tag: candidate.tag }),
-      replacement: `${commandLine} `,
-      commandLine,
+      replacement: example === undefined ? `${commandLine} ` : input,
+      commandLine: example === undefined ? commandLine : example.runs,
     }]
   })
 }

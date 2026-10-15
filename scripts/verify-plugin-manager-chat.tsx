@@ -363,6 +363,33 @@ for (const [fullscreen, columns, service] of [
       check(`${tag}: Tab accepts the completed name into the composer`,
         await settled(() => hasText('/plugin info verify-plugin-undeclared')), screen())
       await clear()
+
+      // 体验优化 PR：`/plugin install ` 的参数位、以及 `/plugin info ` 的已装名
+      // 之后，是三种 spec 形状——**提示不是候选**。Tab 不得把占位 spec 写进草稿，
+      // Enter 跑的是子命令本身（打用法行），所以谁也不会误装示例。
+      await type('/plugin install ')
+      check(`${tag}: install shows the spec shapes at its argument position`,
+        await settled(() => hasText('plugin install /path/to/repo') &&
+          (columns < 100 || hasText('plugin install https://github.com/exam/ple.git'))), screen())
+      // Tab 的落点是「草稿逐字没变」，而这个不变量没有可轮询的完成条件（草稿没改
+      // ⇒ 没有新帧）：用一次退格把它变成可观察的——真插进了示例的话，弹窗此刻停在
+      // 那条示例上；没插进去则退回裸子命令，屏幕上再没有示例行。
+      stdin.write('\t')
+      stdin.write('\x7f')
+      check(`${tag}: Tab inserts nothing — one backspace leaves the bare form, not an example`,
+        await settled(() => hasText(t('sugg-count', { n: 1 }))) &&
+        !hasText('plugin install /path/to/repo'), screen())
+      await clear()
+      await type('/plugin install ')
+      stdin.write('\r')
+      check(`${tag}: Enter on an example prints the usage line instead of installing it`,
+        await settled(() => hasText(t('plugins-install-usage'))), screen())
+      await clear()
+      await type('/plugin info ')
+      check(`${tag}: info offers the spec shapes after the installed names`,
+        await settled(() => hasText('plugin info /path/to/repo') &&
+          hasText('plugin info verify-plugin-undeclared')), screen())
+      await clear()
     }
 
     await run('/plugin')
