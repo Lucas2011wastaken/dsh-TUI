@@ -585,6 +585,7 @@ export function Launchpad({
   // （query 变了）面板自然回来，与 PromptInput 的补全行为同源。
   const [paletteIndex, setPaletteIndex] = React.useState(0)
   const [paletteDismissedFor, setPaletteDismissedFor] = React.useState('')
+  const paletteInput = query
   const paletteCommands = commands !== undefined && query.startsWith('/') && query !== paletteDismissedFor
     ? commands
     : []
@@ -594,7 +595,9 @@ export function Launchpad({
   const pickCommand = (commandLine: string): void => {
     setPaletteDismissedFor('')
     setPaletteIndex(0)
-    const notice = onCommandPick?.(commandLine)
+    // Edits earlier in the same stdin batch update the mirror before props
+    // and completion rows can render again. A stale row must not replace them.
+    const notice = onCommandPick?.(queryRef.current === query ? commandLine : queryRef.current)
     if (typeof notice === 'string') showPasteNotice(notice)
     else pasteRevisionRef.current += 1
   }
@@ -956,7 +959,7 @@ export function Launchpad({
         return
       }
       if (key.tab) {
-        if (!key.shift) {
+        if (!key.shift && query === paletteInput) {
           const replacement = paletteSelected.replacement
           setPaletteIndex(0)
           changeQuery(replacement, replacement.length)

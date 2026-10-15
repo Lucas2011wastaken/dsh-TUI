@@ -2222,6 +2222,29 @@ for (const cols of [120, 100, 72, 60, 48]) {
 }
 
 // ── K. 命令补全面板 ──
+for (const [fullscreen, columns] of [[false, 100], [false, 50], [true, 100]] as const) {
+  for (const [label, chunk, eventType] of [
+    ['kitty Enter', 'roject\x1b[13;1u', 'command'],
+    ['paste Enter', '\x1b[200~roject\x1b[201~\r', 'command'],
+    ['Tab', 'roject\t', 'query'],
+  ] as const) {
+    const ev: Ev[] = []
+    const query = '/plugin info /p'
+    // A syntax-example row echoes the query from the last render. The event
+    // oracle below is the complete draft, independent of that stale row.
+    const s = await openLaunchpad(ev, {
+      fullscreen, columns, query,
+      commands: [{ name: 'plugin info /path/to/repo', description: '', commandLine: query, replacement: query }],
+    })
+    try {
+      await s.send(chunk)
+      check(`K batch ${fullscreen ? 'fullscreen' : 'inline'} ${columns}: ${label} keeps the complete draft`,
+        last(ev, eventType)?.value === '/plugin info /project', JSON.stringify(ev))
+    } finally {
+      s.close()
+    }
+  }
+}
 {
   // 输入 / 即上面板：候选来自 commands（Chat 传 channel.commandCompletions）。
   const ev: Ev[] = []

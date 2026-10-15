@@ -408,6 +408,28 @@ for (const [fullscreen, columns, service] of [
       check(`${tag}: a typed spec that starts like an example reaches the service`,
         await settled(() => inspectedSpecs.includes('/p')) && !hasText(t('plugins-info-usage')), screen())
       await clear()
+
+      // Edits and the accepting key share one stdin batch: React has not
+      // recomputed the example row yet. Assert the service argument itself,
+      // including after Tab, so a visible but subsequently lost suffix fails.
+      for (const [label, chunk] of [
+        ['kitty Enter', 'roject\x1b[13;1u'],
+        ['paste Enter', '\x1b[200~roject\x1b[201~\r'],
+        ['Tab', 'roject\t'],
+      ] as const) {
+        inspectedSpecs.length = 0
+        await type('/plugin info /p')
+        stdin.write(chunk)
+        if (label === 'Tab') {
+          check(`${tag}: batched Tab keeps the complete draft`,
+            await settled(() => hasText('/plugin info /project')), screen())
+          stdin.write('\r')
+        }
+        check(`${tag}: batched ${label} submits the complete spec`,
+          await settled(() => inspectedSpecs.length > 0)
+          && inspectedSpecs.length === 1 && inspectedSpecs[0] === '/project', JSON.stringify(inspectedSpecs))
+        await clear()
+      }
     }
 
     await run('/plugin')
