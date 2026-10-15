@@ -1382,9 +1382,6 @@ for (const [fullscreen, columns, service] of [
     { entryId: 'entry-sibling' as PluginEntryId, moduleName: `${APP}-extra`, enabled: true, patchId: 'sibling-row' },
     { entryId: 'entry-orphan' as PluginEntryId, moduleName: 'orphan-row', enabled: true, readOnlyReason: 'unaddressable' },
   ]
-  const NO_FEED: FirstPartyFeedLoad = { kind: 'unavailable', reason: 'feed file is missing (probe)' }
-  const feedOf = (...entries: FirstPartyEntry[]): FirstPartyFeedLoad =>
-    ({ kind: 'ok', path: '/probe/tui-profile/feed/first-party.json', feed: { feedVersion: 1, entries } })
   const CHANGED = { changed: true, application: 'applied', stage: 'enable', target: THIRD } as const
 
   /** Gate 2's refusal lines, by the rule they break: a refusal has to say which. */
@@ -1410,7 +1407,6 @@ for (const [fullscreen, columns, service] of [
     readonly target: string
     readonly bundles?: readonly BundleInfo[]
     readonly plugins?: readonly PluginInfo[]
-    readonly feed?: FirstPartyFeedLoad
     readonly binding?: () => number
     readonly busy?: () => boolean
     readonly change?: () => Promise<ChangeResult>
@@ -1434,7 +1430,6 @@ for (const [fullscreen, columns, service] of [
       manager: service,
       action: options.action,
       target: options.target,
-      feed: options.feed ?? NO_FEED,
       binding: options.binding ?? (() => 0),
       busy: options.busy ?? (() => false),
       onLines: batch => { lines.push(...batch) },
@@ -1598,29 +1593,54 @@ for (const [fullscreen, columns, service] of [
       rig.lines.join(' | '))
   }
 
-  // Gate 3's routing on the enable side (C-5): a feed hit on the exact
-  // `name@version` is the one case nobody is asked about, and it still lands an
-  // audit line. Everything else is confirmed — a row included, since a row carries
-  // no version to pin and so can never be first-party (fail closed).
+  // Installed metadata has no source attestation, even when it matches the feed.
   {
-    const trusted = await manage('enable', THIRD, { feed: feedOf({ name: THIRD, scope: '@probe', version: '1.0.0' }) })
-    check(`${tag}: a first-party bundle is enabled without asking, and still audited`,
-      trusted.first.kind === 'done' && trusted.calls.join(',') === `setBundleEnabled:${THIRD}:true` &&
-      has(trusted, t('plugins-manage-trusted', { name: THIRD, version: '1.0.0' })), trusted.lines.join(' | '))
-    const stale = await manage('enable', THIRD, { feed: feedOf({ name: THIRD, scope: '@probe', version: '0.0.1' }) })
-    check(`${tag}: the same name at another version is third-party, and asks`,
-      stale.first.kind === 'confirm' && stale.first.question.kind === 'trust' && stale.calls.length === 0,
-      `${stale.first.kind} · ${stale.calls.join(',')}`)
+    const feed = loadFirstPartyFeed()
+    if (feed.kind !== 'ok') throw new Error(feed.reason)
+    const pinned = feed.feed.entries[0]!
+    const matching = await manage('enable', pinned.name, {
+      bundles: [{ ...MANAGE_BUNDLES[1]!, name: pinned.name, version: pinned.version }],
+    })
+    check(`${tag}: matching the shipped feed's exact identity still requires confirmation`,
+      matching.first.kind === 'confirm' && matching.first.question.kind === 'trust' && matching.calls.length === 0,
+      `${matching.first.kind} · ${matching.calls.join(',')}`)
+    const unverified = await manage('enable', THIRD)
+    check(`${tag}: enabling any installed bundle asks before writing`,
+      unverified.first.kind === 'confirm' && unverified.first.question.kind === 'trust' && unverified.calls.length === 0,
+      `${unverified.first.kind} · ${unverified.calls.join(',')}`)
     const asked = await manage('enable', THIRD, {}, true)
     check(`${tag}: confirming trust enables exactly that bundle, once`,
       asked.calls.join(',') === `setBundleEnabled:${THIRD}:true`, asked.calls.join(','))
-    const row = await manage('enable', THIRD, {
-      feed: feedOf({ name: THIRD, scope: '@probe', version: '1.0.0' }),
-      target: 'entry-third',
-    })
-    check(`${tag}: a row can never be first-party — it is asked about`,
+    const row = await manage('enable', 'entry-third')
+    check(`${tag}: enabling a row also requires confirmation`,
       row.first.kind === 'confirm' && row.first.question.kind === 'trust' && row.calls.length === 0,
       `${row.first.kind} · ${row.calls.join(',')}`)
+  }
+
+  // A module can have several differently configured rows. Enumeration order
+  // must never decide which one is changed; an explicit identity still works.
+  {
+    const moduleName = '@probe/multi-instance'
+    const rows: PluginInfo[] = [
+      { entryId: 'entry-alpha' as PluginEntryId, patchId: 'row-alpha', moduleName, enabled: true },
+      { entryId: 'entry-beta' as PluginEntryId, patchId: 'row-beta', moduleName, enabled: true },
+    ]
+    for (const plugins of [rows, [...rows].reverse()]) {
+      for (const action of ['enable', 'disable'] as const) {
+        const rig = await manage(action, moduleName, { plugins })
+        check(`${tag}: ${action} by an ambiguous module name writes nothing in either order`,
+          rig.first.kind === 'done' && rig.calls.length === 0, `${rig.first.kind} · ${rig.calls.join(',')}`)
+        check(`${tag}: ${action} lists the explicit identities instead of choosing a row`,
+          has(rig, t('plugins-manage-ambiguous', { target: moduleName, ids: plugins.map(row => row.entryId).join(', ') })),
+          rig.lines.join(' | '))
+      }
+      const enabled = await manage('enable', 'entry-alpha', { plugins }, true)
+      check(`${tag}: an explicit entry id enables only its row in either order`,
+        enabled.calls.join(',') === 'setPluginEnabled:entry-alpha:true', enabled.calls.join(','))
+      const disabled = await manage('disable', 'row-beta', { plugins })
+      check(`${tag}: an explicit patch id disables only its row in either order`,
+        disabled.calls.join(',') === 'setPluginEnabled:entry-beta:false', disabled.calls.join(','))
+    }
   }
 
   // `disable` asks about one thing only: a row the host layer owns, whose removal
@@ -2342,7 +2362,7 @@ for (const [fullscreen, columns, service] of [
 
 // ── `/plugin remove | enable | disable` through the real Chat (C-5) ──────────
 // The pane the lifecycle flow asks through. The flow is the real one; only the
-// service, the feed and the clock's answers are fixtures. The three layouts are
+// service and the clock's answers are fixtures. The three layouts are
 // the screen's job to survive, and `chatFullscreen` reads what Chat was handed so
 // a case tagged fullscreen cannot quietly test an inline screen again.
 {
@@ -2427,7 +2447,6 @@ for (const [fullscreen, columns, service] of [
           manager: service,
           action: parsed.kind,
           target: parsed.target,
-          feed: { kind: 'unavailable', reason: 'feed file is missing (probe)' },
           binding: sink.binding,
           busy: sink.busy,
           onLines: sink.onLines,
@@ -2493,6 +2512,14 @@ for (const [fullscreen, columns, service] of [
         rig.calls.join(',') === `removeBundle:${THIRD}`, rig.calls.join(','))
       check(`${tag} ${layout}: the pane is gone once the flow is done`,
         await settled(() => !rig.hasText(t('plugins-manage-pane-title'))), rig.screen())
+      await rig.run(`/plugin enable ${THIRD}`)
+      check(`${tag} ${layout}: enabling shows the source warning and confirmation keys`,
+        await settled(() => rig.hasText(t('plugins-manage-trust-facts')) && rig.hasText(t('plugins-manage-key-confirm'))), rig.screen())
+      check(`${tag} ${layout}: enabling writes nothing before confirmation`, rig.calls.length === 1, rig.calls.join(','))
+      await rig.enter()
+      check(`${tag} ${layout}: confirmation enables exactly the named bundle`,
+        await settled(() => rig.calls.join(',') === `removeBundle:${THIRD},setBundleEnabled:${THIRD}:true` &&
+          !rig.hasText(t('plugins-manage-pane-title'))), rig.screen())
     } finally {
       await rig.done()
     }
@@ -2772,10 +2799,10 @@ for (const [fullscreen, columns, service] of [
 }
 
 // ── The lifecycle wiring, driven for real (C-5) ──────────────────────────────
-// Everything above hands the manage flow a fixture feed and a fixture watch. This
+// Everything above hands the manage flow a fixture service and a fixture watch. This
 // section drives `createPluginManageEntry` and `residueWatchOf` — the two functions
 // the entry itself uses — so the parts that only exist in the wiring are covered:
-// the packaged feed as shipped, the argument forms, and the declaration read that
+// the argument forms, source uncertainty, and the declaration read that
 // names a removed plugin's own data.
 {
   const tag = 'manage entry'
@@ -2864,14 +2891,14 @@ for (const [fullscreen, columns, service] of [
     }
   }
 
-  // The shipped feed, read through the real loader: it pins this very package at
-  // this very version, so an enable of it is the one case nobody is asked about.
+  // Even this application's exact feed identity carries no installation source.
   {
     const { ctx } = probeProfile(DECLARATION)
+    calls.length = 0
     const flow = createPluginManageEntry(ctx, { profileName: 'probe' })(`enable ${manifest.name}`, sink)
     const step = await flow?.begin()
-    check(`${tag}: the shipped feed vouches for the package it pins, so enabling it asks nothing`,
-      step?.kind === 'done', JSON.stringify(step))
+    check(`${tag}: the shipped feed's exact identity cannot bypass enable confirmation`,
+      step?.kind === 'confirm' && step.question.kind === 'trust' && calls.length === 0, JSON.stringify(step))
     flow?.dispose()
     // The same bundle, with the profile reporting a version the feed does not pin:
     // "we publish this name" is not "we published this artifact" (`feed/README.md`).

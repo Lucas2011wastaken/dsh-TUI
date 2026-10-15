@@ -86,7 +86,8 @@ Also an experimental public surface:
   layer (the profile manifest's `dsh.profile.bundles`), a row is one patch entry's
   `disabled`. The argument resolves against one snapshot, a bundle name first and
   exactly, then `entryId` → `patchId` → module name; nothing that matches is reported
-  with what is addressable rather than guessed at. **Gate 2** (this application may not
+  with what is addressable rather than guessed at. A module name matching multiple rows
+  is refused with their row IDs; use a specific ID. **Gate 2** (this application may not
   switch itself off) refuses three kinds of target hard — the bundle providing this app,
   the host layer `@deepseek-ai/dsh-base`, and this application's own rows (those loading
   a module of this package, **or inserted by its own patch**: measured, that patch inserts
@@ -96,12 +97,11 @@ Also an experimental public surface:
   profile runs `patchReload: live`). `enable` is never refused by gate 2: it is the
   repair action, and refusing it would seal off the only in-UI way back from a profile
   somebody edited by hand. The host's own lock (`management-required` / `unaddressable`)
-  refuses both directions and its reason is quoted as given. **Confirmation follows the
-  source**: a third-party `enable` and any `remove` are confirmed (a removal lists the
+  refuses both directions and its reason is quoted as given. **Every `enable` and `remove` requires confirmation** (a removal lists the
   rows and overrides it drops), while `disable` asks only about a row the host layer
-  owns (switching one off unloads services this app injects). A first-party `enable`
-  (the feed pins that exact `name@version`) skips the question and **still lands an audit
-  line** — skipping the question is not skipping the record. These actions have **no
+  owns (switching one off unloads services this app injects). The host does not attest
+  installed package sources: local and Git packages can claim the same name and version,
+  so an exact feed match cannot waive confirmation when enabling. These actions have **no
   cancellation**: the service offers none, so `esc` only closes the pane while the write
   finishes and reports itself into the transcript (same session). **Known gaps**: a
   removal deletes no user data — `~/.dsh-tui/backends/<id>/`, grants and storage

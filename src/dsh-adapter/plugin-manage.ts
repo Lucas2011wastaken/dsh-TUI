@@ -41,7 +41,6 @@ import { t, type I18nKey } from '../i18n.js'
 import { resolveDshProfileName } from '../update.js'
 import { backendDataDir, DATA_DIR } from '../utils/paths.js'
 import { COMPOSITION_PACKAGE, pluginDeclarationOf } from './plugin-declaration.js'
-import { type FirstPartyFeedLoad, firstPartyVerdict, loadFirstPartyFeed } from './plugin-feed.js'
 import { failureReasonOf } from './plugin-install.js'
 import {
   HOST_BUNDLE,
@@ -67,7 +66,7 @@ export type PluginManageTarget =
     readonly action: PluginManageAction
     readonly kind: 'bundle'
     readonly name: string
-    /** The installed version, when the profile knows one — the feed's key. */
+    /** The installed version, when the profile knows one. */
     readonly version?: string | undefined
     /** The rows the bundle's patch inserts, and the rows it overrides. */
     readonly rows: number
@@ -91,7 +90,7 @@ export type PluginManageTarget =
 export type PluginManageQuestion =
   /** `remove` of a bundle: destructive, and the profile's own files change. */
   | { readonly kind: 'remove' }
-  /** `enable` of something the feed does not vouch for: its code will run here. */
+  /** `enable`: the host does not attest the installed code's source. */
   | { readonly kind: 'trust' }
   /**
    * `disable` of a row the host layer owns: the entry belongs to `dsh-base`, so
@@ -131,8 +130,6 @@ export interface PluginManageFlowOptions {
   readonly action: PluginManageAction
   /** The argument text after the subcommand: a bundle name or a row identity. */
   readonly target: string
-  /** The feed the `enable` trust route reads (loaded once by the caller). */
-  readonly feed: FirstPartyFeedLoad
   /** The binding generation that asked; every asynchronous write is fenced to it. */
   readonly binding: () => number
   /**
@@ -319,17 +316,27 @@ export function createPluginManageFlow(options: PluginManageFlowOptions): Plugin
     if (bundle !== undefined) {
       target = bundleTarget(options.action, bundle)
       label = cell(bundle.name)
-      return await guardThenDecide(bundleGuardTarget(bundle), () => ask(bundle, hostRowIdsOf(bundles)))
+      return await guardThenDecide(bundleGuardTarget(bundle), () => ask(hostRowIdsOf(bundles)))
     }
-    const plugin = plugins.find(candidate => candidate.entryId === wanted)
+    let plugin = plugins.find(candidate => candidate.entryId === wanted)
       ?? plugins.find(candidate => 'patchId' in candidate && candidate.patchId === wanted)
-      ?? plugins.find(candidate => candidate.moduleName === wanted)
+    if (plugin === undefined) {
+      const matches = plugins.filter(candidate => candidate.moduleName === wanted)
+      if (matches.length > 1) {
+        emit([t('plugins-manage-ambiguous', {
+          target: cell(wanted),
+          ids: cell(matches.map(candidate => candidate.entryId).join(', ')),
+        })])
+        return { kind: 'done' }
+      }
+      plugin = matches[0]
+    }
     if (plugin !== undefined) {
       target = rowTarget(options.action, plugin)
       label = cell(plugin.moduleName)
       return await guardThenDecide(
         rowGuardTarget(plugin, insertedRowIds(bundles, COMPOSITION_PACKAGE)),
-        () => ask(undefined, hostRowIdsOf(bundles)),
+        () => ask(hostRowIdsOf(bundles)),
       )
     }
     emit([t('plugins-manage-unknown', {
@@ -354,13 +361,9 @@ export function createPluginManageFlow(options: PluginManageFlowOptions): Plugin
   /**
    * Gate 3's routing for the two actions that ask something (C-5).
    *
-   * - **`enable`** is the one action a first-party artifact skips the question
-   *   for: the feed vouches for this exact `name@version`, so nobody is asked.
-   *   It still lands an audit line — skipping the question is not skipping the
-   *   record. Everything else is confirmed, a row included: a row carries no
-   *   version to pin, so it can never be first-party (fail closed), and a row of
-   *   the host layer is confirmed on the same rule rather than on a list of names
-   *   that look official.
+   * - **`enable`** always asks. `BundleInfo` carries no installation source:
+   *   a local or Git package can claim the feed's exact name and version, so
+   *   matching that metadata cannot prove it is a published artifact.
    * - **`remove`** asks about any bundle the guard allowed. The bundles the
    *   launcher supplies are `not-removable` and never reach here.
    * - **`disable`** asks only about a row the host layer owns — the one whose
@@ -368,20 +371,13 @@ export function createPluginManageFlow(options: PluginManageFlowOptions): Plugin
    *   third-party row are reversible and run no new code, so the guard's
    *   `allowed` is the whole answer.
    */
-  async function ask(bundle: BundleInfo | undefined, hostRowIds: ReadonlySet<string>): Promise<PluginManageStep> {
+  async function ask(hostRowIds: ReadonlySet<string>): Promise<PluginManageStep> {
     const resolved = target
     if (resolved === undefined) return { kind: 'done' }
     if (options.action === 'remove') return { kind: 'confirm', target: resolved, question: { kind: 'remove' } }
     if (options.action === 'disable') {
       const hostRow = resolved.kind === 'row' && resolved.patchId !== undefined && hostRowIds.has(resolved.patchId)
       return hostRow ? { kind: 'confirm', target: resolved, question: { kind: 'host-row' } } : run()
-    }
-    if (bundle !== undefined) {
-      const trust = firstPartyVerdict(options.feed, { name: bundle.name, version: bundle.version, kind: 'registry' })
-      if (trust.kind === 'first-party') {
-        emit([t('plugins-manage-trusted', { name: cell(trust.entry.name), version: cell(trust.entry.version) })])
-        return run()
-      }
     }
     return { kind: 'confirm', target: resolved, question: { kind: 'trust' } }
   }
@@ -526,9 +522,6 @@ export function createPluginManageEntry(
       manager,
       action: parsed.kind,
       target: parsed.target,
-      // Read once per action: the feed is a packaged file, and a request that is
-      // never made should never touch the disk.
-      feed: loadFirstPartyFeed(),
       binding: sink.binding,
       busy: sink.busy,
       onLines: sink.onLines,

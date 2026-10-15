@@ -26,8 +26,8 @@
  *
  * What gate 2 does *not* do: authorize. An `allowed` verdict means this
  * predicate has no objection, not that the action proceeds without asking —
- * confirmation is the flow's decision, made from the action and the source of
- * the artifact (gate 3's feed routing).
+ * confirmation is the flow's decision: every enable or removal asks, as does
+ * disabling a host-layer row.
  */
 import { COMPOSITION_PACKAGE } from './plugin-declaration.js'
 

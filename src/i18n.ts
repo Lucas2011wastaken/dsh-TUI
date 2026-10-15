@@ -1510,6 +1510,10 @@ const dict = {
     zh: '找不到目标：{{target}}（可寻址的：{{names}}）',
     en: 'No such target: {{target}} (addressable: {{names}})',
   },
+  'plugins-manage-ambiguous': {
+    zh: '{{target}} 匹配多行，请改用具体行 id：{{ids}}（profile 没有改动）。',
+    en: '{{target}} matches multiple rows. Use a specific row id: {{ids}} (the profile was not changed).',
+  },
   'plugins-manage-refused-service-locked': {
     zh: '拒绝：插件服务锁定了 {{target}}（{{reason}}）——两个方向都不是本应用能改的。',
     en: 'Refused: the plugin service has {{target}} locked ({{reason}}); neither direction is this app\'s to take.',
@@ -1533,10 +1537,6 @@ const dict = {
   'plugins-manage-refused-app-row': {
     zh: '拒绝：{{target}} 提供本应用的界面（门禁 2）——关掉它，界面当场消失。',
     en: 'Refused: {{target}} provides this application\'s interface (gate 2); switching it off takes the interface down with it.',
-  },
-  'plugins-manage-trusted': {
-    zh: '嫡系 {{name}}@{{version}}：免确认启用（仍记入效果台账，/plugin 列表照常显示）。',
-    en: 'First-party {{name}}@{{version}}: enabled without asking (it still lands in the effect ledger and the /plugin list).',
   },
   'plugins-manage-unchanged': {
     zh: '{{target}} 已经是这个状态，profile 没有改动。',
@@ -1582,8 +1582,8 @@ const dict = {
     en: 'This is destructive: it changes the profile\'s package.json and lockfile (rolled back if the service fails) and drops its {{rows}} rows / {{overrides}} overrides. Your own data is not deleted (any residue is reported separately).',
   },
   'plugins-manage-trust-facts': {
-    zh: '这不是随本应用发布的包：启用后它就在本进程内运行、不自动更新、没有沙箱。它声明的权限见 /plugin 的授权矩阵。',
-    en: 'This package does not ship with this application: once enabled it runs inside this process, with no auto-update and no sandbox. Its declared permissions are in the /plugin grant matrix.',
+    zh: '无法验证已装代码的安装来源：启用后它就在本进程内运行、不自动更新、没有沙箱。它声明的权限见 /plugin 的授权矩阵。',
+    en: 'The installed code\'s source cannot be verified: once enabled it runs inside this process, with no auto-update and no sandbox. Its declared permissions are in the /plugin grant matrix.',
   },
   'plugins-manage-host-row-facts': {
     zh: '这一行属于宿主层（dsh-base）：关掉它会卸载本应用注入的服务，本应用可能重启或退出。',
