@@ -26,14 +26,15 @@ export interface CommandCompletionNode {
   /** Optional i18n key; plugin nodes normally rely on fallback text. */
   descriptionKey?: string
   /**
-   * Mark this row as a syntax EXAMPLE rather than a candidate, and name the
-   * line Enter runs for it (`{ runs: '/plugin install' }` — a bare subcommand
-   * answers with its own usage line). What the row spells out is a shape, not
-   * something this person typed, so Tab hands the draft back untouched instead
-   * of writing the placeholder in: `/plugin install ` shows the three spec
-   * shapes, and neither Tab nor Enter can install the example.
+   * Mark this row as a syntax EXAMPLE rather than a candidate: it spells out a
+   * shape, not something this person typed. Tab therefore hands the draft back
+   * untouched instead of writing the placeholder in, and Enter runs the draft as
+   * typed — at the bare argument position that is the subcommand itself (its
+   * usage line), and once a spec is typed it is that spec. `/plugin install `
+   * shows the three shapes while neither Tab nor Enter can insert or install the
+   * placeholder, and a real spec that merely starts like one is never swallowed.
    */
-  example?: { readonly runs: string }
+  example?: true
 }
 
 export type CommandChildren = (canonicalPath: readonly string[]) => readonly CommandCompletionNode[]
@@ -515,10 +516,11 @@ export function completeCommands(
     if (completionToken === undefined || !tokenOk(completionToken)) return []
     const path = [...tokens, completionToken]
     const commandLine = `/${path.join(' ')}`
-    // An example row runs what it names (the subcommand itself, so Enter prints
-    // usage) and inserts nothing: `replacement` echoes the draft it was given,
-    // which also keeps a half-typed spec from being replaced by the placeholder.
-    const example = candidate.example
+    // An example row accepts nothing of its own: Tab gets back the draft it was
+    // given, and Enter runs that same line. Empty argument ⇒ the line is the
+    // bare subcommand (its usage line); a typed spec ⇒ it is the spec itself,
+    // so `/plugin info /p` still inspects `/p` instead of losing it.
+    const example = candidate.example === true
     return [{
       name: path.join(' '),
       description: candidate.description,
@@ -527,8 +529,8 @@ export function completeCommands(
       ...(candidate.tag === undefined && candidate.aliases?.length
         ? { tag: `aliases: ${candidate.aliases.join(', ')}` }
         : candidate.tag === undefined ? {} : { tag: candidate.tag }),
-      replacement: example === undefined ? `${commandLine} ` : input,
-      commandLine: example === undefined ? commandLine : example.runs,
+      replacement: example ? input : `${commandLine} `,
+      commandLine: example ? input : commandLine,
     }]
   })
 }

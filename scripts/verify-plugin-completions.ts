@@ -209,14 +209,27 @@ check('every shape survives the argument-token charset as its own query',
   }),
   SPEC_SHAPES.map(spec => `${spec} → ${fresh(`/plugin install ${spec}`).length}`).join(' · '))
 check('an example row hands Tab back the draft it was given (nothing is inserted)',
-  installRows.every(row => row.replacement === '/plugin install '),
+  installRows.length === SPEC_SHAPES.length && installRows.every(row => row.replacement === '/plugin install '),
   JSON.stringify(installRows.map(row => row.replacement)))
-check('a half-typed spec is not swallowed by Tab',
-  fresh('/plugin install /pa').every(row => row.name === 'plugin install /path/to/repo' && row.replacement === '/plugin install /pa'),
-  JSON.stringify(fresh('/plugin install /pa').map(row => [row.name, row.replacement])))
-check('an example row runs the subcommand, never the placeholder spec',
-  installRows.every(row => row.commandLine === '/plugin install'),
+check('an example row never offers the placeholder as the line Enter runs',
+  installRows.length === SPEC_SHAPES.length
+  && installRows.every(row => !SPEC_SHAPES.some(spec => row.commandLine.includes(spec))),
   JSON.stringify(installRows.map(row => row.commandLine)))
+// 空参数：示例行提交的正是草稿本身，也就是裸子命令（→ 打用法行）。
+check('with the argument still empty, Enter runs the bare subcommand (its usage line)',
+  installRows.length === SPEC_SHAPES.length
+  && installRows.every(row => row.commandLine.trimEnd() === '/plugin install'),
+  JSON.stringify(installRows.map(row => row.commandLine)))
+// R1：真实的 spec 只要开头与示例重合（`/p` 之于 `/path/to/repo`），这一行就必须提交
+// 他打的那一行——换成裸子命令会把参数丢掉、只剩用法行；换成示例文本则是误装占位。
+for (const [form, typed] of [['install', '/pa'], ['install', '/path/to/repo'], ['info', '/p']] as const) {
+  const rows = fresh(`/plugin ${form} ${typed}`)
+  check(`\`/plugin ${form} ${typed}\`: a typed spec is submitted as typed, never replaced`,
+    rows.length === 1
+    && rows[0]!.commandLine === `/plugin ${form} ${typed}`
+    && rows[0]!.replacement === `/plugin ${form} ${typed}`,
+    JSON.stringify(rows.map(row => [row.name, row.commandLine, row.replacement])))
+}
 // 这三条是用户可见承诺：浮窗与双 README 必须写同一份，谁改都要两边改。
 const readmeShapes = ['README.md', 'README_ZH.md'].map(file =>
   [file, readFileSync(new URL(`../${file}`, import.meta.url), 'utf8')] as const)
@@ -245,7 +258,7 @@ const populated = pluginCompletions(['probe-plugin'])
 const infoRows = populated('/plugin info ')
 check('`info` keeps the installed names first, then the shapes',
   infoRows.length === SPEC_SHAPES.length + 1 && infoRows[0]!.name === 'plugin info probe-plugin'
-  && infoRows.slice(1).every(row => row.commandLine === '/plugin info'),
+  && infoRows.slice(1).every(row => row.commandLine === '/plugin info '),
   JSON.stringify(infoRows.map(row => [row.name, row.commandLine])))
 check('`info` keeps an installed name a real candidate (Tab inserts it, Enter runs it)',
   infoRows[0]!.replacement === '/plugin info probe-plugin '
@@ -258,7 +271,7 @@ for (const form of ['remove', 'enable', 'disable']) {
 }
 check('a profile with no extra bundle still shows the shapes on `info`',
   fresh('/plugin info ').length === SPEC_SHAPES.length
-  && fresh('/plugin info ').every(row => row.commandLine === '/plugin info'),
+  && fresh('/plugin info ').every(row => row.commandLine === '/plugin info '),
   JSON.stringify(fresh('/plugin info ').map(row => [row.name, row.commandLine])))
 
 // ── F. 真实三行示例的版式：长名前的分隔 + 没有幽灵行 ────────────────────────

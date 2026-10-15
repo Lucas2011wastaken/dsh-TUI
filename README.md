@@ -412,7 +412,7 @@ A spec names one of three things:
 /plugin install @scope/package@1.2.3
 ```
 
-Typing `/plugin install ` lists these three shapes in the completion popup, and the same shapes follow the installed names on `/plugin info `. They are examples, never candidates: `Tab` leaves the draft exactly as it is (a half-typed spec is not replaced either) and `Enter` prints the usage line, so no example can be inserted or installed by accident.
+Typing `/plugin install ` lists these three shapes in the completion popup, and the same shapes follow the installed names on `/plugin info `. They are examples, never candidates: `Tab` leaves the draft exactly as it is, and `Enter` runs the line you typed — the subcommand's usage line while the spec is still empty, your own spec once it is not. No example can therefore be inserted or installed by accident, and a real path that merely starts like one is never swallowed.
 
 During installation, `esc` attempts cancellation and keeps the pane open until the write settles; if cancellation is too late, it waits for the installation to finish. During exemption registration, it waits for the current write and stops subsequent grants and the retry. Exemptions already written remain.
 

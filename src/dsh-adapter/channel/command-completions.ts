@@ -26,16 +26,17 @@ const PLUGIN_SPEC_EXAMPLES: readonly {
 /**
  * The spec shapes as completion rows for one `/plugin` form. They carry
  * `example` (`CommandCompletionNode`): Tab hands the draft back untouched and
- * Enter runs `runs` — the bare subcommand line, which answers with its own
- * usage line. A placeholder spec can therefore neither be typed into the draft
- * nor installed by picking its row.
+ * Enter submits the draft as typed — the bare subcommand at the empty argument
+ * position (its usage line), and the typed spec once there is one. A placeholder
+ * spec can therefore neither be written into the draft nor installed by picking
+ * its row, and a real spec that only starts like one is not swallowed.
  */
-function pluginSpecExamples(runs: string): readonly CommandCompletionNode[] {
+function pluginSpecExamples(): readonly CommandCompletionNode[] {
   return PLUGIN_SPEC_EXAMPLES.map(shape => ({
     name: shape.spec,
     description: shape.description,
     descriptionKey: shape.descriptionKey,
-    example: { runs },
+    example: true,
   }))
 }
 
@@ -179,7 +180,7 @@ export function createCommandCompletions(deps: {
       ]
       // `/plugin install <spec>` takes a spec nothing local can enumerate, so
       // its argument position shows the shapes it accepts (`pluginSpecExamples`).
-      if (path.length === 2 && path[0] === 'plugin' && path[1] === 'install') return pluginSpecExamples('/plugin install')
+      if (path.length === 2 && path[0] === 'plugin' && path[1] === 'install') return pluginSpecExamples()
       // The three lifecycle forms take the same installed list as `info`: what
       // they act on is what the profile holds, and an absent service answers an
       // empty list rather than a throw.
@@ -192,7 +193,7 @@ export function createCommandCompletions(deps: {
       // offers both: what the profile holds first, then the spec shapes.
       if (path.length === 2 && path[0] === 'plugin' && path[1] === 'info') {
         deps.plugin?.warmPluginNames()
-        return [...(deps.plugin?.pluginNames() ?? []), ...pluginSpecExamples('/plugin info')]
+        return [...(deps.plugin?.pluginNames() ?? []), ...pluginSpecExamples()]
       }
       return commandTrees?.children(path) ?? []
     })
