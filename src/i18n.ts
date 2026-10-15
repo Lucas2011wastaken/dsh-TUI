@@ -2210,7 +2210,12 @@ const dict = {
   'picker-title-panel': { zh: '打开面板', en: 'Open panel' },
   'panel-sent-to-chat': { zh: '已附加到输入框：{{title}}（Esc 可撤）', en: 'Attached to the composer: {{title}} (Esc to remove)' },
   'companion-send-title': { zh: '伙伴状态', en: 'Companion status' },
-  'panel-hint-focused': { zh: 'Esc 聊天 · ←/→ 切换 · z 缩放 · +/- 调宽', en: 'Esc chat · ←/→ panels · z zoom · +/- width' },
+  // 底栏是拼出来的：导航（每个面板都有）→ 面板自己的能力键 → 列自身的缩放/调宽。
+  // 拼序就是重要性：窄面板从尾部截断（truncate-end），面板键因此不会被列控制挤掉。
+  'panel-hint-focused': { zh: 'Esc 聊天 · ←/→ 切换', en: 'Esc chat · ←/→ panels' },
+  // 声明 capabilities.sendToChat 的面板自己绑 s（btw/jobs 都是）。
+  'panel-hint-send-to-chat': { zh: 's 送聊天', en: 's to chat' },
+  'panel-hint-zoom-width': { zh: 'z 缩放 · +/- 调宽', en: 'z zoom · +/- width' },
   'panel-hint-unfocused': { zh: 'Ctrl+B 聚焦侧栏', en: 'Ctrl+B focus panel' },
   'panel-empty-none': { zh: '没有已启用的面板（/panel manage 管理）', en: 'No enabled panels (/panel manage)' },
   'panel-too-narrow': { zh: '宽度不足（需 ≥ {{min}} 列）', en: 'Too narrow (needs ≥ {{min}} cols)' },

@@ -176,6 +176,10 @@ function PanelFixture({ channel, focusPanel }: { channel: ReturnType<typeof make
     <SidePanelLayout
       geometry={geo}
       focus={sp.focus}
+      // 与 Chat.tsx 的真实接线一致（:6667-6668）：点右栏任意处把列焦点交给面板。
+      // 少了这两条，点击路径在夹具里没有下家，P12 那类回归会假过。
+      onActivateChat={sp.focusChat}
+      onActivatePanel={sp.focusPanel}
       side={geo === null ? null : <SidePanelColumn width={geo.panel} controller={sp} channel={channel as never} />}
     >
       <ChatFake width={geo === null ? size.columns : geo.chat} />
@@ -333,6 +337,8 @@ async function keys(frame: Frame, sequence: readonly string[]): Promise<void> {
     JSON.stringify(channel.attachedContexts.map(a => ({ s: a.sourceId, t: a.title }))))
   check('P7b. attach 标题带 /btw 前缀', attached?.title.startsWith('/btw: '))
   check('P7c. 附加成功提示', channel.notices.some(text => text.includes('已附加')))
+  // 面板聚焦时底栏广告面板自己的键：btw 声明 sendToChat 能力 → 续上 s 那一段。
+  check('P7f. 底栏广告 s（面板能力位 sendToChat）', frame.lines().join('\n').includes('s 送聊天'), frame.lines()[ROWS - 1])
   check('P7e. 两轮之间有分隔线', frame.lines().some(l => l.includes('┈┈┈┈')))
   const noticesBeforeCopy = channel.notices.length
   await keys(frame, ['c'])
@@ -365,13 +371,21 @@ async function keys(frame: Frame, sequence: readonly string[]): Promise<void> {
   await frame.app.unmount()
 }
 
-// ── P9c: 编辑层的 Shift+←/→ 让位宿主（编辑中也能一键切面板）─────────
+// ── P9c: 编辑层的 ←/→ 让位宿主（光标移到头才切面板）────────────────────
 {
   const shiftLeft = btwComposerKey({ text: 'ab', caret: 1 }, '', { leftArrow: true, shift: true } as never)
   const plainLeft = btwComposerKey({ text: 'ab', caret: 1 }, '', { leftArrow: true } as never)
   check('P9c. Shift+←/→ 未消费（落宿主切面板）、纯 ←/→ 仍移光标',
     shiftLeft === null && plainLeft?.state?.caret === 0,
     JSON.stringify({ shiftLeft, plainLeft }))
+  // 光标先走、到头让位：贴行首的 ←、贴行尾的 →、空草稿的两边都返回未消费。
+  const atHead = btwComposerKey({ text: 'ab', caret: 0 }, '', { leftArrow: true } as never)
+  const atTail = btwComposerKey({ text: 'ab', caret: 2 }, '', { rightArrow: true } as never)
+  const emptyHead = btwComposerKey({ text: '', caret: 0 }, '', { leftArrow: true } as never)
+  const emptyTail = btwComposerKey({ text: '', caret: 0 }, '', { rightArrow: true } as never)
+  check('P9d. 光标贴行首/行尾后 ←/→ 未消费（让位宿主切面板）',
+    atHead === null && atTail === null && emptyHead === null && emptyTail === null,
+    JSON.stringify({ atHead, atTail, emptyHead, emptyTail }))
 }
 
 // ── F1: 全屏场景 Esc 退出编辑、Tab 回到 composer ─────────────────────────
@@ -574,6 +588,47 @@ async function mountChat(ask: ReturnType<typeof scriptedAsk>) {
   }
   check('C2d. 浮层关闭后回到普通聊天（视口里没有浮层）', !closed.includes(fallbackNote), closed.split('\n').filter(l => l.trim() !== '').slice(-4).join(' | '))
   await chat.unmount()
+}
+
+// ── P11: 编辑层光标到头 → 让位宿主切面板（105 列，todo+btw 两面板）────
+{
+  const ask = scriptedAsk()
+  const channel = makePanelChannel(ask)
+  const frame = await mountPanel(105, 'todo,btw', true, channel)
+  // 活动面板是 todo（order 更小）：没有 sendToChat 能力，底栏不该广告 s。
+  check('P11a. 无 sendToChat 能力的面板不广告 s', !frame.lines().join('\n').includes('s 送聊天'), frame.lines()[ROWS - 1])
+  await keys(frame, ['\x1b[C'])
+  await delay(250)
+  check('P11b. 阅读层 → 切到 btw（composer 在场）', frame.lines().some(l => l.includes('╭')), frame.lines()[0])
+  check('P11c. btw 聚焦时底栏广告 s', frame.lines().join('\n').includes('s 送聊天'), frame.lines()[ROWS - 1])
+  await keys(frame, ['\r', 'a', 'b'])
+  await delay(200)
+  check('P11d. Enter 进编辑层并落草稿', (btwThreads.get('probe-session')?.draft ?? '') === 'ab'
+    && frame.lines().some(l => l.includes('Enter 发送')), JSON.stringify(btwThreads.get('probe-session')?.draft))
+  // 光标已贴行尾：同一个 → 不再消费，落宿主切面板（btw 的 composer 离场）。
+  await keys(frame, ['\x1b[C'])
+  await delay(300)
+  check('P11e. 编辑层光标在行尾时 → 让位宿主切面板', !frame.lines().some(l => l.includes('╭')), frame.lines()[0])
+  await frame.app.unmount()
+}
+
+// ── P12: 点输入框 = 聚焦面板 + 进编辑层（一次点击，不要求先点非输入区）──
+{
+  const ask = scriptedAsk()
+  const channel = makePanelChannel(ask)
+  // focusPanel=false：焦点留在聊天，正是「回到主输入框后想点侧栏输入框」的起点。
+  const frame = await mountPanel(105, 'btw', false, channel)
+  const before = frame.lines()
+  check('P12a. 起点焦点在聊天（底栏提示 Ctrl+B）', before.join('\n').includes('Ctrl+B 聚焦侧栏'), before[ROWS - 1])
+  const top = before.findIndex(l => l.includes('╭'))
+  const col = (before[top] ?? '').indexOf('╭') + 6
+  frame.stdin.write(`\x1b[<0;${col};${top + 2}M`)
+  frame.stdin.write(`\x1b[<0;${col};${top + 2}m`)
+  await delay(400)
+  const after = frame.lines().join('\n')
+  check('P12b. 点输入框后列焦点归面板（底栏换聚焦文案）', after.includes('Esc 聊天') && !after.includes('Ctrl+B 聚焦侧栏'), frame.lines()[ROWS - 1])
+  check('P12c. 同一次点击即进编辑层（框内提示出现）', after.includes('Enter 发送'), frame.lines().filter(l => l.includes('›')).join(' | '))
+  await frame.app.unmount()
 }
 
 btwThreads.resetForTest()

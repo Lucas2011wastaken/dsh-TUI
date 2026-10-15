@@ -1,7 +1,8 @@
 /**
  * btw 侧栏面板：线程滚动 + Markdown + 底部 composer 连续追问。Esc 先退出
  * composer 编辑（草稿保留），列表层不消费 Esc，再交宿主回聊天；Tab 在列表
- * 与 composer 间切焦点；未消费的键交宿主（←/→ 仍切面板）。
+ * 与 composer 间切焦点；未消费的键交宿主（←/→ 切面板——编辑层里光标贴到
+ * 行首/行尾后也让位）。
  *
  * badge 派生（镜像 jobs/agents 适配器）：面板不可见期间完成的新 answer
  * 增 info unread、失败 error level 计未读、运行中只亮点不计未读；进入
@@ -39,7 +40,9 @@ export function BtwPanelAdapter({ width, height, focused, visible }: PanelProps)
   const version = thread?.version ?? 0
   const busy = thread !== undefined && thread.activeTurnId !== null
   // 默认阅读层：箭头归导航（←/→ 切面板、↑/↓ 滚动）；Enter/Tab/点击输入框
-  // 才进编辑层，箭头变光标——聚焦状态有边框高亮与框内提示兜底。
+  // 才进编辑层，箭头变光标——光标贴到行首/行尾后再按同一个键同样落回宿主
+  // 切面板（BtwComposer 的到头让位），所以底栏「←/→ 切换」在两层都成立；
+  // 聚焦状态另有边框高亮与框内提示兜底。
   const [composerFocus, setComposerFocusState] = React.useState(false)
   // 聚焦位也骑 ref：Enter 聚焦后紧接着的按键（两键之间没有重渲染）必须
   // 已经看见编辑层——与 caret 同一款契约，否则第一个字符会被列表层吃掉。

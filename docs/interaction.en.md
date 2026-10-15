@@ -473,6 +473,7 @@ Notes:
   and never reaches the main context or token counts (closing the panel discards it).
 - **Never interrupts the running turn**: it can be triggered while the model is streaming; the main task keeps going.
 - Inside the panel: `↑`/`↓` scroll, `Space`/`Enter`/`Esc` dismiss, `c` copies the answer; `Esc` cancels while the answer is still pending.
+- The sidebar panel (when the panel column is open) has two layers: the default **reading layer** — `←`/`→` switch panels, `↑`/`↓` scroll, `n` starts a new topic, `s` sends the latest answer to the main composer, `c` copies it; `Enter`/`Tab` (or a click on the input) enters the **editing layer** (`Esc` leaves one layer at a time: editing first, draft kept), where `←`/`→` move the caret first and, once the caret sits at the start/end, the same key falls through and switches panels again.
 - Triggering `/btw` again aborts the previous side question.
 
 ### Trajectory scene (/trace / Ctrl+T)
