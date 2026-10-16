@@ -69,9 +69,10 @@ Also an experimental public surface:
   and by `dsh plugin add` alike), reads `dsh-plugin.json` from the package root
   nearest the actual ESM entry, and registers what the validator and the admission
   accept — so "install a third-party backend, restart, see it in the picker" holds.
-  Three boundaries: that scan runs **before** the boot parses a backend choice (one
-  step later and the installed id would read as an unknown value and fall back to
-  dsh); a backend's implementation is read from its entry module's `backend` export
+  Three boundaries: that scan runs **before** backend-choice registry membership
+  is checked (the Config schema checks syntax only, and the standalone entry's
+  full/light composition follows the final, assembled kernel); a backend's
+  implementation is read from its entry module's `backend` export
   (`backendExport` is an in-tree private field, so a declaration cannot name another
   export) and that module is imported only when the backend is actually selected;
   and installing **without restarting** still does not put it in the picker — that

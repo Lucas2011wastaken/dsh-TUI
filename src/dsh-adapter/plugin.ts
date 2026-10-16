@@ -705,8 +705,10 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
    * Whether a Config row or DSH_TUI_BACKEND overrides the selector's
    * remembered kernel. The selector then says so: a switch still restarts
    * onto the chosen kernel, but the next plain launch follows the override.
+   * Only a registered Config choice pins: the schema keeps syntactically
+   * valid but uninstalled ids too, which must not prevent a memory fallback.
    */
-  const backendPinned = config.backend !== undefined
+  const backendPinned = configuredBackend !== undefined
     || (rawBackend !== undefined && rawBackend.trim() !== '')
   // A remembered kernel whose backend cannot open (its SDK uninstalled, its
   // session store unreadable, …) must not kill the boot: without an explicit

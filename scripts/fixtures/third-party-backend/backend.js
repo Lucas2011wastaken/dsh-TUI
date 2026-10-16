@@ -7,7 +7,7 @@
  *
  *   1. ships a package-root `dsh-plugin.json` declaring
  *      `contributes['x-dsh-tui'] = [{ apiVersion: 'tui.dsh/v1alpha1', kind:
- *      'Backend', name, spec }]`,
+ *      'Backend', id, name, spec }]`,
  *   2. exports its handler from this module under the documented name `backend`
  *      (the registry's `backendExport` default), and
  *   3. names, in `spec.unloadExport`, the module-level pool hook the host closes
@@ -18,11 +18,26 @@
  * have a side effect at import time.
  */
 
+/** How many times the host closed the pool. Module-local on purpose: the
+ *  regression reads it through the Loader's own instance of this module, so the
+ *  count proves the host's unload call reached *this* module without writing any
+ *  host state (no file, no service, no shared location). */
+let echoPoolCloses = 0
+
 /** The pool hook `spec.unloadExport` names. The host closes a backend's
  *  module-level pool only if it actually imported the module, and only after the
  *  composition was disposed (D4) — a fixture with a runtime would close its
  *  handles here. */
-export async function closeEchoPool() {}
+export async function closeEchoPool() {
+  echoPoolCloses += 1
+}
+
+/** Read-only count of {@link closeEchoPool} calls. Not part of the published
+ *  backend surface — a bundle may export whatever else it likes — it exists so
+ *  the dogfood regression can observe exactly-once closing from outside. */
+export function echoPoolCloseCount() {
+  return echoPoolCloses
+}
 
 export const backend = {
   id: 'echo-agent',

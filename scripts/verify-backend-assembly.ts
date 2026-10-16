@@ -2,7 +2,7 @@
  * The D-1 assembly point (src/dsh-adapter/backend-assembly.ts) on a real Cordis
  * composition: the bundles a profile declares in `dsh.profile.bundles` become
  * registry entries — admitted, registered and offered to the picker — without any
- * fiber ever activating, and before anything parses a backend choice.
+ * bundle row activating, and before backend-choice membership is checked.
  *
  * The cases pin the three admission states that reach the registry, the refusal
  * policy (loud, attributable to its bundle, contained), the resolution rule #1568
@@ -29,6 +29,7 @@ const { Context } = await import('@deepseek-ai/cordis')
 const { default: Loader } = await import('@deepseek-ai/cordis-plugin-loader')
 const { assembleBackendsFromProfile } = await import('../src/dsh-adapter/backend-assembly.js')
 const { listBackends, listOfferedBackends, loadBackend, parseBackendChoice, unloadBackends } = await import('../src/dsh-adapter/backend-registry.js')
+const { declaredBackendsIn } = await import('../src/dsh-adapter/plugin-declaration.js')
 const { kernelEntriesOf } = await import('../src/components/kernelCatalog.js')
 const { assertBackendHandler } = await import('../src/adapter/spec/tui-contributions.js')
 type KernelBackendId = import('../src/kernelPrefs.js').KernelBackendId
@@ -76,9 +77,15 @@ export function closeDemoPool() {
 export default function plugin() {}
 `
 
-/** One contribution entry, in the declared shape (`apiVersion` + `kind` + `name` + `spec`). */
-function contribution(spec: Record<string, unknown>, apiVersion = 'tui.dsh/v1alpha1'): Record<string, unknown> {
-  return { apiVersion, kind: 'Backend', id: 'com.example.' + String(spec.id), name: 'example_backend', spec }
+/** One contribution entry, in the declared shape (`apiVersion` + `kind` + `name` + `spec`).
+ *  `name` is the contribution's *local* name: the canonical projection keys
+ *  extensions by it, so two contributions in one declaration must not share one. */
+function contribution(
+  spec: Record<string, unknown>,
+  apiVersion = 'tui.dsh/v1alpha1',
+  name = 'example_backend',
+): Record<string, unknown> {
+  return { apiVersion, kind: 'Backend', id: 'com.example.' + String(spec.id), name, spec }
 }
 
 /** A package-root `dsh-plugin.json` carrying `contributions`. */
@@ -134,6 +141,8 @@ const CLI = '@dsh-tui-verify/backend-cli'
 const PAIR = '@dsh-tui-verify/backend-pair'
 const NO_EXPORT = '@dsh-tui-verify/backend-no-export'
 const BAD_UNLOAD = '@dsh-tui-verify/backend-bad-unload'
+const MISSING_ID = '@dsh-tui-verify/backend-missing-id'
+const NON_STRING_ID = '@dsh-tui-verify/backend-non-string-id'
 const ABSENT = '@dsh-tui-verify/declared-but-missing'
 /** The D-5 dogfood bundle: a checked-in package written against the published
  *  surface, installed into the throwaway profile exactly as a person's install
@@ -206,9 +215,11 @@ const cliDir = writeBundle(CLI, [contribution({
   grants: [],
   unloadExport: 'closeDemoPool',
 })])
-writeBundle(PAIR, [
-  contribution({ id: PAIR_ID + '-one', label: { text: 'Pair One' }, shortLabel: 'Pair', capabilities: [], grants: [] }),
-  contribution({ id: PAIR_ID + '-two', label: { text: 'Pair Two' }, shortLabel: 'Pair', capabilities: [], grants: [] }),
+const pairDir = writeBundle(PAIR, [
+  contribution({ id: PAIR_ID + '-one', label: { text: 'Pair One' }, shortLabel: 'Pair', capabilities: [], grants: [] },
+    'tui.dsh/v1alpha1', 'example_pair_one'),
+  contribution({ id: PAIR_ID + '-two', label: { text: 'Pair Two' }, shortLabel: 'Pair', capabilities: [], grants: [] },
+    'tui.dsh/v1alpha1', 'example_pair_two'),
 ])
 writeBundle(NO_EXPORT, [contribution({
   id: NO_EXPORT_ID,
@@ -225,11 +236,41 @@ writeBundle(BAD_UNLOAD, [contribution({
   grants: [],
   unloadExport: 'closeSomethingElse',
 })], 'export const backend = { id: "entry-handler", detect: async () => undefined, open: async () => undefined }\n')
+// The canonical projection (`projectManifest`'s extension loop) drops a
+// contribution whose own outer `id` is not a string before it reads `spec`, so
+// these two must be refused rather than registered — the counterexamples R3
+// names. Their `spec` is otherwise valid on purpose: only the outer id decides.
+writeBundle(MISSING_ID, [{
+  apiVersion: 'tui.dsh/v1alpha1',
+  kind: 'Backend',
+  name: 'example_backend',
+  spec: {
+    id: 'example-missing-outer-id-agent',
+    label: { text: 'Missing Outer Id Agent' },
+    shortLabel: 'Missing Outer Id',
+    capabilities: [],
+    grants: [],
+  },
+}])
+writeBundle(NON_STRING_ID, [{
+  apiVersion: 'tui.dsh/v1alpha1',
+  kind: 'Backend',
+  id: 42,
+  name: 'example_backend',
+  spec: {
+    id: 'example-non-string-id-agent',
+    label: { text: 'Non-String Outer Id Agent' },
+    shortLabel: 'Non-String Outer Id',
+    capabilities: [],
+    grants: [],
+  },
+}])
 
 const COMPOSITION_OWNED = ['@deepseek-ai/dsh-base', '@deepseek-harness-tui/dsh-tui']
 const BUNDLES = [
   ...COMPOSITION_OWNED,
-  FIXTURE, DEMO, DEGRADED, WAITING, RESERVED, INVALID, WRONG_API, NOT_A_PLUGIN, CLI, PAIR, NO_EXPORT, BAD_UNLOAD, ABSENT,
+  FIXTURE, DEMO, DEGRADED, WAITING, RESERVED, INVALID, WRONG_API, NOT_A_PLUGIN, CLI, PAIR, NO_EXPORT, BAD_UNLOAD,
+  MISSING_ID, NON_STRING_ID, ABSENT,
 ]
 /** Registered in scan order: one bundle may declare several backends. */
 const EXPECTED_REGISTERED = [
@@ -237,7 +278,7 @@ const EXPECTED_REGISTERED = [
   PAIR_ID + '-one', PAIR_ID + '-two', NO_EXPORT_ID, BAD_UNLOAD_ID,
 ]
 /** Bundles whose declaration announced a backend that could not become an entry. */
-const EXPECTED_REFUSED = [RESERVED, INVALID, WRONG_API, ABSENT]
+const EXPECTED_REFUSED = [RESERVED, INVALID, WRONG_API, MISSING_ID, NON_STRING_ID, ABSENT]
 
 writeFileSync(join(profileDir, 'package.json'), JSON.stringify({
   name: 'dsh-profile-verify-backend-assembly',
@@ -280,6 +321,7 @@ if (process.env.DSH_TUI_ASSEMBLY_CHILD === '1') {
       registered: assembled.registered,
       scanned: assembled.scanned.length,
       warnings: composition.warnings.length,
+      rows: [...composition.root.loader.entries()].length,
     }) + '\n')
   } finally {
     await composition.root.fiber.dispose()
@@ -315,6 +357,14 @@ check('a declaration of another apiVersion is not read as this host\'s Backend',
 check('a declared bundle that is not installed is reported, not ignored',
   assembled.refused.some(refusal => refusal.bundle === ABSENT && refusal.reason.includes('entry module')),
   JSON.stringify(assembled.refused))
+check('a contribution with no outer id registers nothing: the canonical projection drops it',
+  assembled.refused.some(refusal => refusal.bundle === MISSING_ID && refusal.reason.includes("['x-dsh-tui'][0].id"))
+  && !assembled.registered.includes('example-missing-outer-id-agent'),
+  JSON.stringify(assembled.refused.filter(refusal => refusal.bundle === MISSING_ID)))
+check('a contribution with a non-string outer id registers nothing either',
+  assembled.refused.some(refusal => refusal.bundle === NON_STRING_ID && refusal.reason.includes("['x-dsh-tui'][0].id"))
+  && !assembled.registered.includes('example-non-string-id-agent'),
+  JSON.stringify(assembled.refused.filter(refusal => refusal.bundle === NON_STRING_ID)))
 check('a bundle that is not a TUI plugin is scanned and passed over in silence',
   assembled.refused.every(refusal => refusal.bundle !== NOT_A_PLUGIN))
 check('every refusal is attributable to its bundle and warned about once',
@@ -425,7 +475,21 @@ check('dogfood: it reaches the picker with the literal label it declared',
     candidate.id === FIXTURE_AGENT_ID && candidate.label.kind === 'literal'
     && candidate.label.text === 'Echo Agent' && candidate.shortLabel === 'Echo' && candidate.product === 'echo'),
   JSON.stringify(kernelEntriesOf(listOfferedBackends()).find(candidate => candidate.id === FIXTURE_AGENT_ID)))
+// The fixture's own pool ledger, read through the Loader's instance of its module
+// (the same instance the registry holds — asserted for the demo entry above). The
+// count lives in the module, so it proves the host's unload call reached this
+// very module without the regression writing any host state of its own.
+const fixtureNamespace = await composition.root.loader.internal.import(FIXTURE, PROFILE_URL, {}) as {
+  echoPoolCloseCount?: () => number
+}
+const fixturePoolCloses = (): number =>
+  typeof fixtureNamespace.echoPoolCloseCount === 'function' ? fixtureNamespace.echoPoolCloseCount() : -1
+await unloadBackends()
+check('dogfood: an unload pass never closes the pool of a backend it did not load',
+  fixturePoolCloses() === 0, String(fixturePoolCloses()))
 const fixtureHandler = await loadBackend(FIXTURE_AGENT_ID as KernelBackendId)
+check('dogfood: loading the backend does not close its declared pool',
+  fixturePoolCloses() === 0, String(fixturePoolCloses()))
 check('dogfood: the module it exports under `backend` passes the family\'s own handler assertion',
   (() => {
     try {
@@ -438,6 +502,93 @@ check('dogfood: the module it exports under `backend` passes the family\'s own h
 check('dogfood: detection answers instead of throwing, and reports what the fixture really is',
   await (fixtureHandler as { detect: () => Promise<{ installed: boolean; hint?: string }> }).detect()
     .then(detection => detection.installed === false && typeof detection.hint === 'string', () => false))
+check('dogfood: the declaration names, in spec.unloadExport, the pool hook the module carries',
+  fixtureEntry?.manifest.unloadExport === 'closeEchoPool'
+  && typeof fixtureNamespace.echoPoolCloseCount === 'function',
+  JSON.stringify(fixtureEntry?.manifest.unloadExport))
+await unloadBackends()
+check('dogfood: the declared unloadExport closes the fixture\'s pool exactly once',
+  fixturePoolCloses() === 1, String(fixturePoolCloses()))
+await unloadBackends()
+check('dogfood: a second unload does not close the fixture\'s pool again',
+  fixturePoolCloses() === 1, String(fixturePoolCloses()))
+
+// ── the canonical projection is the measuring stick for the outer id (R3) ───
+// `declaredBackendsOf` may never register a contribution the standard projection
+// drops. Its authority here is `@dsh-std/manifest`'s `projectManifest`, whose
+// extension loop requires the contribution's own `apiVersion`, `kind`, `id` and
+// `name` to be strings before it copies `spec`. Each case reads one declaration
+// through both readers, so the expected answer comes from the projection rather
+// than from the helper under test.
+const { projectManifest } = await import('@dsh-std/manifest')
+
+/** The local names of the `Backend` contributions the canonical projection keeps
+ *  from one declaration. `undefined` when the projection itself rejects the
+ *  declaration — a duplicate extension key is one such rejection. */
+function projectedBackendNames(source: string): string[] | undefined {
+  try {
+    const projected = projectManifest(JSON.parse(source)) as {
+      spec: { facets: readonly { name: string; extensions?: readonly { apiVersion: string; kind: string; metadata: { name: string } }[] }[] }
+    }
+    const host = projected.spec.facets.find(facet => facet.name === 'host')
+    return (host?.extensions ?? [])
+      .filter(extension => extension.apiVersion === 'tui.dsh/v1alpha1' && extension.kind === 'Backend')
+      .map(extension => extension.metadata.name)
+  } catch {
+    return undefined
+  }
+}
+
+/** A `spec` the family validator accepts, so only the outer id can decide. */
+function validSpec(id: string): Record<string, unknown> {
+  return { id, label: { text: 'Projected Agent' }, shortLabel: 'Projected', capabilities: [], grants: [] }
+}
+
+const idGateCases: readonly { readonly what: string; readonly entry: Record<string, unknown> }[] = [
+  {
+    what: 'no outer id at all',
+    entry: { apiVersion: 'tui.dsh/v1alpha1', kind: 'Backend', name: 'example_backend', spec: validSpec('example-no-id-agent') },
+  },
+  {
+    what: 'a non-string outer id',
+    entry: { apiVersion: 'tui.dsh/v1alpha1', kind: 'Backend', id: 42, name: 'example_backend', spec: validSpec('example-number-id-agent') },
+  },
+]
+for (const { what, entry } of idGateCases) {
+  const source = declarationOf([entry])
+  const read = declaredBackendsIn(source)
+  const projected = projectedBackendNames(source)
+  check(`a contribution with ${what} is dropped by the canonical projection, and this reader refuses it too`,
+    projected?.length === 0 && read.backends.length === 0 && read.problems.length === 1,
+    JSON.stringify({ projected, read: read.backends.map(backend => backend.spec.id), problems: read.problems }))
+}
+
+const splitIdentitySource = declarationOf([{
+  apiVersion: 'tui.dsh/v1alpha1',
+  kind: 'Backend',
+  id: 'com.example.not-the-spec-id',
+  name: 'example_split',
+  spec: validSpec('example-split-agent'),
+}])
+const splitRead = declaredBackendsIn(splitIdentitySource)
+check('an outer contribution id that differs from spec.id stays legitimate, and the backend id is spec.id',
+  splitRead.problems.length === 0 && splitRead.backends.length === 1
+  && splitRead.backends[0]?.name === 'example_split' && splitRead.backends[0]?.spec.id === 'example-split-agent'
+  && JSON.stringify(projectedBackendNames(splitIdentitySource)) === JSON.stringify(['example_split']),
+  JSON.stringify({ read: splitRead, projected: projectedBackendNames(splitIdentitySource) }))
+
+// The PAIR bundle puts two `Backend` contributions in one declaration. The
+// projection keys extensions by (apiVersion, kind, metadata.name) and rejects a
+// duplicate, so the two local names must stay distinct — and the projection is
+// what proves the declaration itself conforms.
+const pairDeclaration = readFileSync(join(pairDir, 'dsh-plugin.json'), 'utf8')
+const pairRead = declaredBackendsIn(pairDeclaration)
+const pairProjected = projectedBackendNames(pairDeclaration)
+check('the PAIR declaration keeps two distinct local names, so the canonical projection keeps both',
+  pairRead.problems.length === 0 && pairRead.backends.length === 2
+  && pairProjected !== undefined && pairProjected.length === 2 && new Set(pairProjected).size === 2
+  && pairRead.backends.every(backend => pairProjected.includes(backend.name)),
+  JSON.stringify({ read: pairRead.backends.map(backend => backend.name), projected: pairProjected, problems: pairRead.problems }))
 
 // ── the pass is a no-op the second time ─────────────────────────────────────
 // Two callers on purpose: the entry decides its kernel before `apply` runs, and both
@@ -451,15 +602,16 @@ check('a second pass over the same composition registers nothing and repeats no 
   JSON.stringify({ registered: again.registered, warned: composition.warnings.length }))
 
 // ── the wiring of both call sites, in the real sources ─────────────────────
-// The cases above prove the *function*; these prove the callers. A boot that reads
-// registry membership before it assembles is the failure the D1 contract names, so
-// each boot path's membership reads must all come after the assembly it runs.
+// The cases above prove the function; these pin its production callers. The
+// entry's preliminary route is only a host-unavailable fallback: the final
+// kernel must configure the root after discovery. verify-backend-host drives
+// the real root/profile lifecycle; verify-backend-config covers Schema timing.
 const REPO = dirname(dirname(fileURLToPath(import.meta.url)))
 /** `assembleBackendsFromProfile(ctx)`: the line each boot path runs first. */
 const ASSEMBLY_CALL = 'assembleBackendsFromProfile(ctx)'
 /** `parseBackendChoice()` and `isRegisteredBackend()` are the two ways `apply` asks
  *  the registry whether an id is one this process can run. */
-const BOOT_READS = /parseBackendChoice\(|isRegisteredBackend\(/gu
+const BOOT_READS = /\b(?:parseBackendChoice|isRegisteredBackend)\s*\(|\benvKnown:\s*isRegisteredBackend\b/gu
 /** The line that fixes the kernel the entry's composition boots on (its route
  *  helpers read membership indirectly, so the call is what is named here). */
 const ENTRY_KERNEL_LINE = 'const kernel: KernelBackendId = entryKernel('
@@ -496,12 +648,30 @@ check('the wiring check bites: moving the assembly after the boot\'s first read 
   !assemblesBeforeEvery(assemblyMovedAfter(bootSource, 'const handoffBackend = parseBackendChoice('), BOOT_READS))
 
 const entrySource = readFileSync(join(REPO, 'src', 'dsh-adapter', 'host-entry.ts'), 'utf8')
-check('the standalone entry decides its kernel only after the assembly ran',
-  assemblesBeforeLine(entrySource, ENTRY_KERNEL_LINE)
-  && entrySource.indexOf('entryKernel: kernel') > entrySource.indexOf(ENTRY_KERNEL_LINE),
-  JSON.stringify([entrySource.indexOf(ASSEMBLY_CALL), entrySource.indexOf(ENTRY_KERNEL_LINE)]))
+const HOST_MODE_CALL = "await root?.selectKernel(kernel === 'dsh')"
+function selectsFinalKernel(source: string): boolean {
+  const route = source.indexOf(ENTRY_KERNEL_LINE)
+  const mode = source.indexOf(HOST_MODE_CALL)
+  return assemblesBeforeLine(source, ENTRY_KERNEL_LINE)
+    && mode > route && source.indexOf('const config = Config(') > mode
+    && source.indexOf("createEntrySlot(kernel === 'dsh')") > mode
+    && source.indexOf('entryKernel: kernel') > mode
+    && !source.includes("dsh: kernelBeforeHost === 'dsh'")
+}
+check('the standalone entry uses its assembled kernel for host mode, Schema, slot and runtime',
+  selectsFinalKernel(entrySource))
 check('the wiring check bites: moving the assembly after the entry\'s kernel is red',
-  !assemblesBeforeLine(assemblyMovedAfter(entrySource, ENTRY_KERNEL_LINE), ENTRY_KERNEL_LINE))
+  !selectsFinalKernel(assemblyMovedAfter(entrySource, ENTRY_KERNEL_LINE)))
+check('the wiring check bites: a host mode decided by the preliminary kernel is red',
+  !selectsFinalKernel(entrySource.replace(HOST_MODE_CALL, "await root?.selectKernel(kernelBeforeHost === 'dsh')")))
+const selectionFailure = entrySource.slice(entrySource.indexOf(HOST_MODE_CALL), entrySource.indexOf('const config = Config('))
+const delegatesDshFailure = (source: string): boolean => source.includes("if (kernel === 'dsh')")
+  && source.indexOf('noteHostUnavailable(kernel, error)') >= 0
+  && source.indexOf('delegateToDsh()') > source.indexOf('noteHostUnavailable(kernel, error)')
+  && source.indexOf('handleStartupError(ctx, error)') > source.indexOf('delegateToDsh()')
+check('failed DSH-only preparation still delegates before the screen mounts', delegatesDshFailure(selectionFailure))
+check('the wiring check bites: removing DSH preparation fallback is red',
+  !delegatesDshFailure(selectionFailure.replace('delegateToDsh()', '')))
 
 await composition.root.fiber.dispose()
 
@@ -542,14 +712,14 @@ const child = spawnSync(process.execPath, ['--import', 'tsx/esm', fileURLToPath(
 check('timing baseline child ran', child.status === 0, child.stdout + child.stderr)
 const outcome = child.status === 0
   ? JSON.parse(readFileSync(childReport, 'utf8').trim().split('\n').pop() ?? '{}') as {
-      parsedBefore: string | null; parsedAfter: string | null; registered: string[]; scanned: number; warnings: number }
-  : { parsedBefore: 'child failed', parsedAfter: 'child failed', registered: [], scanned: -1, warnings: -1 }
+      parsedBefore: string | null; parsedAfter: string | null; registered: string[]; scanned: number; warnings: number; rows: number }
+  : { parsedBefore: 'child failed', parsedAfter: 'child failed', registered: [], scanned: -1, warnings: -1, rows: -1 }
 check('bad baseline: a boot that parses first reads an installed backend as unknown',
   outcome.parsedBefore === null, JSON.stringify(outcome))
 check('assembly first: the same id is a registered backend by the time the boot parses',
   outcome.parsedAfter === AGENT_ID, JSON.stringify(outcome))
-check('the scan needs no fiber activation: nothing was composed in the child',
-  outcome.scanned === BUNDLES.length - COMPOSITION_OWNED.length
+check('the scan needs no bundle row activation: the child has no Loader rows',
+  outcome.rows === 0 && outcome.scanned === BUNDLES.length - COMPOSITION_OWNED.length
   && JSON.stringify(outcome.registered) === JSON.stringify(EXPECTED_REGISTERED), JSON.stringify(outcome))
 
 rmSync(dir, { recursive: true, force: true })

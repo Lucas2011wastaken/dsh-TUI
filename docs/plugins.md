@@ -56,8 +56,8 @@
   （`TUI-BACKEND-001`）已可用，**准入链路（清单 → registry → descriptor）与装链路都已接线**：
   启动时扫 profile 声明的已装 bundle（`dsh.profile.bundles`——`/plugin install` 与 `dsh plugin add`
   都写它），按**实际 ESM 入口最近的包根**读 `dsh-plugin.json`，校验 + 准入后注册，于是
-  「装一个第三方后端、重启后出现在 picker 里」成立。三条边界：这份扫描**早于**启动解析后端选择
-  （晚一步的话，装好的 id 会被读成未知值回落 dsh）；后端实现从包入口模块的 `backend` 导出取
+  「装一个第三方后端、重启后出现在 picker 里」成立。三条边界：这份扫描**早于**后端选择的注册表成员判定
+  （Config Schema 只校验语法，独立入口的完整/轻量组合由装配后的最终内核决定）；后端实现从包入口模块的 `backend` 导出取
   （`backendExport` 是 in-tree 私有项，声明里写不了别的导出名），模块只在真的选中时才 import；
   装完**不重启**仍然不会出现在 picker 里——那不是承诺。
 - **装包本身已在终端里可用（C-4）**：`/plugin install <spec>` 走宿主

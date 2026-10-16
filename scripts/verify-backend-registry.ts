@@ -265,7 +265,11 @@ check('a handler is read from the module namespace under the documented default 
 const UNINSTALLED = 'acme-agent'
 check('syntax passes it, membership does not',
   isBackendIdSyntax(UNINSTALLED) && !isRegisteredBackend(UNINSTALLED) && parseBackendChoice(UNINSTALLED) === undefined)
-check('--backend / Config row: an unregistered value reads as "not configured" (dsh)',
+// The membership-complete parse (`normalizeBackendChoice` / `parseBackendChoice`).
+// The Config *row* no longer applies it at schema time: it keeps the syntax half
+// so an id whose bundle registers during `apply` survives, and the boot applies
+// this gate after that assembly (pinned by verify-backend-config.ts).
+check('the membership parse reads an unregistered value as "not configured", and normalizes case/blanks',
   normalizeBackendChoice(UNINSTALLED) === undefined && normalizeBackendChoice(' Codex ') === 'codex')
 check('handoff env: an unregistered value is ignored, the memory still wins',
   resolveRememberedBackend({ handoff: parseBackendChoice(UNINSTALLED), memory: 'claude' }) === 'claude')

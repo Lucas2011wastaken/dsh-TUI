@@ -75,11 +75,16 @@ const NO_BACKENDS: DeclaredBackends = Object.freeze({ backends: Object.freeze([]
  *
  * One reader for every consumer — the C-5 residue watch (`plugin-manage.ts`) and
  * the D-1 assembly both ask this — so the two cannot disagree about which entries
- * are backend contributions. It applies the same three gates the admission path
+ * are backend contributions. It applies the same gates the admission path
  * applies, in the same order: the definition's own coordinate (`apiVersion` +
- * `kind`), the definition's metadata rule (`name`), then the family validator. An
- * entry that fails any of them is reported in `problems` rather than dropped in
- * silence; a `null`/non-object record simply contributes nothing.
+ * `kind`), the contribution's outer `id`, the definition's metadata rule
+ * (`name`), then the family validator. An entry that fails any of them is
+ * reported in `problems` rather than dropped in silence; a `null`/non-object
+ * record simply contributes nothing.
+ *
+ * `projectManifest` drops contributions without a string outer `id`; this
+ * reader must not register one either. That contribution id may differ from
+ * the backend id in `spec.id`.
  *
  * Identity is deliberately not this function's business: it reads a record the
  * caller already obtained, and says nothing about which package that record
@@ -101,6 +106,13 @@ export function declaredBackendsOf(record: unknown): DeclaredBackends {
     const where = `contributes['x-dsh-tui'][${index}]`
     if (candidate.apiVersion !== BACKEND.apiVersion) {
       problems.push(`${where} is a ${BACKEND.kind} of ${String(candidate.apiVersion)}, not ${BACKEND.apiVersion}`)
+      continue
+    }
+    // The canonical projection drops such a contribution before it reads its
+    // spec (`@dsh-std/manifest`'s extension loop), so a backend it does not
+    // count must not be registered here either.
+    if (typeof candidate.id !== 'string') {
+      problems.push(`${where}.id is missing or not a string`)
       continue
     }
     const name = candidate.name

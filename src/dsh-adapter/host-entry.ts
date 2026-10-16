@@ -114,13 +114,12 @@ async function disposeEntryRoot(ctx: Context): Promise<void> {
 async function runInEntry(kernelBeforeHost: KernelBackendId): Promise<void> {
   // Without a usable dsh, DSH delegates to `dsh --profile`; the other kernels
   // run on this package's own cordis. This pre-mount answer is only for the two
-  // failure paths below (no Loader means no assembly, so a third-party kernel
-  // could not run anyway); the kernel the composition uses is decided after the
-  // host root is up.
+  // failure paths below. The root starts neutral: its final composition mode is
+  // selected only after the Loader can assemble third-party backends.
   let root: HostRoot | undefined
   const exitSeam: ProcessExitSeam = {}
   try {
-    root = await prepareHostRoot(await loadHostDsh(), { profile, args: process.argv.slice(2), dsh: kernelBeforeHost === 'dsh', exitSeam })
+    root = await prepareHostRoot(await loadHostDsh(), { profile, args: process.argv.slice(2), exitSeam })
     markBoot('entry-hijacked')
   } catch (error) {
     markBoot('entry-host-unavailable')
@@ -157,6 +156,17 @@ async function runInEntry(kernelBeforeHost: KernelBackendId): Promise<void> {
   // read: the assembly says so and registers nothing.
   assembleBackendsFromProfile(ctx)
   const kernel: KernelBackendId = entryKernel(env, { configured: configuredBackend(profile) })
+  try {
+    await root?.selectKernel(kernel === 'dsh')
+  } catch (error) {
+    if (kernel === 'dsh') {
+      noteHostUnavailable(kernel, error)
+      delegateToDsh()
+      return
+    }
+    handleStartupError(ctx, error)
+    return
+  }
   // cordis.patch.yml's dsh-tui row, rebuilt from the same environment; the
   // editable fields come from ./tui-settings.ts on top.
   const config = Config({

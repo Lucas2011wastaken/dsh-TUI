@@ -10,7 +10,7 @@
 
 `Backend` 是继 `SettingsSection` 与 `Scene` 之后的第三个贡献族，与它们同处一个 manifest extension catalog：它声明**一个后端在宿主里长什么样**——身份、标签、它运行期答话的会话能力、它索要的宿主权限、它的安装面与卸载出口。声明是数据，不是权威：后端在本进程内运行，见「Grants and the trust model」。
 
-贡献族今天的准入状态是**已接线（W-2，Stage C）**：definition、validator、handler assertion、contract profile、conformance requirement、宿主侧门禁，以及"清单 → registry → descriptor"这条链路都已就位——`Backend` 是宿主发布的契约坐标，第三方 bundle 的 `x-dsh-tui` 声明由生产准入 catalog 里的同一份扩展定义校验。仍未做的是把**已挂载 bundle 的声明接进注册表与 picker** 的那一步（装链路，见末节）。
+贡献族今天的准入状态是**已接线（W-2，Stage C）**：definition、validator、handler assertion、contract profile、conformance requirement、宿主侧门禁，以及"清单 → registry → descriptor"这条链路都已就位——`Backend` 是宿主发布的契约坐标，第三方 bundle 的 `x-dsh-tui` 声明由生产准入 catalog 里的同一份扩展定义校验。**已装 bundle 的声明接进注册表与 picker** 的装配链路也已接线（D-1，见末节）。
 
 ## Declaration fields
 
@@ -180,19 +180,20 @@ Backend contract profile 自 W-2 起**已在 `profileHash` 校验范围内**（`
 
 **装链路的那个 caller 有了。** `src/dsh-adapter/backend-assembly.ts` 在启动时把 profile 声明的**已装
 bundle** 的 `x-dsh-tui` `Backend` 声明接进 `registerBackend()`，于是"装一个第三方后端 bundle，
-重启后它出现在 kernel picker 里"成立。逐条（每条都由 `scripts/verify-backend-assembly.ts` 钉住）：
+重启后它出现在 kernel picker 里"成立。逐条（由装配、配置与宿主回归共同钉住）：
 
 - **输入 = 文件，不是服务，也不是 fiber**：读 profile 清单的 `dsh.profile.bundles`（`/plugin install`
   与 `dsh plugin add` 都写它；profile 目录由 `Context.baseUrl` 给出，Loader 组合每一行时继承它）。
   插件管理服务的 `listBundles()` 是异步的、fiber 激活更晚（bundle 自己的行由 profile 的
   `cordis.patch.yml` 提供、组合在 bundle 层**之后**），两者都必然晚于解析。
-- **时序 = 同步、早于解析，两个调用点**：装配在 `apply` 里、`parseBackendChoice()` 之前跑。D1 契约的第二半是
-  注册表成员资格，晚一步不是"晚点出现"而是"选择被读成未知值"——未注册的 id 一律回落 dsh 并告警。
-  独立入口（`dsh-tui`）还有一处更早的成员资格读：它**先**决定这次启动落在哪个内核（`entryKernel`：
-  handoff → Config 行 → `DSH_TUI_BACKEND` → `kernel.json` 记忆），而那条路要问的正是"这个 id 装了没有"。
-  所以入口在宿主挂载之后、路由重算之前先跑一次装配，`apply` 里再跑一次——**同一组合上的第二遍是
-  no-op**（已注册的条目与已说过的拒因都不重复）。坏基线（先解析/先定内核、后装配）在门禁的子进程
-  用例与源码接线断言里各钉一条，正面用例断言全程零 fiber 激活。
+- **时序 = 同步、早于成员判定，两个调用点**：Config Schema 只做语法校验；装配在 `apply` 里、
+  `parseBackendChoice()` 的注册表成员判定之前跑，不能在 Schema 阶段抹掉尚未注册的第三方 id。
+  独立入口（`dsh-tui`）先准备中性的 Loader/模块解析根，装配后按 handoff → Config 行 →
+  `DSH_TUI_BACKEND` → `kernel.json` 决定最终内核；`HostRoot.selectKernel()` 用该值选择 DSH 专用
+  服务与完整/轻量 profile，入口 slot 和 runtime 也用同一个值。发现前的路由只用于宿主不可用时的
+  回退，不能预先决定组合形态。`apply` 里再装配时，**同一组合上的第二遍是 no-op**。
+  `verify-backend-config` 驱动真实 Cordis Schema-before-apply 顺序；`verify-backend-host` 驱动真实
+  Loader/profile include，覆盖 env、记忆与静态 Config 选择，以及 DSH 对照。装配本身不依赖 bundle 行激活。
 - **身份 = Loader 的 resolver + 最近的包根**：解析 bundle 的入口用 Loader 自己的
   `internal.resolveSync`（v1/v2 双签名），清单只在确立包根的 `package.json` **同目录**才算数
   （#1568）。`loader.internal` 缺席 ⇒ **一个包都不注册**并给出一行原因：`import()` 会相对**本模块**
@@ -215,12 +216,11 @@ bundle** 的 `x-dsh-tui` `Backend` 声明接进 `registerBackend()`，于是"装
 `claude` 的插件只会看到"already registered"。现在保留检查在前，注册路径给出的正是那条规则
 （内建路径不受影响：in-tree manifest 本来就不走这条分支）。
 
-**门禁**：`scripts/verify-backend-assembly.ts`（43 checks，登记在 `session-workspace`；归组理由写在该
-脚本与其 CI 组条目旁），`verify-backend-registry` 60 → **65**（第三方 entry 的构造：非 inTree 规则、
+**门禁**：`scripts/verify-backend-assembly.ts`、`verify-backend-config.ts` 与 `verify-backend-host.ts`
+登记在 `session-workspace`；`verify-backend-registry` 60 → **65**（第三方 entry 的构造：非 inTree 规则、
 `backendExport` 缺省解析、投影与准入双向）、`verify-public-config-types` 与 profile 套件零改动。
 可照抄的实例 = 仓内夹具 **`scripts/fixtures/third-party-backend/`**（按公开面写的第三方 bundle，
 `package.json` + `cordis.patch.yml` + `dsh-plugin.json` + `backend.js`，不发布）。
 
 **仍未做**：真装演练（可写 `HOME`/`DSH_HOME` 的机器上 `/plugin install` 一个真 bundle → 重启 →
 picker）。仓内能做的替代是门禁的真装配链（一次性 profile + 真 Cordis 组合 + 真 Loader resolver）。
-

@@ -467,11 +467,15 @@ const GROUPS = {
 // entry 走 Loader 自己的 resolver（缺席即拒绝猜）、第三方 entry 的固定事实（inTree:false、
 // 字面量 label、不得出现 alwaysAvailable/nativeKey、backendExport 缺省 `backend`）、
 // 模块懒加载与池钩子只在真的加载过时关，以及**时序**：子进程里"先解析后装配"的坏基线必红
-// （装了的后端被读成未知值回落 dsh），正面是装配在先、且全程零 fiber 激活。
+// （装了的后端被读成未知值回落 dsh），正面是装配在先、且不依赖任何 bundle 行激活。
 // 归组理由（stage-d-plan §2 末段）：它测的是 backend 族的注册与解析语义，与同组的
 // verify-backend-registry 同一对象；#1568 的 verify-admission-loader 落在 input-terminal
 // 是因为它测的是准入 loader 本身，本门禁不碰那条链路。
     ["verify-backend-assembly", ['node', '--import', 'tsx/esm', 'scripts/verify-backend-assembly.ts']],
+// Discovery must precede Config membership checks and the final DSH/light host
+// selection. Exercise the real Schema, Cordis Loader and profile include.
+    ["verify-backend-config", ['node', '--import', 'tsx/esm', 'scripts/verify-backend-config.ts']],
+    ["verify-backend-host", ['node', '--import', 'tsx/esm', 'scripts/verify-backend-host.ts']],
 // 启动恢复 fail-closed（roadmap §6 第 11 条，B-2a）：纯函数半边（ResumeTarget 三态与 retry
 // 容错、显式 id 原样透传、裸 flag 走调用方 fallback、`--` 之后不再解析）、启动器半边（裸
 // 请求派生不出目标即报错退出，而不是把 --continue 交给下游；三个重试分支都带

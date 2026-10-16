@@ -1132,12 +1132,13 @@ goals / channels / permissions 一类名字）。
   `spec.unloadExport` 也是从同一个命名空间取。**模块只在真的选中该后端时才 import**——装了没选
   的后端不会被执行。
 
-**时序是硬约束**：这份扫描**同步**发生在启动解析后端选择**之前**（DSH profile 路径在 `apply` 里；
-独立入口 `dsh-tui` 在宿主挂载后、决定"这次落在哪个内核"之前再跑一次——同一组合上的第二遍是
-no-op）。晚一步的后果不是"晚点出现"，而是"选择被当成未知值"——`parseBackendChoice()` 的第二半就是
-注册表成员资格，未注册的 id 一律回落 dsh 并告警。bundle 自己的行由 profile 的 `cordis.patch.yml`
-提供、组合在 bundle 层之后，所以任何"等 fiber 激活"或"等插件服务"的写法都必然晚于解析：装配读的是
-**文件**（profile 清单）与 Loader 的 resolver，不依赖任何 fiber 已被激活。
+**时序是硬约束**：这份扫描**同步**发生在后端选择的**注册表成员判定之前**。DSH profile 路径的
+Config Schema 先做语法校验，保留合法的第三方 id；`apply` 装配后才查询该 id 是否已注册。
+独立入口 `dsh-tui` 先准备中性的 Loader/模块解析根，装配后决定最终内核，再用同一个值选择
+DSH 专用服务、完整/轻量 profile 与入口 slot；发现前的路由只用于宿主不可用时的回退。
+`apply` 再装配时，同一组合上的第二遍是 no-op。过早做成员判定不是"晚点出现"，而是把选择误读成
+未知值。装配读的是**文件**（profile 清单）与 Loader 的 resolver，不依赖任何 bundle 行已被激活。
+行为回归分别由 `verify-backend-assembly`、`verify-backend-config` 与 `verify-backend-host` 覆盖。
 
 **判不了就说出来**：Loader 没有 Node internals（拿不到它自己的 resolver）时，宿主**不猜**组件身份，
 一个包都不注册并给出一行原因；某个清单读不懂、投影不出、准入拒绝时，宿主给一行**归属到该 bundle**
