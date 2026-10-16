@@ -159,12 +159,18 @@ export function registerBackend(entry: BackendEntry): void {
   if (!isBackendIdSyntax(manifest.id)) {
     throw new Error(`${where} has an invalid id (lowercase letters, digits and dashes, at most 32 characters)`)
   }
-  if (entries.has(manifest.id)) throw new Error(`${where} is already registered`)
+  // The reserved check comes first on purpose (D-1). Every built-in id is seeded
+  // before any other caller can run, so an "is it taken?" test would answer for a
+  // plugin wearing `claude` too — and it would name the wrong reason: the id is
+  // not taken by a rival, it is one this host owns and no declaration may wear
+  // (`BACKEND_ID_RESERVED` in the family's contract). Registration is the last
+  // place that can still tell the two apart.
   if (!manifest.inTree && (BUILTIN_BACKEND_IDS as readonly string[]).includes(manifest.id)) {
     // `dsh` refs serialize without a prefix (`formatSessionRef`), so a plugin
     // wearing that id would collide with first-party references.
     throw new Error(`${where} is a reserved built-in id`)
   }
+  if (entries.has(manifest.id)) throw new Error(`${where} is already registered`)
   if (!manifest.inTree && manifest.label.kind === 'key') {
     // Otherwise a plugin could claim a first-party name: `t()` returns the text
     // of an existing key (`src/i18n.ts`), so the row would read "DeepSeek Harness".

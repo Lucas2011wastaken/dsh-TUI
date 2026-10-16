@@ -90,6 +90,7 @@ import { createLocalWorkspaceRuntime, getHostWorkspaceRuntime } from './workspac
 import { getHostSettingsSections, getLocalSettingsSectionsHost, type TuiSettingsField, type TuiSettingsSectionsRuntime } from './settings-sections.js'
 import { compositionRoot, withHostRootCapability } from './host-access.js'
 import { armAdmissionLoader } from './admission-loader.js'
+import { assembleBackendsFromProfile } from './backend-assembly.js'
 import { applyConfiguredSidePanelPanels, applySidePanelPanelsFromSettings } from './panels.js'
 import { disposeRootSettled } from './root-dispose.js'
 import { render, ThemeProvider, AlternateScreen } from '../ui.js'
@@ -551,6 +552,13 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
   }
   // Admit third-party activations from their package-root `dsh-plugin.json`.
   armAdmissionLoader(ctx)
+  // Stage D-1: the backends installed bundles declare join the registry *here*,
+  // before anything below parses a backend choice (`parseBackendChoice` reads the
+  // registry for membership, so an id registered later reads as unknown: dsh plus a
+  // warning). Synchronous on purpose — a bundle's own rows are composed after this
+  // one, so waiting for them would be waiting past the parse. This is the caller
+  // notes 0009's "Wired (W-2)" section was still missing.
+  assembleBackendsFromProfile(ctx)
   // The in-process DSH kernel mounts before the profile's workspace providers
   // exist: a provider URI resolves in `attachDsh`, and an unresolvable one
   // fails the startup session there instead of the mount.
