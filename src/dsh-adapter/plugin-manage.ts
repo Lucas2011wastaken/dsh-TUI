@@ -36,11 +36,10 @@
 import { existsSync } from 'node:fs'
 import type { Context } from '@deepseek-ai/cordis'
 import type { BundleInfo, ChangeResult, PluginEntryId, PluginInfo } from '@deepseek-ai/dsh-plugin-manager/types'
-import { validateBackendSpec } from '../adapter/spec/tui-contributions.js'
 import { t, type I18nKey } from '../i18n.js'
 import { resolveDshProfileName } from '../update.js'
 import { backendDataDir, DATA_DIR } from '../utils/paths.js'
-import { COMPOSITION_PACKAGE, pluginDeclarationOf } from './plugin-declaration.js'
+import { COMPOSITION_PACKAGE, declaredBackendsOf, pluginDeclarationOf } from './plugin-declaration.js'
 import { failureReasonOf } from './plugin-install.js'
 import {
   HOST_BUNDLE,
@@ -578,23 +577,10 @@ export function residueWatchOf(ctx: Context, name: string, dataRoot: string = DA
 /**
  * The backend ids a declaration contributes. Only a `Backend` entry names one,
  * and only through its validated `spec.id`. The outer `id` identifies the
- * contribution, not the backend whose data directory the host creates.
+ * contribution, not the backend whose data directory the host creates. Read
+ * through the shared `declaredBackendsOf()` reader, so this watch and the D-1
+ * assembly cannot disagree about which entries are backend contributions.
  */
 function backendIdsIn(record: Record<string, unknown> | undefined): string[] {
-  const contributes = record?.contributes
-  if (contributes === null || typeof contributes !== 'object') return []
-  const entries = (contributes as Record<string, unknown>)['x-dsh-tui']
-  if (!Array.isArray(entries)) return []
-  const ids = new Set<string>()
-  for (const entry of entries) {
-    if (entry === null || typeof entry !== 'object') continue
-    const candidate = entry as Record<string, unknown>
-    if (candidate.kind !== 'Backend') continue
-    try {
-      ids.add(validateBackendSpec(candidate.spec).id)
-    } catch {
-      // An invalid Backend spec does not identify a backend data directory.
-    }
-  }
-  return [...ids]
+  return [...new Set(declaredBackendsOf(record).backends.map(backend => backend.spec.id))]
 }
