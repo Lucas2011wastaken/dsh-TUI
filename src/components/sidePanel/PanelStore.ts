@@ -101,7 +101,7 @@ export class PanelStore {
    */
   setHint(id: string, hint: string): void {
     const entry = this.entries.get(id)
-    if (entry === undefined || (entry.hint ?? '') === hint) return
+    if (entry === undefined || entry.hint === hint) return
     this.entries.set(id, { ...entry, hint })
     this.emit({ type: 'hint', id })
   }

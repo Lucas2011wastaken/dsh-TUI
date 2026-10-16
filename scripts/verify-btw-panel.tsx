@@ -17,6 +17,7 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PassThrough, Writable } from 'node:stream'
+import { settle, settled } from './lib/term-test.mjs'
 
 process.env.FORCE_COLOR = '3'
 process.env.DSH_TUI_LANG = 'zh'
@@ -201,6 +202,15 @@ async function mountPanel(cols: number, panels: string, focusPanel: boolean, cha
 
 async function keys(frame: Frame, sequence: readonly string[]): Promise<void> {
   for (const key of sequence) { frame.stdin.write(key); await delay(180) }
+}
+
+// 首次广告空串必须覆盖能力位兜底；宽面板保证发送提示不会被截断掩盖。
+{
+  const ask = scriptedAsk()
+  const channel = makePanelChannel(ask)
+  const frame = await mountPanel(180, 'btw', true, channel)
+  check('P0. 首次空线程不广告发送键', !frame.lines()[ROWS - 1].includes('s 送聊天'), frame.lines()[ROWS - 1])
+  await frame.app.unmount()
 }
 
 // ── P1/P2: 空态 + 线程问答上屏（面板 ≈40 列：105 列终端）────────────────
@@ -848,6 +858,85 @@ async function mountChat(ask: ReturnType<typeof scriptedAsk>) {
   check('P16b. ↑ 走位后选中标题始终可见，且已可见时不动滚动', problems.length === 0, problems.join(' | '))
   check('P16c. 这条线程确实走到了「滚出视口 → 揭示」路径', reveals > 0, 'reveals=' + reveals)
   await frame.app.unmount()
+}
+
+// ── P17: 只允许把已完成答案送聊天；失败/中止时仍可在侧栏读部分答复 ─────
+for (const phase of ['running', 'failed', 'cancelled'] as const) {
+  const ask = scriptedAsk()
+  const channel = makePanelChannel(ask)
+  const frame = await mountPanel(140, 'btw', true, channel)
+  btwThreads.submit('probe-session', 'phase ' + phase, ask.ask)
+  if (phase === 'running') {
+    await keys(frame, ['s'])
+    check('P17. 空的在途答案不附加', channel.attachedContexts.length === 0)
+  }
+  ask.emit('partial-' + phase)
+  if (phase === 'failed') ask.fail('failed on purpose')
+  if (phase === 'cancelled') {
+    btwThreads.abortActive('probe-session')
+    ask.finish('late answer')
+  }
+  await settle(() => frame.lines().join('\n').includes('partial-' + phase))
+  await keys(frame, ['s'])
+  check('P17. ' + phase + ' 不附加且不切走焦点', channel.attachedContexts.length === 0
+    && !frame.lines()[ROWS - 1].includes('Ctrl+B'), JSON.stringify(channel.attachedContexts))
+  await frame.app.unmount()
+}
+
+// ── P18: 单轮长答案从编辑层回列表时也要揭示标题（ID 没变）──────────────
+{
+  btwThreads.resetForTest()
+  const ask = scriptedAsk()
+  const channel = makePanelChannel(ask)
+  const question = 'LONG-ANSWER-QUESTION'
+  btwThreads.submit('probe-session', question, ask.ask)
+  ask.finish(Array.from({ length: 30 }, (_, index) => 'paragraph-' + index).join('\n\n'))
+  await settle(() => btwThreads.selectedTurn('probe-session')?.phase === 'completed')
+  const frame = await mountTree(100, <BtwThreadScene channel={channel as never} onClose={() => {}} />)
+  check('P18a. 长答案起点跟尾，标题在视口外', frame.lines().join('\n').includes('paragraph-29')
+    && !frame.lines().join('\n').includes(question))
+  await keys(frame, ['\x1b[A'])
+  check('P18b. 输入框 ↑ 回列表即揭示选中标题', await settled(() => frame.lines().join('\n').includes(question)))
+  await keys(frame, ['\x1b[6~', '\x1b[6~', '\x1b[6~', '\x1b[6~'])
+  await settle(() => frame.lines().join('\n').includes('paragraph-29'))
+  await keys(frame, ['\r', ESC])
+  check('P18c. Esc 回列表也揭示同一标题', await settled(() => frame.lines().join('\n').includes(question)))
+  await frame.app.unmount()
+}
+
+// ── P19: React 19 的 ref 清理必须同时撤销标题节点注册 ───────────────────
+{
+  // 只观察真实标题节点注册的 Map，不给产品增加测试接口或持有历史节点。
+  const rowMaps = new Set<Map<unknown, unknown>>()
+  const originalSet = Map.prototype.set
+  Map.prototype.set = function<K, V>(this: Map<K, V>, key: K, value: V): Map<K, V> {
+    if (typeof key === 'string' && /^btw-\d+$/u.test(key)
+      && typeof value === 'object' && value !== null && 'nodeName' in value && value.nodeName === 'ink-box') {
+      rowMaps.add(this)
+    }
+    originalSet.call(this, key, value)
+    return this
+  }
+  const ask = scriptedAsk()
+  const channel = makePanelChannel(ask)
+  let frame: Frame | undefined
+  try {
+    frame = await mountPanel(140, 'btw', true, channel)
+    for (let index = 0; index < 3; index += 1) {
+      const answer = 'topic-answer-' + index
+      btwThreads.submit('probe-session', 'topic ' + index, ask.ask)
+      ask.finish(answer)
+      await settle(() => frame!.lines().join('\n').includes(answer))
+      check('P19. 标题注册表只有当前一轮', rowMaps.size === 1 && [...rowMaps].every(map => map.size === 1))
+      btwThreads.newTopic('probe-session')
+      await settle(() => frame!.lines().join('\n').includes('还没有侧问'))
+      check('P19. 新话题释放旧标题节点 ' + index, [...rowMaps].every(map => map.size === 0),
+        JSON.stringify([...rowMaps].map(map => map.size)))
+    }
+  } finally {
+    Map.prototype.set = originalSet
+    await frame?.app.unmount()
+  }
 }
 
 btwThreads.resetForTest()

@@ -85,6 +85,7 @@ export function BtwPanelAdapter({ width, height, focused, visible }: PanelProps)
   }, [version, visible])
 
   const attachTurn = React.useCallback((turn: BtwTurn): boolean => {
+    if (turn.phase !== 'completed') return false
     if (typeof channel.attachContext !== 'function') return false
     channel.attachContext({
       source: 'panel',

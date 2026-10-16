@@ -66,7 +66,10 @@ function QuestionRow({ turnId, text, selected, onSelect, onRegister }: {
   const setNode = React.useCallback((node: DOMElement | null) => {
     const cleanup = cursorRef(node)
     onRegister?.(turnId, node)
-    return () => { if (typeof cleanup === 'function') cleanup() }
+    return () => {
+      if (typeof cleanup === 'function') cleanup()
+      onRegister?.(turnId, null)
+    }
   }, [cursorRef, onRegister, turnId])
   return (
     <Box
@@ -178,8 +181,8 @@ export function BtwThreadView({
   React.useLayoutEffect(() => {
     const previous = previousSelectedRef.current
     previousSelectedRef.current = selectedTurnId
-    // 首次渲染（打开面板/换话题）不动滚动：跟尾已经把尾巴摆好了。
-    if (previous === undefined || selectedTurnId === undefined || previous === selectedTurnId) return
+    // 从编辑层或主输入框回列表时也要揭示：长答案跟尾后，标题可能在视口外。
+    if (selectedTurnId === undefined || previous === selectedTurnId) return
     const handle = scrollRef.current
     const node = rowNodes.current.get(selectedTurnId)
     if (handle === null || node === undefined) return
