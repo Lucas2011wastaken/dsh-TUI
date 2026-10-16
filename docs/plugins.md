@@ -53,9 +53,13 @@
   `ctx.tuiPluginHost.grants.corrupt` 已随 adapter 分层重构（#705）移除。
 - **后端贡献族（`tui.dsh/v1alpha1` `Backend`，接缝十四）的公开面已随第一版 apiVersion 冻结**：类型面
   （`BackendSpec`、`validateBackendSpec`、`backendAdmission`）与 conformance
-  （`TUI-BACKEND-001`）已可用，**准入链路（清单 → registry → descriptor）已接线**；
-  仍未做的是把已挂载 bundle 的声明接进注册表与 kernel picker，所以
-  「装一个第三方后端、重启后出现在 picker 里」这条端到端流程尚未成立。
+  （`TUI-BACKEND-001`）已可用，**准入链路（清单 → registry → descriptor）与装链路都已接线**：
+  启动时扫 profile 声明的已装 bundle（`dsh.profile.bundles`——`/plugin install` 与 `dsh plugin add`
+  都写它），按**实际 ESM 入口最近的包根**读 `dsh-plugin.json`，校验 + 准入后注册，于是
+  「装一个第三方后端、重启后出现在 picker 里」成立。三条边界：这份扫描**早于**启动解析后端选择
+  （晚一步的话，装好的 id 会被读成未知值回落 dsh）；后端实现从包入口模块的 `backend` 导出取
+  （`backendExport` 是 in-tree 私有项，声明里写不了别的导出名），模块只在真的选中时才 import；
+  装完**不重启**仍然不会出现在 picker 里——那不是承诺。
 - **装包本身已在终端里可用（C-4）**：`/plugin install <spec>` 走宿主
   `ctx.pluginManager`，装前给提醒、按来源决定要不要确认信任（嫡系判据是随包发布的
   `tui-profile/feed/first-party.json`，离线可判；验不过一律 fail closed 退回确认），

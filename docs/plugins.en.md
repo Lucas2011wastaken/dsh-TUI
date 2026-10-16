@@ -63,11 +63,19 @@ Also an experimental public surface:
 - **The backend contribution family (`tui.dsh/v1alpha1` `Backend`, seam XIV) has its
   public surface frozen with the first published apiVersion**: the type surface
   (`BackendSpec`, `validateBackendSpec`, `backendAdmission`) and conformance
-  (`TUI-BACKEND-001`) are usable, and the **admission chain (manifest →
-  registry → descriptor) is wired**; what is still missing is the step that
-  reads a mounted bundle's declaration into the registry and the kernel picker,
-  so "install a third-party backend, restart, see it in the picker" does not hold
-  end to end yet.
+  (`TUI-BACKEND-001`) are usable, and **both the admission chain (manifest →
+  registry → descriptor) and the install chain are wired**: the boot scans the
+  bundles the profile declares (`dsh.profile.bundles`, written by `/plugin install`
+  and by `dsh plugin add` alike), reads `dsh-plugin.json` from the package root
+  nearest the actual ESM entry, and registers what the validator and the admission
+  accept — so "install a third-party backend, restart, see it in the picker" holds.
+  Three boundaries: that scan runs **before** the boot parses a backend choice (one
+  step later and the installed id would read as an unknown value and fall back to
+  dsh); a backend's implementation is read from its entry module's `backend` export
+  (`backendExport` is an in-tree private field, so a declaration cannot name another
+  export) and that module is imported only when the backend is actually selected;
+  and installing **without restarting** still does not put it in the picker — that
+  is not a promise.
 - **Installing a package is available in the terminal itself (C-4)**: `/plugin
   install <spec>` goes through the host's `ctx.pluginManager` — a pre-install
   notice, a trust confirmation decided by provenance of the package (the judge is

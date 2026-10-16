@@ -1016,8 +1016,8 @@ ctx.effect(() => () => dispose?.())
 [说明 0009](../notes/0009-backend-contribution.md)。
 
 **当前状态：`alpha`，不承诺。** 类型面、definition、contract profile、conformance
-与**准入链路**（清单 → registry → descriptor）都已可用，第三方 bundle 的声明过得了准入；
-仍未做的是把**已挂载 bundle** 的声明接进注册表与 picker 的那一步（装链路，见本节末）。
+与**准入链路**（清单 → registry → descriptor）、**装配链路**（装 → 重启 → 进 kernel picker）
+都已可用，第三方 bundle 的声明过得了准入，也会在重启后出现在 picker 里。
 
 ### 声明形状
 
@@ -1100,7 +1100,7 @@ goals / channels / permissions 一类名字）。
 与恢复目标的传递方式不在协议内。安全模式的「重试正常启动」是唯一例外（一次性 env
 `DSH_TUI_RESUME_RETRY`，撤销降级为告警 + 冷启动），它同样不进协议。
 
-### W-2：准入链路已接线，装链路未做
+### W-2：准入链路（声明过得了准入）
 
 **声明过得了准入。** 前五道接缝之外，`Backend` 这一族在 W-2（Stage C 第一段）里接完了
 它的准入链路：
@@ -1116,13 +1116,39 @@ goals / channels / permissions 一类名字）。
   只读、无副作用）：new 内核路径按 live lifecycle 证据，默认的 `legacy` 路径按挂载拓扑里的同一
   个探针；探针缺席或答不出"可准入"就不发布并说明原因。
 
-**仍未做**：把**已挂载 bundle** 的 `x-dsh-tui` 声明读出来接进 `registerBackend()` 与
-picker——今天注册表只有内置种子，所以"装一个第三方后端 bundle，重启后它出现在 kernel
-picker 里"这条端到端流程仍要等 `/plugin` 的装链路落地。在那之前，本节描述的形状可以被
-准入，但还进不了 picker。
+### 装配链路（D-1）：装 → 重启 → 进 picker
+
+**装链路也接线了。** 准入保证"声明过得了"，装配保证"它真的出现在 picker 里"。一个后端 bundle
+要进 picker，除上面的声明形状外还要满足三件事：
+
+- **它是 profile 的一层**：`package.json` 声明 `dsh.bundle`，于是安装时它被写进 profile 清单的
+  `dsh.profile.bundles`（`/plugin install` 与 `dsh plugin add` 同一条路）。宿主扫的就是这份名单——
+  只装依赖、不成为一层的包不会被组合，也就不会被装配。
+- **清单在包根**：启动时按 `dsh.profile.bundles` 逐个包，用 Loader 自己的 ESM resolver 解析它的
+  入口，再从入口**往上找到确立包根的那个 `package.json`**，只有**同目录**的 `dsh-plugin.json`
+  才算数（#1568 的身份规则，深层目录里的野清单不得冒领外层包的身份）。
+- **实现导出叫 `backend`**：`backendExport` 是 in-tree 私有项，声明里没有它的位置，所以宿主按
+  `backend` 这个约定名从包入口模块的命名空间里取 handler（`assertBackendHandler()` 断言形状），
+  `spec.unloadExport` 也是从同一个命名空间取。**模块只在真的选中该后端时才 import**——装了没选
+  的后端不会被执行。
+
+**时序是硬约束**：这份扫描**同步**发生在启动解析后端选择**之前**（DSH profile 路径在 `apply` 里；
+独立入口 `dsh-tui` 在宿主挂载后、决定"这次落在哪个内核"之前再跑一次——同一组合上的第二遍是
+no-op）。晚一步的后果不是"晚点出现"，而是"选择被当成未知值"——`parseBackendChoice()` 的第二半就是
+注册表成员资格，未注册的 id 一律回落 dsh 并告警。bundle 自己的行由 profile 的 `cordis.patch.yml`
+提供、组合在 bundle 层之后，所以任何"等 fiber 激活"或"等插件服务"的写法都必然晚于解析：装配读的是
+**文件**（profile 清单）与 Loader 的 resolver，不依赖任何 fiber 已被激活。
+
+**判不了就说出来**：Loader 没有 Node internals（拿不到它自己的 resolver）时，宿主**不猜**组件身份，
+一个包都不注册并给出一行原因；某个清单读不懂、投影不出、准入拒绝时，宿主给一行**归属到该 bundle**
+的告警，其余 bundle 照常装配——一个坏声明拖不垮别的贡献，也不会静默消失。
+
+**不承诺**：装了但**没重启**就期望 picker 出现，不是承诺（承诺是装 → 重启 → 出现）。
 
 完整口径与逐条门禁见
-[说明 0009](../notes/0009-backend-contribution.md) 的「Wired (W-2)」节。
+[说明 0009](../notes/0009-backend-contribution.md) 的「Wired (W-2)」与「Assembled (D-1)」两节；
+可照抄的实例是仓内夹具 `scripts/fixtures/third-party-backend/`（按公开面写的第三方 bundle，
+`scripts/verify-backend-assembly.ts` 把它装进一次性 profile 跑完整装配链）。
 
 ## 命名与发布规范
 
