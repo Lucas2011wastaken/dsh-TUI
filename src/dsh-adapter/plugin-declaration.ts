@@ -80,7 +80,9 @@ const NO_BACKENDS: DeclaredBackends = Object.freeze({ backends: Object.freeze([]
  * `kind`), the contribution's outer `id`, the definition's metadata rule
  * (`name`), then the family validator. An entry that fails any of them is
  * reported in `problems` rather than dropped in silence; a `null`/non-object
- * record simply contributes nothing.
+ * record simply contributes nothing. The point itself must be an array once it
+ * is there: absent declares nothing, wrongly shaped is a problem like any other
+ * (the canonical validator refuses it too).
  *
  * `projectManifest` drops contributions without a string outer `id`; this
  * reader must not register one either. That contribution id may differ from
@@ -96,7 +98,15 @@ export function declaredBackendsOf(record: unknown): DeclaredBackends {
   const contributes = (record as Record<string, unknown>).contributes
   if (contributes === null || typeof contributes !== 'object') return NO_BACKENDS
   const entries = (contributes as Record<string, unknown>)['x-dsh-tui']
-  if (!Array.isArray(entries)) return NO_BACKENDS
+  // Absent is the normal answer for a package that contributes no backend.
+  // Present but not an array is a malformed declaration, not an empty one: the
+  // canonical validator refuses that shape outright (`@dsh-std/manifest`:
+  // `contributes.<x-…> must be an array`), so reading it as "nothing declared"
+  // would drop a backend in the one way nobody can debug.
+  if (entries === undefined) return NO_BACKENDS
+  if (!Array.isArray(entries)) {
+    return { backends: [], problems: [`contributes['x-dsh-tui'] must be an array`] }
+  }
   const backends: DeclaredBackend[] = []
   const problems: string[] = []
   for (const [index, entry] of entries.entries()) {

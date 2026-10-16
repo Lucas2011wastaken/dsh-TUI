@@ -55,6 +55,7 @@ const CLI_ID = 'example-cli-agent'
 const PAIR_ID = 'example-pair'
 const NO_EXPORT_ID = 'example-no-export-agent'
 const BAD_UNLOAD_ID = 'example-bad-unload-agent'
+const NON_ARRAY_ID = 'example-non-array-point-agent'
 
 /**
  * The entry module of a fake backend bundle: the handler the registry reads (its
@@ -88,8 +89,10 @@ function contribution(
   return { apiVersion, kind: 'Backend', id: 'com.example.' + String(spec.id), name, spec }
 }
 
-/** A package-root `dsh-plugin.json` carrying `contributions`. */
-function declarationOf(contributions: readonly Record<string, unknown>[]): string {
+/** A package-root `dsh-plugin.json` carrying one `x-dsh-tui` point. The point is
+ *  typed `unknown` on purpose: one case below writes the shape a declaration may
+ *  not have (present, but not an array), and only the canonical validator judges it. */
+function declarationOf(point: unknown): string {
   return JSON.stringify({
     $schema: 'urn:dsh-std:community-draft:dsh-plugin:0.15',
     manifestVersion: '0.15',
@@ -99,7 +102,7 @@ function declarationOf(contributions: readonly Record<string, unknown>[]): strin
     facets: { host: { entry: 'main.js', apiVersion: 'v1alpha1' } },
     requires: { contracts: [] },
     permissions: [],
-    contributes: { commands: [], 'x-dsh-tui': contributions },
+    contributes: { commands: [], 'x-dsh-tui': point },
     subscriptions: [],
     license: 'MIT',
     source: { repository: 'https://example.com/verify-backend-assembly' },
@@ -113,7 +116,7 @@ function declarationOf(contributions: readonly Record<string, unknown>[]): strin
  */
 function writeBundle(
   name: string,
-  contributions: readonly Record<string, unknown>[] | undefined,
+  point: unknown,
   entry: string = ENTRY,
 ): string {
   const packageDir = join(profileDir, 'node_modules', ...name.split('/'))
@@ -125,7 +128,7 @@ function writeBundle(
     dsh: { bundle: { patch: './cordis.patch.yml' } },
     exports: { '.': './main.js' },
   }, null, 2))
-  if (contributions !== undefined) writeFileSync(join(packageDir, 'dsh-plugin.json'), declarationOf(contributions))
+  if (point !== undefined) writeFileSync(join(packageDir, 'dsh-plugin.json'), declarationOf(point))
   writeFileSync(join(packageDir, 'main.js'), entry)
   return packageDir
 }
@@ -143,6 +146,7 @@ const NO_EXPORT = '@dsh-tui-verify/backend-no-export'
 const BAD_UNLOAD = '@dsh-tui-verify/backend-bad-unload'
 const MISSING_ID = '@dsh-tui-verify/backend-missing-id'
 const NON_STRING_ID = '@dsh-tui-verify/backend-non-string-id'
+const NON_ARRAY = '@dsh-tui-verify/backend-non-array-point'
 const ABSENT = '@dsh-tui-verify/declared-but-missing'
 /** The D-5 dogfood bundle: a checked-in package written against the published
  *  surface, installed into the throwaway profile exactly as a person's install
@@ -265,12 +269,23 @@ writeBundle(NON_STRING_ID, [{
     grants: [],
   },
 }])
+// The point is present but is not an array — the shape the canonical validator
+// refuses outright (`contributes.x-dsh-tui must be an array`). Read as "nothing
+// declared", this bundle's valid contribution would go missing with neither a
+// registration nor a warning, so the assembly must name it instead.
+const nonArrayDir = writeBundle(NON_ARRAY, contribution({
+  id: NON_ARRAY_ID,
+  label: { text: 'Non-Array Point Agent' },
+  shortLabel: 'Non-Array Point',
+  capabilities: [],
+  grants: [],
+}))
 
 const COMPOSITION_OWNED = ['@deepseek-ai/dsh-base', '@deepseek-harness-tui/dsh-tui']
 const BUNDLES = [
   ...COMPOSITION_OWNED,
   FIXTURE, DEMO, DEGRADED, WAITING, RESERVED, INVALID, WRONG_API, NOT_A_PLUGIN, CLI, PAIR, NO_EXPORT, BAD_UNLOAD,
-  MISSING_ID, NON_STRING_ID, ABSENT,
+  MISSING_ID, NON_STRING_ID, NON_ARRAY, ABSENT,
 ]
 /** Registered in scan order: one bundle may declare several backends. */
 const EXPECTED_REGISTERED = [
@@ -278,7 +293,7 @@ const EXPECTED_REGISTERED = [
   PAIR_ID + '-one', PAIR_ID + '-two', NO_EXPORT_ID, BAD_UNLOAD_ID,
 ]
 /** Bundles whose declaration announced a backend that could not become an entry. */
-const EXPECTED_REFUSED = [RESERVED, INVALID, WRONG_API, MISSING_ID, NON_STRING_ID, ABSENT]
+const EXPECTED_REFUSED = [RESERVED, INVALID, WRONG_API, MISSING_ID, NON_STRING_ID, NON_ARRAY, ABSENT]
 
 writeFileSync(join(profileDir, 'package.json'), JSON.stringify({
   name: 'dsh-profile-verify-backend-assembly',
@@ -365,6 +380,10 @@ check('a contribution with a non-string outer id registers nothing either',
   assembled.refused.some(refusal => refusal.bundle === NON_STRING_ID && refusal.reason.includes("['x-dsh-tui'][0].id"))
   && !assembled.registered.includes('example-non-string-id-agent'),
   JSON.stringify(assembled.refused.filter(refusal => refusal.bundle === NON_STRING_ID)))
+check('a point that is present but not an array is a malformed declaration, not an empty one',
+  assembled.refused.some(refusal => refusal.bundle === NON_ARRAY && refusal.reason.includes('must be an array'))
+  && !assembled.registered.includes(NON_ARRAY_ID),
+  JSON.stringify(assembled.refused.filter(refusal => refusal.bundle === NON_ARRAY)))
 check('a bundle that is not a TUI plugin is scanned and passed over in silence',
   assembled.refused.every(refusal => refusal.bundle !== NOT_A_PLUGIN))
 check('every refusal is attributable to its bundle and warned about once',
@@ -562,6 +581,17 @@ for (const { what, entry } of idGateCases) {
     projected?.length === 0 && read.backends.length === 0 && read.problems.length === 1,
     JSON.stringify({ projected, read: read.backends.map(backend => backend.spec.id), problems: read.problems }))
 }
+
+// The measuring stick for the point's own shape: the standard validator refuses a
+// present-but-not-array `x-*` point, so a declaration this reader reports must be
+// one the canonical projection rejects as a whole.
+const nonArraySource = readFileSync(join(nonArrayDir, 'dsh-plugin.json'), 'utf8')
+const nonArrayRead = declaredBackendsIn(nonArraySource)
+check('a present, non-array point is refused by the canonical projection, and this reader reports it',
+  projectedBackendNames(nonArraySource) === undefined
+  && nonArrayRead.backends.length === 0 && nonArrayRead.problems.length === 1
+  && (nonArrayRead.problems[0]?.includes('must be an array') ?? false),
+  JSON.stringify({ projected: projectedBackendNames(nonArraySource), problems: nonArrayRead.problems }))
 
 const splitIdentitySource = declarationOf([{
   apiVersion: 'tui.dsh/v1alpha1',
