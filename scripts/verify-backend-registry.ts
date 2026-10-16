@@ -217,6 +217,50 @@ check('ids must match the syntax gate',
   ['has:colon', '..', 'a/b', 'Acme', '', 'x'.repeat(33)].every(id => !isBackendIdSyntax(id))
     && throws(() => registerBackend({ manifest: fakeManifest({ id: 'has:colon' }) })))
 
+// ── 2c. A contribution's registry entry (D-1) ───────────────────────────────────
+// The third-party path registers through `backendManifestOf()`, the inverse of the
+// projection the seed is dogfooded through. What it may put in a registry entry is
+// therefore smaller than an in-tree manifest: no `alwaysAvailable`, no `nativeKey`,
+// no `vendorPackages`, no `backendExport`, and `inTree: false` — the one fact that
+// flips every other rule in this file.
+const { backendContributionOf, backendManifestOf } = await import('../src/dsh-adapter/backend-contribution.js')
+const { validateBackendSpec } = await import('../src/adapter/spec/tui-contributions.js')
+const CONTRIBUTION_ID = 'acme-contribution'
+const contributionSpec = validateBackendSpec({
+  id: CONTRIBUTION_ID,
+  label: { text: 'Acme Contribution' },
+  shortLabel: 'Acme',
+  product: 'acme',
+  capabilities: ['permissions', 'models'],
+  grants: [],
+  // The executor this host implements: the one value a declaration can install through today (D-2).
+  install: { executor: PNPM_PROFILE_ADD, specifier: 'acme-sdk@1.2.3', version: '1.2.3' },
+})
+const contributionManifest = backendManifestOf(contributionSpec)
+check('a declaration projects to a registry entry that is out-of-tree and carries only declared fields',
+  contributionManifest.inTree === false
+  && contributionManifest.alwaysAvailable === undefined && contributionManifest.nativeKey === undefined
+  && contributionManifest.vendorPackages === undefined && contributionManifest.backendExport === undefined
+  && contributionManifest.label.kind === 'literal' && contributionManifest.label.text === 'Acme Contribution'
+  && contributionManifest.product === 'acme',
+  JSON.stringify(contributionManifest))
+check('a pool hook a declaration names is carried into the entry, and nothing else is invented',
+  backendManifestOf({ ...contributionSpec, unloadExport: 'closeAcmePool' }).unloadExport === 'closeAcmePool')
+check('a declaration registers as-is: the projection is what the registry admits',
+  (() => {
+    registerBackend({ manifest: contributionManifest, load: async () => ({ backend: neverBackend }) })
+    const entry = getBackend(CONTRIBUTION_ID)
+    return entry !== undefined
+      && JSON.stringify(entry.manifest) === JSON.stringify(contributionManifest)
+      && entry.installable === true
+      && parseBackendChoice(CONTRIBUTION_ID) === CONTRIBUTION_ID
+  })())
+check('the two directions are inverses on the fields a declaration can carry',
+  JSON.stringify(backendContributionOf(backendManifestOf(contributionSpec)))
+    === JSON.stringify(backendContributionOf(contributionManifest)))
+check('a handler is read from the module namespace under the documented default export name',
+  await loadBackend(CONTRIBUTION_ID as import('../src/kernelPrefs.js').KernelBackendId) === neverBackend)
+
 // ── 3. The two-stage parse on all five boot sources (D1) ────────────────────────
 const UNINSTALLED = 'acme-agent'
 check('syntax passes it, membership does not',
