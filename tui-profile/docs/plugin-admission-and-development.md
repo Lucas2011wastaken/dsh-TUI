@@ -1132,6 +1132,11 @@ goals / channels / permissions 一类名字）。
   `spec.unloadExport` 也是从同一个命名空间取。**模块只在真的选中该后端时才 import**——装了没选
   的后端不会被执行。
 
+当前一个 bundle 只接一个 `Backend` 声明：固定的 `backend` 导出只能绑定一个 handler 身份，
+多个声明会明确拒绝。handler 由 `assertBackendHandler()` 校验，且其 `id` 必须等于 `spec.id`，
+之后才可用于会话、恢复与数据目录。清单也须通过规范投影，包括贡献身份的唯一性。
+等待授权的条目仍注册身份，但不参与内核探测，也不能被加载；启动参数或配置显式指定它同样会失败。
+
 **时序是硬约束**：这份扫描**同步**发生在后端选择的**注册表成员判定之前**。DSH profile 路径的
 Config Schema 先做语法校验，保留合法的第三方 id；`apply` 装配后才查询该 id 是否已注册。
 独立入口 `dsh-tui` 先准备中性的 Loader/模块解析根，装配后决定最终内核，再用同一个值选择

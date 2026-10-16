@@ -27,7 +27,7 @@ import type { AgentBackend } from '../agent/backend.js'
 import { isBackendIdSyntax, type BackendEntry, type BackendManifest } from '../agent/backend-manifest.js'
 import { BACKEND_CAPABILITY_NAMES } from '../adapter/spec/backend-capabilities.js'
 import { EXPECTED_PERMISSIONS } from '../adapter/spec/protocol-constants.js'
-import { validateBackendSpec } from '../adapter/spec/tui-contributions.js'
+import { assertBackendHandler, validateBackendSpec } from '../adapter/spec/tui-contributions.js'
 import { cleanRenderText } from '../channel/sanitize.js'
 import { BUILTIN_BACKEND_IDS, type KernelBackendId } from '../kernelPrefs.js'
 import { logForDebugging } from '../utils/debug.js'
@@ -334,6 +334,9 @@ export function backendLabel(id: string): string {
 export async function loadBackend(id: KernelBackendId): Promise<AgentBackend> {
   const entry: RegisteredBackend | undefined = entries.get(id)
   if (entry === undefined) throw new Error(`dsh-tui: backend "${id}" is not registered`)
+  if (entry.admission.decision === 'waiting_authorization') {
+    throw new Error(`dsh-tui: backend "${id}" cannot load: ${entry.admission.reasonCode} (${entry.admission.deniedPermissions.join(', ')})`)
+  }
   if (entry.load === undefined) throw new Error(`dsh-tui: backend "${id}" has no loader (only the DSH kernel is not an AgentBackend)`)
   const module = await entry.load()
   const { backendExport, unloadExport } = entry.manifest
@@ -348,6 +351,14 @@ export async function loadBackend(id: KernelBackendId): Promise<AgentBackend> {
   const exportName = backendExport ?? 'backend'
   const backend = module[exportName]
   if (backend === undefined) throw new Error(`dsh-tui: backend "${id}" does not export "${exportName}"`)
+  // Book the imported module's pool above even when its handler is invalid.
+  // No caller may prepare a session or data directory under another backend id.
+  try {
+    assertBackendHandler(backend)
+  } catch (error) {
+    throw new Error(`dsh-tui: backend "${id}" has an invalid handler (${error instanceof Error ? error.message : String(error)})`, { cause: error })
+  }
+  if (backend.id !== id) throw new Error(`dsh-tui: backend "${id}" exports a handler for ${JSON.stringify(backend.id)}`)
   return backend as AgentBackend
 }
 

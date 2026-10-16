@@ -17,6 +17,11 @@ What a bundle must get right, and where each piece lives here:
 | `spec.unloadExport` | Module-level/process-wide pools only; session-scoped resources belong to `session.dispose()` | `dsh-plugin.json` → `backend.js` |
 | `exports: { ".": "./backend.js" }` | Resolution goes through the entry the Loader's own resolver picks — an `exports` map that hides `./package.json` is fine on purpose | `package.json` |
 
+A bundle currently declares one backend: the fixed `backend` export must pass
+the handler assertion and carry the same id as `spec.id`. Multiple declarations
+are refused, as are manifests whose canonical projection rejects duplicate
+contribution identities. Entries awaiting authorization are not probed or loaded.
+
 The full field semantics are in
 [`notes/0009-backend-contribution.md`](../../../tui-profile/notes/0009-backend-contribution.md)
 and the seam write-up in

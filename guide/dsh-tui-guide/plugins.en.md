@@ -77,6 +77,10 @@ Also an experimental public surface:
   export) and that module is imported only when the backend is actually selected;
   and installing **without restarting** still does not put it in the picker — that
   is not a promise.
+  Each bundle currently binds one `Backend` declaration. Its manifest must pass
+  canonical projection, including unique contribution identities, and the handler
+  id must match the declaration. Entries awaiting authorization stay registered
+  but are neither probed nor loaded; explicitly selecting one at startup fails too.
 - **Installing a package is available in the terminal itself (C-4)**: `/plugin
   install <spec>` goes through the host's `ctx.pluginManager` — a pre-install
   notice, a trust confirmation decided by provenance of the package (the judge is

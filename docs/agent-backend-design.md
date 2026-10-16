@@ -369,12 +369,14 @@ claude（SDK peer + 安装向导）与 codex（系统 CLI + 进程池）必须�
 2. `package.json` 声明 `dsh.bundle`（哪怕没有要 patch 的行）——否则它只会作为普通依赖装进
    profile，不会成为一层，也就不会被装配。
 3. 包入口导出 handler：**默认导出名就是 `backend`**（`backendExport` 是 in-tree 私有项，声明里
-   命名不了别的导出），`spec.unloadExport` 从同一个模块命名空间取。
+   命名不了别的导出），`spec.unloadExport` 从同一个模块命名空间取。每个 bundle 只声明一个
+   后端；多个声明会被拒绝，handler 的 `id` 也必须与 `spec.id` 一致，不能借用其他后端的数据目录。
 4. 启动时宿主扫 profile 的 `dsh.profile.bundles`，按 Loader 自己的 resolver 解析入口、从**最近的
    包根**读清单，校验 + 准入后注册；**模块只在真的选中该后端时才 import**。所以声明要过
    `validateBackendSpec()`（未知字段一律拒），保留 id（`dsh`/`claude`/`codex`）在准入处被拒。
 5. 承诺是**装 → 重启 → 出现在 picker 里**；装了不重启不算。判不了的清单/入口不会静默消失——
    宿主给一行归属到该 bundle 的告警，其余 bundle 照常装配。
+   清单须过规范投影（含贡献身份唯一性）；等待授权的条目只注册身份，不参与探测，也不能显式启动。
 
 可照抄的实例：[`scripts/fixtures/third-party-backend/`](../scripts/fixtures/third-party-backend/README.md)
 （按公开面写的 bundle：声明 + 实现 + 池钩子，不发布），执行体是

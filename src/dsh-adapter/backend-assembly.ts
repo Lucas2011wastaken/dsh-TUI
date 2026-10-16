@@ -177,6 +177,9 @@ function assembleBundle(
   const { backends, problems } = declaredBackendsIn(source)
   const refusals = problems.map(problem => ({ bundle, reason: problem }))
   if (backends.length === 0 && problems.length === 0) return []
+  // The public declaration has no export selector: all entries would load the
+  // same `backend` object, which can carry only one session/data-directory id.
+  if (backends.length > 1) return [...refusals, { bundle, reason: 'only one Backend per bundle can bind the fixed backend export' }]
   for (const declared of backends) {
     // A second pass over the same composition (the entry assembles before the
     // route and `apply` assembles again) must be a no-op, not a storm of

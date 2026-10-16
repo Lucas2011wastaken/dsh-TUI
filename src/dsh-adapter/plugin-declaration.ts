@@ -18,6 +18,8 @@ import { findPackageJSON } from 'node:module'
 import { dirname, join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import { BACKEND, validateBackendSpec, type BackendSpec } from '../adapter/spec/tui-contributions.js'
+import { projectManifest } from '../adapter/standard/protocols.js'
+import type { PluginManifest } from '../adapter/standard/types.js'
 
 /** One package's declaration: the file it lives in and its exact bytes. */
 export interface PluginDeclaration {
@@ -93,6 +95,8 @@ const NO_BACKENDS: DeclaredBackends = Object.freeze({ backends: Object.freeze([]
  * caller already obtained, and says nothing about which package that record
  * belongs to (#1568 — a manifest counts only beside the package root that
  * establishes it).
+ * A claimed backend also requires a valid canonical manifest projection; in
+ * particular, duplicate contribution identities must not bypass admission.
  */
 export function declaredBackendsOf(record: unknown): DeclaredBackends {
   if (record === null || typeof record !== 'object') return NO_BACKENDS
@@ -139,6 +143,14 @@ export function declaredBackendsOf(record: unknown): DeclaredBackends {
       backends.push({ name, spec: validateBackendSpec(candidate.spec) })
     } catch (error) {
       problems.push(`${where} (${name}) has an invalid Backend content: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+  if (backends.length > 0) {
+    try {
+      projectManifest(record as PluginManifest)
+    } catch (error) {
+      problems.push(`the declaration could not be projected (${error instanceof Error ? error.message : String(error)})`)
+      return { backends: [], problems }
     }
   }
   return { backends, problems }

@@ -4,7 +4,7 @@ import type { AgentBackend, BackendHost, OAuthCredentialSource, OpenTarget, SdkI
 import type { AgentEvent } from '../agent/events.js'
 import type { AgentSession } from '../agent/session.js'
 import { formatSessionRef } from '../agent/refs.js'
-import { getBackend, listBackends, loadBackend } from './backend-registry.js'
+import { getBackend, listOfferedBackends, loadBackend } from './backend-registry.js'
 import type { KernelStatus } from '../components/kernelCatalog.js'
 import { reserveMount, reserveNewSession } from '../sessionMounts.js'
 import { resumeTargetFromArgv } from '../sessionHistory.js'
@@ -164,7 +164,7 @@ export async function openBackendStartup(ctx: Context, backend: AgentBackend, in
  */
 export async function probeKernels(ctx: Context, cwd: string): Promise<Record<string, KernelStatus>> {
   const statuses: Record<string, KernelStatus> = {}
-  for (const entry of listBackends()) {
+  for (const entry of listOfferedBackends()) {
     if (entry.load === undefined) continue
     // One host per entry: `dataDir` is backend-scoped, and a probe must not
     // hand a backend a directory that is not its own.

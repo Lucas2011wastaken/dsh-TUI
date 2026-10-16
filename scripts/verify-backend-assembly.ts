@@ -32,6 +32,7 @@ const { listBackends, listOfferedBackends, loadBackend, parseBackendChoice, unlo
 const { declaredBackendsIn } = await import('../src/dsh-adapter/plugin-declaration.js')
 const { kernelEntriesOf } = await import('../src/components/kernelCatalog.js')
 const { assertBackendHandler } = await import('../src/adapter/spec/tui-contributions.js')
+const { probeKernels } = await import('../src/dsh-adapter/backends.js')
 type KernelBackendId = import('../src/kernelPrefs.js').KernelBackendId
 
 let failed = 0
@@ -57,6 +58,7 @@ const NO_EXPORT_ID = 'example-no-export-agent'
 const BAD_UNLOAD_ID = 'example-bad-unload-agent'
 const NON_ARRAY_ID = 'example-non-array-point-agent'
 const BAD_CONTAINER_ID = 'example-bad-contributes-agent'
+const MISMATCH_ID = 'example-mismatched-handler'
 
 /**
  * The entry module of a fake backend bundle: the handler the registry reads (its
@@ -78,6 +80,7 @@ export function closeDemoPool() {
 }
 export default function plugin() {}
 `
+const entryOf = (id: string): string => ENTRY.replace("id: 'entry-handler'", `id: ${JSON.stringify(id)}`)
 
 /** One contribution entry, in the declared shape (`apiVersion` + `kind` + `name` + `spec`).
  *  `name` is the contribution's *local* name: the canonical projection keys
@@ -156,6 +159,9 @@ const MISSING_ID = '@dsh-tui-verify/backend-missing-id'
 const NON_STRING_ID = '@dsh-tui-verify/backend-non-string-id'
 const NON_ARRAY = '@dsh-tui-verify/backend-non-array-point'
 const BAD_CONTAINER = '@dsh-tui-verify/backend-bad-contributes'
+const DUPLICATE_NAME = '@dsh-tui-verify/backend-duplicate-name'
+const MISMATCH = '@dsh-tui-verify/backend-mismatched-handler'
+const BAD_HANDLER = '@dsh-tui-verify/backend-bad-handler'
 const ABSENT = '@dsh-tui-verify/declared-but-missing'
 /** The D-5 dogfood bundle: a checked-in package written against the published
  *  surface, installed into the throwaway profile exactly as a person's install
@@ -175,21 +181,21 @@ const demoDir = writeBundle(DEMO, [contribution({
   grants: [],
   install: { executor: 'pnpm-profile-add', specifier: '@example/agent-sdk@1.2.3', version: '1.2.3' },
   unloadExport: 'closeDemoPool',
-})])
+})], entryOf(AGENT_ID))
 const degradedDir = writeBundle(DEGRADED, [contribution({
   id: DEGRADED_ID,
   label: { text: 'Degraded Agent' },
   shortLabel: 'Degraded',
   capabilities: ['permissions', 'time-travel'],
   grants: [],
-})])
-writeBundle(WAITING, [contribution({
+})], entryOf(DEGRADED_ID))
+const waitingDir = writeBundle(WAITING, [contribution({
   id: WAITING_ID,
   label: { text: 'Waiting Agent' },
   shortLabel: 'Waiting',
   capabilities: [],
   grants: ['storage.local.read'],
-})])
+})], entryOf(WAITING_ID))
 writeBundle(RESERVED, [contribution({
   id: 'claude',
   label: { text: 'Impostor' },
@@ -227,13 +233,24 @@ const cliDir = writeBundle(CLI, [contribution({
   capabilities: [],
   grants: [],
   unloadExport: 'closeDemoPool',
-})])
+})], entryOf(CLI_ID))
 const pairDir = writeBundle(PAIR, [
   contribution({ id: PAIR_ID + '-one', label: { text: 'Pair One' }, shortLabel: 'Pair', capabilities: [], grants: [] },
     'tui.dsh/v1alpha1', 'example_pair_one'),
   contribution({ id: PAIR_ID + '-two', label: { text: 'Pair Two' }, shortLabel: 'Pair', capabilities: [], grants: [] },
     'tui.dsh/v1alpha1', 'example_pair_two'),
 ])
+const duplicateDir = writeBundle(DUPLICATE_NAME, [
+  contribution({ id: 'example-duplicate-one', label: { text: 'One' }, shortLabel: 'One', capabilities: [], grants: [] }),
+  contribution({ id: 'example-duplicate-two', label: { text: 'Two' }, shortLabel: 'Two', capabilities: [], grants: [] }),
+])
+writeBundle(MISMATCH, [contribution({
+  id: MISMATCH_ID, label: { text: 'Mismatched' }, shortLabel: 'Mismatched', capabilities: [], grants: [],
+  unloadExport: 'closeDemoPool',
+})], entryOf('another-backend'))
+writeBundle(BAD_HANDLER, [contribution({
+  id: 'example-bad-handler', label: { text: 'Bad handler' }, shortLabel: 'Bad', capabilities: [], grants: [],
+})], 'export const backend = { id: "example-bad-handler" }\n')
 writeBundle(NO_EXPORT, [contribution({
   id: NO_EXPORT_ID,
   label: { text: 'No Export Agent' },
@@ -307,14 +324,15 @@ const BUNDLES = [
   ...COMPOSITION_OWNED,
   FIXTURE, DEMO, DEGRADED, WAITING, RESERVED, INVALID, WRONG_API, NOT_A_PLUGIN, CLI, PAIR, NO_EXPORT, BAD_UNLOAD,
   MISSING_ID, NON_STRING_ID, NON_ARRAY, BAD_CONTAINER, ABSENT,
+  DUPLICATE_NAME, MISMATCH, BAD_HANDLER,
 ]
-/** Registered in scan order: one bundle may declare several backends. */
+/** Registered in scan order; each bundle binds at most one backend. */
 const EXPECTED_REGISTERED = [
   FIXTURE_AGENT_ID, AGENT_ID, DEGRADED_ID, WAITING_ID, CLI_ID,
-  PAIR_ID + '-one', PAIR_ID + '-two', NO_EXPORT_ID, BAD_UNLOAD_ID,
+  NO_EXPORT_ID, BAD_UNLOAD_ID, MISMATCH_ID, 'example-bad-handler',
 ]
 /** Bundles whose declaration announced a backend that could not become an entry. */
-const EXPECTED_REFUSED = [RESERVED, INVALID, WRONG_API, MISSING_ID, NON_STRING_ID, NON_ARRAY, BAD_CONTAINER, ABSENT]
+const EXPECTED_REFUSED = [RESERVED, INVALID, WRONG_API, PAIR, MISSING_ID, NON_STRING_ID, NON_ARRAY, BAD_CONTAINER, ABSENT, DUPLICATE_NAME]
 
 writeFileSync(join(profileDir, 'package.json'), JSON.stringify({
   name: 'dsh-profile-verify-backend-assembly',
@@ -411,6 +429,14 @@ check('a contributes that is not an object is a malformed declaration too',
   JSON.stringify(assembled.refused.filter(refusal => refusal.bundle === BAD_CONTAINER)))
 check('a bundle that is not a TUI plugin is scanned and passed over in silence',
   assembled.refused.every(refusal => refusal.bundle !== NOT_A_PLUGIN))
+check('one fixed backend export cannot register multiple backend identities',
+  assembled.refused.some(refusal => refusal.bundle === PAIR && refusal.reason.includes('one Backend'))
+  && !assembled.registered.some(id => id.startsWith(PAIR_ID))
+  && !existsSync(join(pairDir, 'imported.txt')))
+check('canonical duplicate contribution identities refuse the bundle before registration',
+  assembled.refused.some(refusal => refusal.bundle === DUPLICATE_NAME && refusal.reason.includes('duplicate extension'))
+  && !assembled.registered.some(id => id.startsWith('example-duplicate-'))
+  && !existsSync(join(duplicateDir, 'imported.txt')))
 check('every refusal is attributable to its bundle and warned about once',
   assembled.refused.every(refusal => BUNDLES.includes(refusal.bundle) && refusal.reason !== '')
   && composition.warnings.length === assembled.refused.length
@@ -505,6 +531,15 @@ check('a module without the handler export fails loudly, naming the export it lo
 const badUnloadFailure = await loadFailure(BAD_UNLOAD_ID)
 check('a declared unloadExport the module does not carry fails loudly',
   badUnloadFailure.includes('closeSomethingElse'), badUnloadFailure)
+const mismatchFailure = await loadFailure(MISMATCH_ID)
+check('a handler with another backend id fails before it can prepare a session or data directory',
+  mismatchFailure.includes(MISMATCH_ID) && mismatchFailure.includes('another-backend'), mismatchFailure)
+await unloadBackends()
+check('an imported module whose handler was rejected still has its pool closed',
+  readFileSync(join(profileDir, 'node_modules', ...MISMATCH.split('/'), 'closed.txt'), 'utf8') === '1')
+const badHandlerFailure = await loadFailure('example-bad-handler')
+check('a handler missing detect/open is refused by the family assertion',
+  badHandlerFailure.includes('example-bad-handler') && badHandlerFailure.includes('detect'), badHandlerFailure)
 
 // ── the D-5 dogfood bundle, as installed ────────────────────────────────────
 // The fixture is a real package on disk (scripts/fixtures/third-party-backend),
@@ -667,6 +702,11 @@ check('the PAIR declaration keeps two distinct local names, so the canonical pro
   && pairProjected !== undefined && pairProjected.length === 2 && new Set(pairProjected).size === 2
   && pairRead.backends.every(backend => pairProjected.includes(backend.name)),
   JSON.stringify({ read: pairRead.backends.map(backend => backend.name), projected: pairProjected, problems: pairRead.problems }))
+const duplicateDeclaration = readFileSync(join(duplicateDir, 'dsh-plugin.json'), 'utf8')
+const duplicateRead = declaredBackendsIn(duplicateDeclaration)
+check('the reader and canonical projection both refuse duplicate extension identities',
+  projectedBackendNames(duplicateDeclaration) === undefined
+  && duplicateRead.backends.length === 0 && duplicateRead.problems.some(problem => problem.includes('duplicate extension')))
 
 // ── the pass is a no-op the second time ─────────────────────────────────────
 // Two callers on purpose: the entry decides its kernel before `apply` runs, and both
@@ -751,6 +791,14 @@ check('failed DSH-only preparation still delegates before the screen mounts', de
 check('the wiring check bites: removing DSH preparation fallback is red',
   !delegatesDshFailure(selectionFailure.replace('delegateToDsh()', '')))
 
+const waitingFailure = await loadFailure(WAITING_ID)
+check('an explicit waiting backend choice fails without importing its module',
+  parseBackendChoice(WAITING_ID) === WAITING_ID && waitingFailure.includes('PERMISSION_NOT_GRANTED')
+  && waitingFailure.includes('storage.local.read') && !importedAt(waitingDir), waitingFailure)
+const statuses = await probeKernels(composition.root, profileDir)
+check('kernel probing never imports a waiting backend or reports it as available',
+  !Object.hasOwn(statuses, WAITING_ID) && !importedAt(waitingDir))
+await unloadBackends()
 await composition.root.fiber.dispose()
 
 // ── identity comes from the Loader's resolver, or from nowhere ─────────────

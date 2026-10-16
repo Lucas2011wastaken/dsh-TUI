@@ -347,6 +347,7 @@ pnpm smoke
 通过包子路径导出的插件组件，按实际 ESM 入口最近的包清单准入（含 import-only 与条件导出），不继承外层包的身份。
 
 后端插件（`tui.dsh/v1alpha1` 的 `Backend` 贡献族）装了就会在重启后进内核选择器：启动时扫 profile 声明的已装 bundle，按包根的 `dsh-plugin.json` 校验、准入并注册，后端实现从包里导出 `backend`（模块只在真的选中时才加载）。
+每个 bundle 只能声明一个后端，handler 的 id 必须与声明一致。等待授权的条目不参与探测，也不能加载；显式指定它启动同样会被拒绝。
 
 接缝分级与 API 说明：[插件开发](docs/plugins.md)。生态组织只维护收录，不背书社区插件。
 

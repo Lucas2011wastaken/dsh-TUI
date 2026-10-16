@@ -39,6 +39,9 @@
 
 `grants` 只取宿主自己的权限词表 `registry/permissions-0.1.json`（闭集，8 条）。已知名字而没人授权 → 判定 `waiting_authorization`、`reasonCode` 为 `PERMISSION_NOT_GRANTED`：条目**注册但不进 picker**（`listOfferedBackends()`）——id 存在，启动的两段解析与 session refs 都必须找得到它，但选中它等于打开一个宿主描述不了的后端。未知名字沿用同一条「降级不拒绝 + 记为待决项」（`permission:<name>`）：静默当作可用等于宣称一条没人能撤销的授权，拒绝则等于自己发明一套权限词表。
 
+等待授权同时约束执行：`probeKernels()` 跳过该条目，`loadBackend()` 在 import 之前以
+`PERMISSION_NOT_GRANTED` 拒绝加载；显式的环境变量、配置与恢复请求也不能绕过这一检查。
+
 准入判定本身是纯函数 `backendAdmission(spec, host)`，返回 `BackendAdmission`，沿用插件准入的五态词汇：`compatible`、`compatible_degraded`（带 `missingOptional`）、`waiting_authorization`（带 `deniedPermissions`），以及不会成为注册表条目的 `rejected`（`BACKEND_ID_RESERVED`）与 `unknown`——后两者由调用方抛错，内建 manifest 走到那里必须是响亮的构建期错误。
 
 contract 的 `errors` 只发布**有产出者**的码，今天正好是上面两个：`BACKEND_ID_RESERVED`（准入拒绝）与 `PERMISSION_NOT_GRANTED`（等待授权，复用插件准入的词表）。形状违规（`label` 用宿主 i18n 键、声明 `nativeKey`）由 `validateBackendSpec()` 以未知字段的 `TypeError` 拒绝，不占错误码；能力/恢复不匹配一类的码在 C 段给出真正产出点之前不发布——发布没有产出者的码，等于让第三方为一条永远走不到的失败路径写错误处理。这一对由 `scripts/verify-backend-contribution.ts` 钉住。
@@ -205,9 +208,14 @@ bundle** 的 `x-dsh-tui` `Backend` 声明接进 `registerBackend()`，于是"装
 - **准入一个字没改**：`validateBackendSpec()` → `backendAdmission()` 五态原样适用——
   `compatible` 进 picker、`compatible_degraded` 注册 + 记待决项、`waiting_authorization` 注册但
   **不进 picker**、`rejected`（保留 id）与形状违规拒绝注册。
+  读取器先确保候选声明通过规范 `projectManifest()`（含贡献身份唯一性），不会注册规范投影
+  拒绝的清单。等待授权的后端不参与探测、不能加载，即使启动时显式指定它。
 - **实现出口 = 包入口模块命名空间的 `backend`**：`backendExport` 不进公开面，所以声明无法命名
   另一个导出；`unloadExport` 从同一个命名空间取。**模块只在真的选中时才 import**（装了没选的后端
   不执行，"未加载即不关池"照旧由注册表记账）。
+  当前每个 bundle 只能绑定一个 `Backend` 声明，多个声明整体拒绝；加载时断言 handler 形状及
+  `handler.id === spec.id`，避免会话和数据目录串到另一个后端。已 import 的模块即使 handler
+  被拒，其有效 `unloadExport` 仍由退出漏斗收尾。
 - **拒因归属 + 容器化**：读不懂的清单、算不出的入口、被拒的注册各给一行**归属到该 bundle** 的告警，
   其余 bundle 照常装配；不是 TUI 插件的 bundle（无包根清单）静默略过。
 

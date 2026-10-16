@@ -60,6 +60,8 @@
   （Config Schema 只校验语法，独立入口的完整/轻量组合由装配后的最终内核决定）；后端实现从包入口模块的 `backend` 导出取
   （`backendExport` 是 in-tree 私有项，声明里写不了别的导出名），模块只在真的选中时才 import；
   装完**不重启**仍然不会出现在 picker 里——那不是承诺。
+  当前每个 bundle 只接一个 `Backend` 声明；清单须通过规范投影（含贡献身份唯一性），handler 的 id 必须与声明一致。
+  等待授权的条目仍注册身份，但不探测、不加载；启动参数或配置显式指定它也会报错。
 - **装包本身已在终端里可用（C-4）**：`/plugin install <spec>` 走宿主
   `ctx.pluginManager`，装前给提醒、按来源决定要不要确认信任（嫡系判据是随包发布的
   `tui-profile/feed/first-party.json`，离线可判；验不过一律 fail closed 退回确认），
