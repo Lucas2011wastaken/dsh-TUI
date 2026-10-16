@@ -40,6 +40,8 @@ type BtwKeyFlags = SidePanelKeyFlags & {
  * 单行 composer 的键语义。返回 null = 未消费（面板形态交宿主回退键，
  * 全屏形态交场景其余分支）；返回对象按 exitFocus > submit > 编辑 写回。
  * ←/→ 先移光标，贴到行首/行尾后返回未消费——面板形态据此切面板。
+ * ↑ 让位给列表（选中轮，见 BtwPanelAdapter 的选中态）；↓ 在单行框里没有
+ * 语义，吃掉即可，免得漏给主聊天去滚 transcript。
  */
 export function btwComposerKey(state: BtwComposerState, input: string, key: BtwKeyFlags): BtwComposerKeyResult | null {
   if (key.escape === true) return { exitFocus: true }
@@ -51,6 +53,9 @@ export function btwComposerKey(state: BtwComposerState, input: string, key: BtwK
   if (plainReturn) return { submit: true }
   // Tab 离开编辑层去列表（与 TrajectoryPanel 同款双形态判定）。
   if (key.tab === true || input === '\t') return { exitFocus: true }
+  // ↑ 也从编辑层上到列表：光标落在本轮标题上（列表形态默认选中最后一条）。
+  if (key.upArrow === true) return { exitFocus: true }
+  if (key.downArrow === true) return {}
   if (key.backspace === true || key.delete === true) {
     if (caret <= 0) return { state: { ...state, caret } }
     const at = previousCodePoint(state.text, caret)
@@ -128,8 +133,8 @@ export function BtwComposer({
               <Box flexShrink={0}><Text dimColor> {t('btw-input-hint-edit')}</Text></Box>
             </>
           ) : (
-            // 未聚焦态只有占位提示：←/→ 切面板已由宿主底栏的广告位说明，
-            // 框内不再重复（窄面板里也放不下第二段文字）。
+            // 未聚焦态只有一句占位：键位提示全在宿主底栏（按层换），框内不再重复
+            // ——窄面板里也放不下第二段文字。
             <Text dimColor wrap="truncate">{text === '' ? t('btw-input-placeholder') : text}</Text>
           )}
         </Box>
