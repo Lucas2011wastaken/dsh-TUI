@@ -56,6 +56,7 @@ const PAIR_ID = 'example-pair'
 const NO_EXPORT_ID = 'example-no-export-agent'
 const BAD_UNLOAD_ID = 'example-bad-unload-agent'
 const NON_ARRAY_ID = 'example-non-array-point-agent'
+const BAD_CONTAINER_ID = 'example-bad-contributes-agent'
 
 /**
  * The entry module of a fake backend bundle: the handler the registry reads (its
@@ -89,10 +90,10 @@ function contribution(
   return { apiVersion, kind: 'Backend', id: 'com.example.' + String(spec.id), name, spec }
 }
 
-/** A package-root `dsh-plugin.json` carrying one `x-dsh-tui` point. The point is
- *  typed `unknown` on purpose: one case below writes the shape a declaration may
- *  not have (present, but not an array), and only the canonical validator judges it. */
-function declarationOf(point: unknown): string {
+/** A package-root `dsh-plugin.json` whose `contributes` is exactly what the caller
+ *  writes. `unknown` on purpose: one case below writes a container a declaration may
+ *  not have, and only the canonical validator judges it. */
+function declarationWith(contributes: unknown): string {
   return JSON.stringify({
     $schema: 'urn:dsh-std:community-draft:dsh-plugin:0.15',
     manifestVersion: '0.15',
@@ -102,11 +103,18 @@ function declarationOf(point: unknown): string {
     facets: { host: { entry: 'main.js', apiVersion: 'v1alpha1' } },
     requires: { contracts: [] },
     permissions: [],
-    contributes: { commands: [], 'x-dsh-tui': point },
+    contributes,
     subscriptions: [],
     license: 'MIT',
     source: { repository: 'https://example.com/verify-backend-assembly' },
   }, null, 2)
+}
+
+/** A package-root `dsh-plugin.json` carrying one `x-dsh-tui` point. The point is
+ *  typed `unknown` on purpose: one case below writes the shape a declaration may
+ *  not have (present, but not an array), and only the canonical validator judges it. */
+function declarationOf(point: unknown): string {
+  return declarationWith({ commands: [], 'x-dsh-tui': point })
 }
 
 /**
@@ -147,6 +155,7 @@ const BAD_UNLOAD = '@dsh-tui-verify/backend-bad-unload'
 const MISSING_ID = '@dsh-tui-verify/backend-missing-id'
 const NON_STRING_ID = '@dsh-tui-verify/backend-non-string-id'
 const NON_ARRAY = '@dsh-tui-verify/backend-non-array-point'
+const BAD_CONTAINER = '@dsh-tui-verify/backend-bad-contributes'
 const ABSENT = '@dsh-tui-verify/declared-but-missing'
 /** The D-5 dogfood bundle: a checked-in package written against the published
  *  surface, installed into the throwaway profile exactly as a person's install
@@ -280,12 +289,24 @@ const nonArrayDir = writeBundle(NON_ARRAY, contribution({
   capabilities: [],
   grants: [],
 }))
+// One level up: `contributes` itself is present but is not an object (here an
+// array, which `typeof` calls an object, so the older guard walked straight past
+// it). The declaration carries a valid contribution, so silence would lose it
+// exactly as the case above would.
+const badContainerDir = writeBundle(BAD_CONTAINER, undefined)
+writeFileSync(join(badContainerDir, 'dsh-plugin.json'), declarationWith([contribution({
+  id: BAD_CONTAINER_ID,
+  label: { text: 'Bad Contributes Agent' },
+  shortLabel: 'Bad Contributes',
+  capabilities: [],
+  grants: [],
+})]))
 
 const COMPOSITION_OWNED = ['@deepseek-ai/dsh-base', '@deepseek-harness-tui/dsh-tui']
 const BUNDLES = [
   ...COMPOSITION_OWNED,
   FIXTURE, DEMO, DEGRADED, WAITING, RESERVED, INVALID, WRONG_API, NOT_A_PLUGIN, CLI, PAIR, NO_EXPORT, BAD_UNLOAD,
-  MISSING_ID, NON_STRING_ID, NON_ARRAY, ABSENT,
+  MISSING_ID, NON_STRING_ID, NON_ARRAY, BAD_CONTAINER, ABSENT,
 ]
 /** Registered in scan order: one bundle may declare several backends. */
 const EXPECTED_REGISTERED = [
@@ -293,7 +314,7 @@ const EXPECTED_REGISTERED = [
   PAIR_ID + '-one', PAIR_ID + '-two', NO_EXPORT_ID, BAD_UNLOAD_ID,
 ]
 /** Bundles whose declaration announced a backend that could not become an entry. */
-const EXPECTED_REFUSED = [RESERVED, INVALID, WRONG_API, MISSING_ID, NON_STRING_ID, NON_ARRAY, ABSENT]
+const EXPECTED_REFUSED = [RESERVED, INVALID, WRONG_API, MISSING_ID, NON_STRING_ID, NON_ARRAY, BAD_CONTAINER, ABSENT]
 
 writeFileSync(join(profileDir, 'package.json'), JSON.stringify({
   name: 'dsh-profile-verify-backend-assembly',
@@ -384,6 +405,10 @@ check('a point that is present but not an array is a malformed declaration, not 
   assembled.refused.some(refusal => refusal.bundle === NON_ARRAY && refusal.reason.includes('must be an array'))
   && !assembled.registered.includes(NON_ARRAY_ID),
   JSON.stringify(assembled.refused.filter(refusal => refusal.bundle === NON_ARRAY)))
+check('a contributes that is not an object is a malformed declaration too',
+  assembled.refused.some(refusal => refusal.bundle === BAD_CONTAINER && refusal.reason.includes('contributes must be an object'))
+  && !assembled.registered.includes(BAD_CONTAINER_ID),
+  JSON.stringify(assembled.refused.filter(refusal => refusal.bundle === BAD_CONTAINER)))
 check('a bundle that is not a TUI plugin is scanned and passed over in silence',
   assembled.refused.every(refusal => refusal.bundle !== NOT_A_PLUGIN))
 check('every refusal is attributable to its bundle and warned about once',
@@ -592,6 +617,29 @@ check('a present, non-array point is refused by the canonical projection, and th
   && nonArrayRead.backends.length === 0 && nonArrayRead.problems.length === 1
   && (nonArrayRead.problems[0]?.includes('must be an array') ?? false),
   JSON.stringify({ projected: projectedBackendNames(nonArraySource), problems: nonArrayRead.problems }))
+
+// The container every shape above needs: an absent `contributes` declares nothing
+// (a package that contributes no TUI row at all), while a present one that is
+// `null`, a primitive or an array is malformed, which is what the standard
+// validator says by rejecting the whole manifest. `undefined` serializes to no
+// field at all, which is how a declaration without a container looks on disk.
+// Absence stays silent here on purpose, and the projection is deliberately not
+// asked about it: the standard validator wants the key (a v0.15 manifest declares
+// its contributions), but a declaration that names no point cannot hide a backend
+// — it is the admission path's business whether the manifest is complete, and this
+// reader's only question is which backends the file claims.
+const absentContributes = declaredBackendsIn(declarationWith(undefined))
+check('an absent contributes is the normal "declares nothing" answer, not a problem',
+  absentContributes.backends.length === 0 && absentContributes.problems.length === 0,
+  JSON.stringify(absentContributes))
+for (const [what, contributes] of [['null', null], ['a primitive', 'nope'], ['an array', []]] as const) {
+  const source = declarationWith(contributes)
+  const read = declaredBackendsIn(source)
+  check(`a contributes that is ${what} is refused by the canonical projection, and this reader reports it`,
+    projectedBackendNames(source) === undefined && read.backends.length === 0 && read.problems.length === 1
+    && (read.problems[0]?.includes('contributes must be an object') ?? false),
+    JSON.stringify({ projected: projectedBackendNames(source), problems: read.problems }))
+}
 
 const splitIdentitySource = declarationOf([{
   apiVersion: 'tui.dsh/v1alpha1',

@@ -80,9 +80,10 @@ const NO_BACKENDS: DeclaredBackends = Object.freeze({ backends: Object.freeze([]
  * `kind`), the contribution's outer `id`, the definition's metadata rule
  * (`name`), then the family validator. An entry that fails any of them is
  * reported in `problems` rather than dropped in silence; a `null`/non-object
- * record simply contributes nothing. The point itself must be an array once it
- * is there: absent declares nothing, wrongly shaped is a problem like any other
- * (the canonical validator refuses it too).
+ * record simply contributes nothing. Below that, silence means absence only: a
+ * `contributes` that is not an object, and an `x-dsh-tui` point that is not an
+ * array, are malformed declarations, reported like any other gate (the canonical
+ * validator refuses both shapes).
  *
  * `projectManifest` drops contributions without a string outer `id`; this
  * reader must not register one either. That contribution id may differ from
@@ -96,13 +97,17 @@ const NO_BACKENDS: DeclaredBackends = Object.freeze({ backends: Object.freeze([]
 export function declaredBackendsOf(record: unknown): DeclaredBackends {
   if (record === null || typeof record !== 'object') return NO_BACKENDS
   const contributes = (record as Record<string, unknown>).contributes
-  if (contributes === null || typeof contributes !== 'object') return NO_BACKENDS
+  // Absent declares nothing — the normal answer for a package that contributes no
+  // TUI row. Present but not an object (`null`, a primitive, an array) is a
+  // malformed declaration, not an empty one: the canonical validator refuses those
+  // shapes too (`contributes must be an object`), and reading them as "nothing
+  // declared" would pass the bundle over without a word.
+  if (contributes === undefined) return NO_BACKENDS
+  if (contributes === null || typeof contributes !== 'object' || Array.isArray(contributes)) {
+    return { backends: [], problems: ['contributes must be an object'] }
+  }
   const entries = (contributes as Record<string, unknown>)['x-dsh-tui']
-  // Absent is the normal answer for a package that contributes no backend.
-  // Present but not an array is a malformed declaration, not an empty one: the
-  // canonical validator refuses that shape outright (`@dsh-std/manifest`:
-  // `contributes.<x-…> must be an array`), so reading it as "nothing declared"
-  // would drop a backend in the one way nobody can debug.
+  // The same rule one level down, for the same reason.
   if (entries === undefined) return NO_BACKENDS
   if (!Array.isArray(entries)) {
     return { backends: [], problems: [`contributes['x-dsh-tui'] must be an array`] }
