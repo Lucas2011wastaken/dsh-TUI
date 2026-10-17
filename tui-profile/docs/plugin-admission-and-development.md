@@ -355,6 +355,12 @@ claim。
   system CLI with a pool hook), both implemented confirmation policies (confirm, trusted-source),
   capability/grants declaration, the refusals, and resume binding semantics"（automated）
 
+**这一层不校验 `install.executor` 的取值**：宿主不认识的执行器不是拒绝（见接缝十四的"声明形状"），
+形状校验也不查执行器表，所以**没有** `invalid-backend-install-executor-unknown` 这条反例——它在
+profile 层没有可红的期望，按"不能红的用例不写"的纪律就不写。这条语义由**宿主侧**承重：
+`scripts/verify-backend-registry.ts` 有一条用例逐字写着「an executor this host does not implement
+registers as "no install surface"」（不抛错、不开向导、配方保留）。
+
 ### TUI-TRUST-001 Trust disclosure
 
 当前 profile 为 `trusted-in-process`。Manifest permission 用于兼容性、授权提示和
@@ -1041,6 +1047,14 @@ ctx.effect(() => () => dispose?.())
   贡献声明其中之一在准入处被拒（`BACKEND_ID_RESERVED`）。
 - `label` **只收字面量**——宿主 i18n 键是宿主的词表，贡献不许借它说话。
 - `shortLabel` 必填；`product`、`install`、`unloadExport`、`confirmation` 可选。
+- `install` 是**安装配方**，不是包名：`executor` 说的是"怎么装"（宿主实现的一道程序），
+  `specifier` 与 `version` 说的是"装什么"、装哪个版本。**取值集合属于宿主**——今天只实现
+  `pnpm-profile-add`（在 profile 根跑一次 `pnpm add <specifier>@<version>`）；宿主**不认识的
+  执行器读作"没有安装面"**：bundle 照常注册、配方原样保留，只是那一行退回检测自己的 hint、
+  不开向导，**不是拒绝**。不写 `install` 同样是一等公民（系统 CLI 形态：用户自己的二进制
+  就是依赖）。取值集合**只增不删**：加一个执行器是加法，不改本坐标。这条配方是给后端
+  **自己的运行时依赖**用的，**不是** bundle 的发行方式——装 bundle 走 `/plugin install`
+  （收包名 / 路径 / git URL），与本字段无关。
 - 未知字段一律拒（`nativeKey`、`inTree` 之类 in-tree 私有项因此进不来）；声明里
   的文本按不可信输入净化：剥控制字符、按 terminal cell 截断。
 - `confirmation` 是**请求**，不是自授豁免：缺省 `confirm`（宿主始终询问）；`trusted-source`

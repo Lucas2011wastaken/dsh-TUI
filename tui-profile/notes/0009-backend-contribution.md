@@ -52,6 +52,8 @@ contract 的 `errors` 只发布**有产出者**的码，今天正好是上面两
 
 `install` 是 `{ executor, specifier, version }`，三个字段都必须是非空字符串，缺一个即 validation 失败。执行器是**宿主实现的表**（首版只有 `pnpm-profile-add`）：宿主不认识的执行器读作「无安装面」（`installable: false`，那一行退回检测自己的 hint），不是拒绝注册。`install` 缺省也是一等公民——用户自己装的二进制就是依赖（codex 形态），声明「装什么、哪个版本、交给宿主哪个执行器」这件事只有真的能装的后端才做。
 
+**D-2（2026-10-17）：暂不加第二个执行器。** 执行器只服务**后端自己的** SDK 安装——**不是**插件 bundle 的发行方式：bundle 走 `/plugin install` / `dsh plugin add`，那条路本来就收包名 / 路径 / git URL（生态里十多个收录包确实不在 npm 上，靠 tarball、git 或本地目录分发，但那是**插件管理器**的活，与本表无关）。而生态侧 42 条收录里第三方 `Backend` 声明为 **0**、也没有一条声明任何 `install` 配方——没有真消费者，也没有可观察的需求形状（目录 / Git spec / tarball URL 是三道不同的程序），此时冻形状等于给没人跑过的路定契约。将来出现**第一个真第三方 `Backend` bundle、且它需要宿主代装非 npm 来源的 SDK** 时再加取值：只增不删、不改坐标，加它不是 breaking（承诺 6）。
+
 ## Resume semantics
 
 以下四条是定案口径（roadmap §6 第 11 条），按 `MUST` / `MUST NOT` 写：
@@ -114,6 +116,8 @@ Conformance requirement 是 `TUI-BACKEND-001`（记在 `conformance/requirements
 `conformance/requirements-v0.15.json` 中 `TUI-BACKEND-001` 的 fixture 清单由 `scripts/verify-plugin-spec.ts` 读取：门禁要求它与仓内 Backend 用例表完全一致，且每个列出的文件都存在。只改 requirement 登记、不改仓内用例表，或删除任一列出的 fixture，都会使门禁失败。
 
 执行体有两层：profile 套件（`conformance/tests/run.js` 的 Backend 段）是参考实现，但它**不在任何自动化里**；仓内 `scripts/verify-plugin-spec.ts` 的 Backend 段是它在 CI（`verify:build`）里的执行体，**两边期望必须同改**。清单交叉校验不读取 `run.js` 的用例表，不能自动发现两边期望的差异。宿主侧的两条不变量（"未加载即不关池"、"只关真的加载过的条目"）**不在这一层**：它们是宿主行为、无法用 manifest fixture 表达，只能由 `scripts/verify-backend-contribution.ts` 与 `scripts/verify-backend-registry.ts` 的 probe 夹具钉住。
+
+还有一类**有意不写**的反例：`invalid-backend-install-executor-unknown`。未知执行器不是拒绝（见「Install surface」），形状校验也不查执行器表，所以它在 profile 层表达不出可红的期望——按「不能红的用例不写」的纪律不写。这条语义由宿主侧承重：`scripts/verify-backend-registry.ts` 的 `an executor this host does not implement registers as "no install surface"`（不抛错、不开向导、配方保留）一条用例。
 
 宿主侧门禁是 `scripts/verify-backend-contribution.ts`：内建 manifest 的投影 dogfood、两份词表的单一真源、准入判定、`scripts/fixtures/probe-backend/` 这个假后端的资源不变量与安装面两态、坏声明必须红，以及末节的范围守卫。
 
