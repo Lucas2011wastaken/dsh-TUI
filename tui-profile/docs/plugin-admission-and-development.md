@@ -1457,11 +1457,40 @@ DSH_TUI_DEBUG=1 dsh --profile dsh-tui      # 需要调试时
 
 ## 收录与推广
 
-- 完成插件后，把链接提交到生态组织，让社区发现你：
-  - 主仓库的 [`docs/links.md`](https://github.com/ccch1mneyyy/dsh-TUI/blob/main/docs/links.md)（PR 到 `ccch1mneyyy/dsh-TUI`）
-  - 组织主页 README 的收录列表（PR 到 `dsh-tui-ecosystem`）
-- 在 README 里注明依赖的 dsh-TUI 版本下限，随主包版本更新做兼容性说明。
+生态里有**三层**，判据不同、维护者不同、结论不能互相顶替：
 
-收录只做链接罗列，不包含代码审查或运行验证。收录本身不代表 dsh-TUI、生态组织
-或其成员对插件的功能、质量或安全作任何背书或担保；插件由各自作者维护，使用者
-安装社区插件前请自行评估。
+| 层 | 谁维护 | 判据 | 能得出什么 | 不能得出什么 |
+| --- | --- | --- | --- | --- |
+| **仓内 profile 准入** | 本仓库（`tui-profile/`，随代码修订） | 协议 / 形状 / 坐标 / digest / conformance（本指南与 `conformance/`） | `compatible`、`compatible_degraded`、`waiting_authorization`、`rejected`、`unknown` 五态 | 安全性、质量、"官方认证" |
+| **首方 feed** | 本仓库随包发布（`tui-profile/feed/first-party.json`） | 精确 `name@version`、只收 scoped、一个版本钉死一份 | 安装时**免一次信任确认**的那份名单 | 准入结论；不在名单里不等于不能用 |
+| **生态收录** | 生态组织（`dsh-tui-ecosystem`） | `plugins.json` + `plugins-pr.yml` 的校验（下表） | 出现在 [dshtui.com/plugins](https://dshtui.com/plugins) 的目录条目 | 准入、验证、背书 |
+
+**生态收录实际查什么**（收录仓的 `plugins-pr.yml` → `.github/scripts/validate-plugins.mjs`，
+2026-10 口径）：
+
+1. `plugins.json` 是合法 JSON，且 `plugins` 是数组；
+2. 每条必填 `name` / `displayName` / `description` / `author` / `repo` / `kind` / `addedAt`，
+   `kind` 只能是 `plugin` / `template` / `core`；
+3. `repo` 是 `https://github.com/owner/repo`；插件名与仓库地址都不重复（大小写不敏感）；
+4. **新增**条目：仓库真实存在且公开，PR 提交者是该仓库 owner 或 collaborator；
+5. **新增**条目：仓库 README 里有指向 dsh-TUI 的链接（`https://dshtui.com` 或主仓地址）。
+
+五条过了之后可选一次 AI 审查（没有 API key 就跳过；审查标记为需要复核时不自动合并），再由
+`MERGE_TOKEN` 自动 squash 合并并触发站点部署。
+
+**它不查**：npm 上有没有发布、包名是裸名还是 scoped、有没有 `dsh-plugin.json`、manifest 能
+不能被解析、有没有 provenance / attestation、声明了哪些能力与权限。所以：
+
+> **收录 ≠ 准入 ≠ 背书。** 收录只说明"仓库公开、作者本人提交、README 回链了本产品"；它不
+> 说明插件符合本指南的任何一条要求，也不代表 dsh-TUI、生态组织或其成员对插件的功能、质量
+> 或安全作任何背书或担保。反过来，没被收录的插件一样可以安装、可以自己发布。
+
+投稿两条路：
+
+- **收录仓 PR**：向 `dsh-tui-ecosystem/dsh-tui-ecosystem` 的 `plugins.json` 加一条，按上面五
+  条自查；
+- **友情链接**：主仓 [`docs/links.md`](https://github.com/ccch1mneyyy/dsh-TUI/blob/main/docs/links.md)
+  的 PR——罗列性质，同样不构成背书。
+
+建议顺序是**先过本指南的检查清单、再投稿**，并在 README 里写明依赖的 dsh-TUI 版本下限、随
+主包版本更新兼容性说明；这是建议，不是收录的前置条件（收录流程不读本指南）。
