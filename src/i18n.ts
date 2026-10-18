@@ -1844,7 +1844,6 @@ const dict = {
   'team-cmd-off': { zh: '已关闭', en: 'off' },
   'team-cmd-service': { zh: '团队服务：{{state}}', en: 'Team service: {{state}}' },
   'team-cmd-running': { zh: '运行中', en: 'running' },
-  'team-cmd-stopped': { zh: '未运行', en: 'not running' },
   'team-cmd-pending-on': { zh: 'profile 已开启团队，但服务没有运行：重启后生效，或服务激活失败（见日志）。', en: 'The profile has the team on but the service is not running: it applies after a restart, or the service failed to activate (see the log).' },
   'team-cmd-pending-off': { zh: 'profile 已关闭团队，但服务仍在运行：重启后生效。', en: 'The profile has the team off but the service is still running: it applies after a restart.' },
   'team-cmd-no-members': { zh: '本会话没有 teammate。', en: 'No teammates in this session.' },

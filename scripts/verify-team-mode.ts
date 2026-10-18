@@ -259,8 +259,19 @@ try {
   }
 
   {
-    // Hidden but typed: no status, an enable hint naming the bundle.
+    // Hidden but typed, bundle still selected: the profile already has it on, so
+    // the answer is why no service runs — never an enable command that is a no-op.
     const entry = createTeamCommandEntry(rig({ service: false }).ctx as never)
+    const hidden = (await linesOf(entry, '')).join('\n')
+    assert.match(hidden, /The profile has the team on but the service is not running/)
+    assert.doesNotMatch(hidden, /\/plugin enable/)
+    assert.doesNotMatch(hidden, /Team bundle:/)
+    assert.doesNotMatch(hidden, /\/plugin disable/, 'it is already on: off is not the route either')
+  }
+
+  {
+    // Hidden but typed, bundle off: the enable route this launch can run.
+    const entry = createTeamCommandEntry(rig({ service: false, bundles: [teamBundle(false)] }).ctx as never)
     const hidden = (await linesOf(entry, '')).join('\n')
     assert.match(hidden, /The team service is not running/)
     assert.match(hidden, new RegExp(`/plugin enable ${TEAM_BUNDLE}`))

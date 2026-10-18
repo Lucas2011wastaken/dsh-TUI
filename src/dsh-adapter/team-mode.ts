@@ -132,7 +132,9 @@ export function createTeamCommandEntry(
 /**
  * Where the switch went, checked against this launch: the in-session lifecycle
  * command only when the plugin service can run it and the installation lists
- * the bundle; the CLI route or the DSH-line reason otherwise.
+ * the bundle; the CLI route or the DSH-line reason otherwise. A bundle the
+ * profile already selects is not told to enable itself: with no service running
+ * the answer is the restart or the failed activation.
  */
 async function teamSwitchRouteLines(
   ctx: Context,
@@ -144,25 +146,31 @@ async function teamSwitchRouteLines(
     return [t('team-cmd-no-manager-route', { profile: cell(profile), bundle: TEAM_BUNDLE })]
   }
   let listed = true
+  let selected = false
   try {
-    listed = (await manager.listBundles()).some(candidate => candidate.name === TEAM_BUNDLE)
+    const bundle = (await manager.listBundles()).find(candidate => candidate.name === TEAM_BUNDLE)
+    listed = bundle !== undefined
+    selected = bundle?.enabled === true
   } catch {
     // A failing read is the status path's to report; name the general route.
   }
   if (!listed) return [t('team-cmd-bundle-absent', { bundle: TEAM_BUNDLE })]
+  // Selected but nothing runs: `/plugin enable` would be a no-op, so name the
+  // state instead (a restart, or an activation that failed — see the log).
+  if (kind === 'not-enabled' && selected) return [t('team-cmd-pending-on')]
   return [t(kind === 'switch' ? 'team-cmd-switch-moved' : 'team-cmd-not-enabled', { bundle: TEAM_BUNDLE })]
 }
 
 /**
- * `/team` and `/team status`: whether the profile selects the bundle, whether
- * the team service is running in this process, and the bound session's team.
+ * `/team` and `/team status`: whether the profile selects the bundle and the
+ * bound session's team. The caller only runs this while the service is mounted,
+ * so the service line states that state instead of re-reading it.
  */
 async function teamStatusLines(ctx: Context, sink: TeamCommandSink): Promise<readonly string[]> {
   const manager = pluginManagerOf(ctx)
-  const service = teamServiceActive(ctx)
   const lines: string[] = []
   if (manager === undefined) {
-    lines.push(t('team-cmd-service', { state: t(service ? 'team-cmd-running' : 'team-cmd-stopped') }))
+    lines.push(t('team-cmd-service', { state: t('team-cmd-running') }))
     lines.push(t('team-cmd-no-manager'))
   } else {
     let selected: boolean | undefined
@@ -175,11 +183,10 @@ async function teamStatusLines(ctx: Context, sink: TeamCommandSink): Promise<rea
     } catch (error) {
       lines.push(t('plugins-service-error', { err: cell(error instanceof Error ? error.message : String(error)) }))
     }
-    lines.push(t('team-cmd-service', { state: t(service ? 'team-cmd-running' : 'team-cmd-stopped') }))
-    // The profile says on but nothing runs (a startup-only profile, or the
-    // service failed to activate), or the reverse: say which one wins now.
-    if (selected === true && !service) lines.push(t('team-cmd-pending-on'))
-    if (selected === false && service) lines.push(t('team-cmd-pending-off'))
+    lines.push(t('team-cmd-service', { state: t('team-cmd-running') }))
+    // The service is mounted (the caller gates on that), so a profile that
+    // already deselected the bundle is the case that waits for a restart.
+    if (selected === false) lines.push(t('team-cmd-pending-off'))
   }
   const { total, active, unseen } = sink.members()
   lines.push(total === 0
