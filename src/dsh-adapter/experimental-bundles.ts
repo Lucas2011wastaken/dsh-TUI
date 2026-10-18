@@ -3,10 +3,10 @@
  * line that says how.
  *
  * A curated list, not a discovery: the plugin service reports every optional
- * bundle the installation ships (schedule and voice input included), but only
- * entries with a real TUI entry point belong here. `/plugin list` intersects
- * this list with what the running installation supplies, so an older dsh simply
- * shows nothing.
+ * bundle the installation ships (voice input and the plugin market included),
+ * but only entries with a real TUI entry point belong here. `/plugin list`
+ * intersects this list with what the running installation supplies, so an
+ * older dsh simply shows nothing.
  *
  * @module
  */
