@@ -293,7 +293,9 @@ for (const [presetId, services, expected] of [
   // 读三者拼接（scripts/lib/channel-composition.mjs），断言不变。
   const source = compositionSource()
   ok(
-    /annotateCommandCapabilities\(\s*withTeamCommandVisibility\(commands, teamServiceActive\(ctx\)\)/.test(source) &&
+    // The third argument is the other half of the wiring: the refresh path must
+    // annotate through the same capability facts, not a constant.
+    /annotateCommandCapabilities\(\s*withTeamCommandVisibility\(commands, teamServiceActive\(ctx\)\),\s*capabilitiesOf\(\),/.test(source) &&
     source.includes('publishCommandList(commands)'),
     'the command-list refresh path annotates through the shared capability facts',
   )
