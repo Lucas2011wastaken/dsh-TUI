@@ -19,6 +19,9 @@
   `tui-profile/`、验证脚本与用户文档，没有"先提案、再批准、再落地"的两段流程。
 - **没有状态晋级门槛**：不存在 Draft→Experimental→Candidate→Stable 的批准阶梯，
   也不需要在别处获得许可后才生效；版本变化看 [`../CHANGELOG.md`](../CHANGELOG.md)。
+- **坐标变更必须登记**：新增或废弃坐标、重钉任一 contract profile 的 `profileHash`
+  （哪怕只改措辞），都必须在 [`../CHANGELOG.md`](../CHANGELOG.md) 的最新条目里写出
+  **坐标与原因**。语义变了却不换坐标就是破坏性变更（§4），不是"悄悄改正文"。
 - **改 profile 数据等于改契约**：`registry/registry-0.15.json` 钉死了
   `registry/contracts/*.json` 的 sha256；`protocols/` 常量由 `src/adapter/spec/`
   派生；`conformance/` 的 fixture 与期望值必须同步。这条约束由
@@ -34,11 +37,15 @@
 
 更新 `vendor/dsh-std` revision 必须记录受影响的 Manifest version、protocol definitions、admission decision 和迁移要求，并完整运行 conformance suite。不得在本目录复制旧的 std schema 后继续以同一名称维护。**pin 的是上游 `dsh-std`，不是 `tui-profile/`**——后者没有 revision，随本仓库提交走。
 
+所以 `tui-profile/package.json` **不带 `version`**：profile 的身份是 `registry/registry-0.15.json` 的 `profileHash` 钉与本仓库的提交，不是 semver；它随 dsh-TUI 的包发布，版本线只属于根 `package.json`。`verify:plugin-spec` 钉住「不自称版本」这一条，防止再长出一个与根包对不上、也没有消费者的版本号。
+
 ## 4. TUI-owned definitions
 
 TUI 自有协议使用 `tui.dsh/*` namespace。新 definition 必须提供 `apiVersion + kind`、协议专属校验与协商器、contract profile、immutable digest 和 fixtures，并注册进 dsh-std `ProtocolCatalog`。目录或 package 的存在不等于 live support。
 
 TUI-only 要求使用稳定的 `TUI-*` ID，并说明适用 profile、影响范围和兼容变化。
+
+**历史坐标的语义比较没有工具，只有 digest。** 每个 contract profile 各自一枚 `profileHash`，所以「哪个坐标的正文变了」答得出（漂移即红），「哪一条变了」答不出——正文是给人读的散文，要做语义 diff 就得先把它们改造成结构化数据，代价大于收益。发现路径因此是制度而不是工具：重钉 hash 必须同条 CHANGELOG（§2），语义变化必须换坐标，形状由 conformance 与镜像门钉住。
 
 ## 5. Evidence
 
