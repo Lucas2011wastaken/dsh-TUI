@@ -268,6 +268,26 @@ try {
   }
 
   {
+    // Hidden because the launch has no profile plugin service: the in-session
+    // command cannot run at all, so the hint must name the CLI route instead
+    // (a `/plugin enable` here would only fail).
+    const entry = createTeamCommandEntry(rig({ service: false, manager: false }).ctx as never)
+    const unmanaged = (await linesOf(entry, '')).join('\n')
+    assert.match(unmanaged, new RegExp(`dsh plugin --profile dsh-tui add ${TEAM_BUNDLE}@`))
+    assert.doesNotMatch(unmanaged, /\/plugin enable/)
+    assert.match((await linesOf(entry, 'off')).join('\n'), new RegExp(`dsh plugin --profile dsh-tui add ${TEAM_BUNDLE}@`))
+  }
+
+  {
+    // The installation does not ship the bundle: `/plugin enable` would answer
+    // with its generic "no such target", so say what is missing instead.
+    const entry = createTeamCommandEntry(rig({ service: false, bundles: [] }).ctx as never)
+    const absent = (await linesOf(entry, '')).join('\n')
+    assert.match(absent, /The running DSH installation does not ship the team bundle/)
+    assert.doesNotMatch(absent, /\/plugin enable/)
+  }
+
+  {
     // on / off moved: answer with the new route, mounted or not, and write nothing.
     for (const service of [true, false]) {
       const entry = createTeamCommandEntry(rig({ service }).ctx as never)
@@ -300,7 +320,7 @@ try {
     const other = await plugin('disable other-bundle', pluginSink)!.begin()
     assert.equal(other.kind, 'done', 'only the team bundle asks')
   }
-  console.log('PASS /team status (bundle, service, pending, no manager, unknown, hidden hint, moved switch, usage) and /plugin disable team-active')
+  console.log('PASS /team status (bundle, service, pending, no manager, unknown, hidden hint, CLI route, bundle-absent reason, moved switch, usage) and /plugin disable team-active')
 } finally {
   rmSync(dataDir, { recursive: true, force: true })
 }

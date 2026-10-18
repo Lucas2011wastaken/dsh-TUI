@@ -2446,7 +2446,9 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
     }),
     // `/team [status]`: the live team report (team-mode.ts). The bundle switch
     // is `/plugin enable|disable`, which shares the lifecycle flow.
-    onTeamCommand: createTeamCommandEntry(ctx),
+    onTeamCommand: createTeamCommandEntry(ctx, {
+      profileName: profile ?? resolveDshProfileName(),
+    }),
     kernelPinned: backendPinned,
     // Only a `dsh --profile <name>` launch has a profile installation for
     // `/update` to act on; source checkouts and `--config` overlays get the

@@ -401,11 +401,12 @@ for (const [fullscreen, columns, service] of [
         above('C-070', t('plugins-list-header', { count: '2' })), screen())
       check(`${tag}: list omits the experimental section without optional bundles`,
         !hasText(t('plugins-experimental-header', { count: '2' })), screen())
-      // `agentTeams` is absent in this fixture: `/team` is hidden from the
-      // catalog, but a typed one must still be a command, never model text.
+      // `agentTeams` is absent and the manager lists no team bundle: a typed
+      // `/team` must still be answered here (never sent to the model), and it
+      // must not name an enable command this installation cannot serve.
       await run('/team')
-      check(`${tag}: a hidden /team answers with the enable route`,
-        await settled(() => hasText(t('team-cmd-not-enabled', { bundle: TEAM_BUNDLE }))), screen())
+      check(`${tag}: a hidden /team says the installation ships no team bundle`,
+        await settled(() => hasText(t('team-cmd-bundle-absent', { bundle: TEAM_BUNDLE }))), screen())
       await clear()
 
       // The completion tree: the static subcommand hints first, then whatever

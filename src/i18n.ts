@@ -1826,6 +1826,14 @@ const dict = {
     zh: '团队服务未运行（bundle 未启用、启用后尚未生效，或激活失败）。开启/应用：/plugin enable {{bundle}}；需要时重启。',
     en: 'The team service is not running (bundle off, enabled but not applied yet, or activation failed). Enable/apply with /plugin enable {{bundle}}; restart if needed.',
   },
+  'team-cmd-no-manager-route': {
+    zh: '本次启动没有 profile 插件服务，无法在会话内切换。在终端用 dsh plugin --profile {{profile}} add {{bundle}}@<已装 DSH 版本>（关闭用 remove），然后重启；版本须与已装 DSH 完全一致。',
+    en: 'This launch has no profile plugin service, so the team cannot be switched here. In a terminal run dsh plugin --profile {{profile}} add {{bundle}}@<your DSH version> (remove to switch off), then restart; the version must match the installed DSH exactly.',
+  },
+  'team-cmd-bundle-absent': {
+    zh: '本次运行的 DSH 安装不自带团队包（/plugin list 不显示它）：先把 DSH 换到自带团队包的版本线，再重启并开启。',
+    en: 'The running DSH installation does not ship the team bundle (/plugin list does not show it): switch DSH to a line that ships the team packages first, then restart and enable it.',
+  },
   'team-cmd-no-manager': {
     zh: '本次启动没有 profile 插件服务：只能报告团队服务状态。',
     en: 'This launch has no profile plugin service: only the team service state can be reported.',

@@ -104,24 +104,53 @@ export type TeamCommandEntry = (args: string, sink: TeamCommandSink) => Promise<
  * bundle switch is `/plugin enable|disable`, which shares the lifecycle flow
  * and its confirmations.
  * @param ctx - Host context of the composition root.
+ * @param options - The profile a CLI route names.
  * @returns the command entry the screen calls.
  */
-export function createTeamCommandEntry(ctx: Context): TeamCommandEntry {
-  return (args, sink) => {
+export function createTeamCommandEntry(
+  ctx: Context,
+  options: { readonly profileName?: string | undefined } = {},
+): TeamCommandEntry {
+  const profile = options.profileName ?? 'dsh-tui'
+  return async (args, sink) => {
     const parsed = parseTeamArgs(args)
-    if (parsed.kind === 'switch') {
-      return Promise.resolve([t('team-cmd-switch-moved', { bundle: TEAM_BUNDLE })])
-    }
     if (parsed.kind === 'unknown') {
-      return Promise.resolve([t('team-cmd-usage', { sub: cell(parsed.sub) })])
+      return [t('team-cmd-usage', { sub: cell(parsed.sub) })]
     }
-    // The command is hidden from the catalog in this state, but a typed one is
-    // still a local command: answer where the switch is instead of failing.
-    if (!teamServiceActive(ctx)) {
-      return Promise.resolve([t('team-cmd-not-enabled', { bundle: TEAM_BUNDLE })])
+    // The mounted service is the only state `/team` reports on.
+    if (parsed.kind === 'status' && teamServiceActive(ctx)) {
+      return teamStatusLines(ctx, sink)
     }
-    return teamStatusLines(ctx, sink)
+    // Everything else answers where the switch is: but only with a route this
+    // launch can take. Without the profile plugin service that route cannot run
+    // here, and a bundle the running installation does not ship has no target
+    // at all (`/plugin` would answer with every addressable name).
+    return teamSwitchRouteLines(ctx, profile, parsed.kind === 'switch' ? 'switch' : 'not-enabled')
   }
+}
+
+/**
+ * Where the switch went, checked against this launch: the in-session lifecycle
+ * command only when the plugin service can run it and the installation lists
+ * the bundle; the CLI route or the DSH-line reason otherwise.
+ */
+async function teamSwitchRouteLines(
+  ctx: Context,
+  profile: string,
+  kind: 'switch' | 'not-enabled',
+): Promise<readonly string[]> {
+  const manager = pluginManagerOf(ctx)
+  if (manager === undefined) {
+    return [t('team-cmd-no-manager-route', { profile: cell(profile), bundle: TEAM_BUNDLE })]
+  }
+  let listed = true
+  try {
+    listed = (await manager.listBundles()).some(candidate => candidate.name === TEAM_BUNDLE)
+  } catch {
+    // A failing read is the status path's to report; name the general route.
+  }
+  if (!listed) return [t('team-cmd-bundle-absent', { bundle: TEAM_BUNDLE })]
+  return [t(kind === 'switch' ? 'team-cmd-switch-moved' : 'team-cmd-not-enabled', { bundle: TEAM_BUNDLE })]
 }
 
 /**
