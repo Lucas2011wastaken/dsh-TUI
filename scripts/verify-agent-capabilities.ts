@@ -293,7 +293,8 @@ for (const [presetId, services, expected] of [
   // 读三者拼接（scripts/lib/channel-composition.mjs），断言不变。
   const source = compositionSource()
   ok(
-    source.includes('annotateCommandCapabilities(commands, capabilitiesOf())'),
+    /annotateCommandCapabilities\(\s*withTeamCommandVisibility\(commands, teamServiceActive\(ctx\)\)/.test(source) &&
+    source.includes('publishCommandList(commands)'),
     'the command-list refresh path annotates through the shared capability facts',
   )
 }
