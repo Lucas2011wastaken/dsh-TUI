@@ -94,9 +94,12 @@ Also an experimental public surface:
   for the current write and stops subsequent grants and the retry; exemptions
   already written remain. **Known gaps**:
   provenance is only a one-vote-to-veto seam with no online check at all (the
-  host service exposes no such API), and with no service the transcript reports
-  the CLI command and the reason instead of **running `dsh plugin` on the user's
-  behalf** (no pane opens: there is no flow to drive).
+  host service exposes no such API; the clause and its six evidence levels are
+  written up in the [admission and development
+  guide](../tui-profile/docs/plugin-admission-and-development.md)), and with no
+  service the transcript reports the CLI command and the reason instead of
+  **running `dsh plugin` on the user's behalf** (no pane opens: there is no flow
+  to drive).
 - **Lifecycle actions are available in the terminal itself (C-5)**: `/plugin remove
   <bundle>`, `/plugin enable <name|id>` and `/plugin disable <name|id>` go through the
   same host service. **A bundle and a row are two levels**: a bundle is a composition

@@ -5,6 +5,45 @@
 口径见 [`governance/rules.md`](governance/rules.md)），因此没有单独的审批或晋级流程，
 登记的是 profile 的变化而不是 dsh-TUI 产品的全部变更。
 
+## 2026-10-18（D-3：生态准入成文与对齐）
+
+### Documented（不改坐标，无破坏性变更）
+
+- [准入与开发指南](docs/plugin-admission-and-development.md)在 `TUI-DEP-001` 之后新增两节：
+  「供应链证据与 provenance（执行口径）」把 evidence 拆成 `declared` / `parsed` /
+  `negotiated` / `tested` / `observed` / `attested` 六档，逐档写明**谁产出、能证明什么、
+  不能证明什么**，并写清 artifact digest 的口径（对象是会被安装的 tarball，不是仓库或
+  commit）、依赖闭包的范围（产物 / 锁文件 / native-build / override-patch / std revision）、
+  provenance 的**否决语义**（不得单独放行、不一致即降级、缺席不等于失败、本轮无在线校验）、
+  三个执行点（本仓库门禁 / 人工准入评审 / 运行时都不验）与措辞红线；新 `TUI-CLAIM-001`
+  正文规定 claim 必须绑定 std revision、profile、Host、artifact、suite、result，并给出它们与
+  已发布的 [`schemas/conformance-claim.schema.json`](schemas/conformance-claim.schema.json)
+  必填键的对应关系，以及"一条 claim 只有一档 evidence"「没有 artifact digest 就没有
+  claim」「作者与参考实现不能自证」四条硬口径。
+- 同文件「命名与发布规范」改写为**双轨**：裸名与 scoped 都是一等公民、不因命名被拒（bundle
+  的 patch 按包名解析，裸名形态最稳），组织内新包仍建议 `@dsh-tui-ecosystem/<name>`，官方
+  核心包保持 `@deepseek-harness-tui/*`；**feed 只收 scoped** 单列成一条（嫡系资格 ≠ 生态
+  准入），并补名称稳定性、仓库归属、许可证、`v*` tag == version、provenance 的发布口径。
+- 同文件新增「从旧模板迁移」：只有 `cordis.patch.yml`、没有 `dsh-plugin.json` 的包**没有
+  声明面**——不参与准入、不能声明 `Backend`、不发布坐标，**不是"默认通过"**；给出六步迁移
+  清单（补 manifest / 保留 patch / 指向 `tui.dsh/v1alpha1` / manifest 进发布面 / 本地验证 /
+  发布流程）并与 `TUI-PKG-001` / `TUI-PKG-002` 逐条对应。
+- 同文件「收录与推广」改写为**三层关系表**（仓内 profile 准入 / 首方 feed / 生态收录），
+  如实写出生态收录流程实际校验的五条（JSON 形状、必填字段与 `kind`、repo 格式与去重、仓库
+  公开与提交者归属、README 回链），并点明它**不查** npm 发布、包名形态、manifest、provenance
+  与能力权限声明 ⇒ **收录 ≠ 准入 ≠ 背书**；G 节措辞红线原样保留。
+- [governance/rules.md](governance/rules.md) §5 Evidence 从一段话扩成六档表，写明谁能提供
+  证据、能证明什么、不能证明什么，并重申**不能自我认证、不能单独放行、任何 evidence 都不是
+  安全保证**——只是把既有语义写全，不新增义务。
+- [feed/README.md](feed/README.md) 的「provenance（一票否决的缝）」与准入指南对齐：只否决
+  不放行、不一致即降级、缺席不等于失败、将来只接否决不引入"官方认证"，并去掉对仓外 roadmap
+  条目的引用。
+- [用户文档](https://github.com/ccch1mneyyy/dsh-TUI/blob/main/docs/plugins.md)（中英两版）的
+  provenance 已知缺口改为指向准入指南的新节。
+
+本轮只改文档：协议正文、`registry/`、contract profile、fixture 与 `profileHash` 均未变，没有
+新增门禁或 fixture。
+
 ## 2026-10-17（D-2：安装执行器的取值语义成文）
 
 ### Documented（不改坐标，无破坏性变更）
