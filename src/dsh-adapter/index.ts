@@ -525,9 +525,9 @@ function attachToEntry(ctx: Context, config: RuntimeConfig<Config>): void {
 // (scripts/verify-public-config-types.mjs compiles a real consumer file against
 // the published declarations), and from here on it may only grow — removing any
 // of it is a breaking change. What is NOT here: the registry, the loader and the
-// picker. Those stay the host's, and the stage C install chain is where a mounted
-// bundle's declaration reaches them (the admission chain itself is wired; see
-// docs/plugins.md).
+// picker. Those stay the host's; an installed bundle's declaration reaches them
+// through the boot-time assembly (`backend-assembly.ts`, D-1) on top of the W-2
+// admission chain (see docs/plugins.md).
 export {
   BACKEND,
   BACKEND_CAPABILITY_NAMES,
