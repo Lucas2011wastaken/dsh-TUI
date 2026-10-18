@@ -1309,12 +1309,67 @@ DSH 专用服务、完整/轻量 profile 与入口 slot；发现前的路由只�
 
 ## 命名与发布规范
 
-- **包名**：生态约定 `@dsh-tui-ecosystem/<name>`（发布前先查 npm 是否被占）；
-  官方核心包保持 `@deepseek-harness-tui/*`。仓库放
-  `github.com/dsh-tui-ecosystem/<name>`。
-- **许可证**：MIT（与主包一致）。
-- **版本**：语义化版本；发布由 `v*` tag 驱动（参考主包 publish workflow）。
-- **Node**：`^22.19 || >=24`，纯 ESM。
+**命名是双轨的**：裸名与 scoped 包名都是一等公民，**不因命名被拒**。
+
+| 形态 | 谁用 | 说明 |
+| --- | --- | --- |
+| 裸名（如 `dsh-code-memory`） | 社区插件 | 生态侧已有实例；bundle 的 patch 按包名解析，裸名形态最稳 |
+| `@dsh-tui-ecosystem/<name>` | 生态组织内的新包 | **建议**而非要求；模板用的是它 |
+| `@deepseek-harness-tui/*` | 官方核心包 | 生态插件不要使用；`@deepseek-ai/*` 属宿主上游，也不要占用 |
+
+- **不要求**组织仓库（生态收录里的项目绝大多数在个人账号下），**不要求** scoped。
+- **名称是稳定标识**：bundle 解析按包名逐字匹配，改名对用户就是换一个包；要改就发布新名并
+  写清迁移，不要让旧名静默失效。
+- **仓库归属**：source repository 要可定位（`package.json` 的 `repository`），与 README、
+  issue 对得上；供应链评审以它为准（`TUI-DEP-001`）。
+- **许可证**：许可证必须可定位，且与 `package.json` / README 一致；MIT（与主包一致）是最省
+  事的写法。
+- **版本与标签**：语义化版本；发布由 `v*` tag 驱动，**tag 必须等于 `package.json` 的
+  version**（主包与生态侧唯一已发布包的发布流程都这么做；两者不等时发布流程直接失败）。
+- **provenance**：可得出 provenance 时**附上**（npm 上优先用 trusted publishing；静态
+  `NPM_TOKEN` 是降级做法）。它是 `attested` 档 evidence 的来源，不构成准入（见「供应链证据与
+  provenance」）。
+- **Node 与模块形态**：`^22.19 || >=24`，纯 ESM（`type: "module"`），相对导入带 `.js` 后缀。
+- **发布前先查名**：npm 上是否已被占用；被占用就换个名字，不要指望 scope 能解决——裸名与
+  scoped 是两条并行的合法路线，不是新旧的替代关系。
+
+**嫡系资格 ≠ 生态准入**：首方 feed **只收 scoped** 名单条目，用 scope 当"离线可判的发布者"
+（见 [`feed/README.md`](../feed/README.md)）。这条规则**只**决定安装时要不要先问一句信任，
+不决定一个包能不能被准入、被收录、被安装；反过来，"用了 scoped"也不等于嫡系——feed 里没有
+的精确 `name@version` 一律按第三方处理。
+
+## 从旧模板迁移（只有 `cordis.patch.yml` 的包）
+
+2026-08 版 `plugin-template` 生成的包只有 `cordis.patch.yml`、没有 `dsh-plugin.json`。这类包
+能装、能组合，但**没有声明面**：它不参与准入，不能声明 `Backend`，也不发布协议坐标——**不是
+"默认通过"，而是"没有可判的东西"**。安装本身仍归插件管理器（`/plugin install` 或
+`dsh plugin --profile dsh-tui add`），本仓库不代装。
+
+迁移清单（逐条可执行）：
+
+1. **补 `dsh-plugin.json`**（包根、唯一，`TUI-PKG-001`）：
+   - `$schema` 用绝对 URI；`manifestVersion: "0.15"`；manifest 由固定 revision 的
+     `@dsh-std/manifest` parser 接受（**不要求联网取 schema**）；
+   - `id` 稳定且唯一（不随版本变），`version` 与 `package.json` 对齐；
+   - `facets.host`：`entry` 指向包内入口（相对路径，不许 `..`）、`apiVersion` 写
+     `tui.dsh/v1alpha1`；不写 `client` / `worker` facet；
+   - `requires.contracts`：required 必须能由本 profile 导入或拥有的 definition 解析，optional
+     要写 TUI 可展示的 fallback（`TUI-PKG-002`）；
+   - `permissions`：最小集，逐条在 manifest 里写 rationale；
+   - **不写** `provides`、**不写** `requires.services`。
+2. **保留 `cordis.patch.yml`**：组合层不变；manifest 不会替它注入行，两者是两件事。
+3. **要声明私有贡献就把坐标指向 `tui.dsh/v1alpha1`**：`Backend` 族见接缝十四；声明里的
+   `id` / `capabilities` / `grants` / `install` 会先过 `validateBackendSpec`，再被宿主准入判
+   一次（五态见接缝十四）。
+4. **把 manifest 放进发布面**：`files` 白名单必须含 `dsh-plugin.json`（和
+   `cordis.patch.yml`，如果仍然用它），否则用户装到的 tarball 里没有它。
+5. **发布前本地验证**：固定 revision 的 parser 能接受；对照「官方准入检查清单」逐条自查；
+   改动渲染、键盘或终端协议的流程按「验证清单」在真实 TTY 里手动跑一遍。
+6. **发布流程**：`v*` tag 等于 `package.json` 的 version；能出 provenance 就开（见「命名与
+   发布规范」）。
+
+判据与 `TUI-PKG-001` / `TUI-PKG-002` 一一对应：**没有 manifest ⇒ A 节第一条不成立；
+manifest 缺声明闭包 ⇒ B 节不成立。旧模板因此天然过不了准入，而不是被特殊放行。**
 
 ## 质量与安全红线
 
