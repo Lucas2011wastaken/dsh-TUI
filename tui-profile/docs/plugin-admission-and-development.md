@@ -297,7 +297,11 @@ optional requirement 必须说明 TUI 可展示的 fallback。
 私有 protocol 统一使用 `tui.dsh/*` namespace，必须经过同一 Manifest projection、
 `ProtocolCatalog` negotiation、composition 和 lifecycle publication，不能由 TUI
 loader 旁路注入。私有坐标固定为 `tui.dsh/v1alpha1`（`DecisionEvents`、`Channel`、
-`SettingsSection`、`Scene`）。
+`SettingsSection`、`Scene`、`Backend`）。
+
+`requires.contracts` 也可以引用 `registry/registry-0.15.json` 的 `extensions` 段里的
+扩展坐标（今天就是 `tui.dsh/v1alpha1#Backend`，见 `TUI-BACKEND-001`）：解析、negotiation
+与"宿主是否 live support"的判定和 protocol 定义走同一条路径，不存在第二套准入。
 
 ### TUI-HOST-001 Host descriptor
 
@@ -317,11 +321,41 @@ activation 全局状态。需要用户交互的 command 或 operation 应从 inv
 声明 remote attach 兼容的插件必须覆盖 local runtime、remote runtime、attach/detach
 和多 Presentation 场景。remote attach 不是基础 Manifest 的隐式承诺。
 
+### TUI-RUN-002 Trust disclosure
+
+信任档位必须在**装与启用这两个动作之前**对用户可见，不能只写在文档里：任何提供安装或启用的
+界面都要写明插件将以本进程内代码运行（`trusted-in-process`：进程内全信任、无沙箱、不自动
+更新），并指出声明的权限在哪儿查。**"来源已验证"不是可展示事实**：宿主不提供已装包的来源
+证明，目录或 git 检出也能声称嫡系名称与版本，所以只有"精确命中首方 feed 的包"能少问一句，
+其余一律走完整披露 + 确认。
+
+dsh-TUI 的落点：`/plugin install` 的确认面板（第三方来源显示信任披露；`first-party` 且声明
+可读是唯一跳过确认的分支，跳过后仍打一行"嫡系（feed 命中）……跳过装包信任确认"）与
+`/plugin` 生命周期面板的**启用**确认（每次都问 `trust`，显示同一句口径）；声明的权限在
+`/plugin` 的授权矩阵里可查。这是**披露**要求而不是隔离要求：permission 与 grants 是行为
+约束，不是 OS、进程或 realm 安全边界（见 `TUI-TRUST-001`）。
+
 ### TUI-OBS-001 Ownership and cleanup
 
 运行时 effect 必须归属到 component、facet activation instance 和 runtime
 generation。deactivate 后不得遗留可调用 handler、订阅、timer 或 connection
 attachment；cleanup failure 必须保留可诊断、可重试状态。
+
+### TUI-OBS-002 Removal levels
+
+`disable`（deactivate）、`remove`（uninstall）与 `purge`（删用户数据）是**三种不同效果**，
+插件的文档、UI 文案与清理报告都必须区分，不得用一个"卸载"涵盖三种。清理报告只能陈述宿主
+**实际**撤销了什么：包已移除 ≠ 资源已清空。
+
+- `disable` 只把行标成 `disabled`：包仍在 profile 里，`enable` 即恢复，不动安装面。
+- `remove` 改 profile 的 `dsh.profile.bundles` 与 lockfile（服务失败时回滚），并移除它的行与
+  overrides；**不删用户数据**——`~/.dsh-tui/backends/<id>/`、已授予的 grants、storage 命名
+  空间都保留，残留只**报告一次**（列出路径），由用户自己决定删不删。
+- `purge` 今天**没有实现，也不承诺**：不存在"把痕迹删干净"的动作。宿主读不到包内声明时
+  明说"判断不了"，不制造"已清理"的假象。
+
+要求：任何清理报告都按资源类别（配置 / 缓存 / storage / native 与 build 产物）说明保留还是
+删除，且只覆盖 ownership record 与 effect ledger 能证明的范围。
 
 ### TUI-DEP-001 Dependency closure
 

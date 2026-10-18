@@ -5,6 +5,47 @@
 口径见 [`governance/rules.md`](governance/rules.md)），因此没有单独的审批或晋级流程，
 登记的是 profile 的变化而不是 dsh-TUI 产品的全部变更。
 
+**登记义务**：新增/废弃坐标，或重钉任一 contract profile 的 `profileHash`（哪怕只改措辞），
+都必须在最新条目里写出**坐标与原因**——这是"历史坐标的语义变更怎么被发现"的唯一人工记录
+（digest 只回答哪个坐标变了，不回答哪一条变了；见 governance §2/§4）。
+
+## 2026-10-18（D-4：生态治理三件收口）
+
+### Changed
+
+- `tui-profile/package.json` **删掉 `version` 字段**（原 `0.1.0-experimental`）：profile
+  没有自己的版本号。它随 dsh-TUI 的包发布（`files` 只发 `feed` / `registry` / `protocols` /
+  `schemas`，这份 package.json 不进 tarball），身份是 `registry/registry-0.15.json` 的
+  `profileHash` 钉与本仓库提交；版本线只属于根 `package.json`。原值既不与根包对齐、也没有
+  任何消费者，留着只会诱导读者把它当 semver。`verify:plugin-spec` 新增一条检查钉住
+  「不自称版本」（69 → 72 checks，另两条见下）。
+
+### Fixed
+
+- 参考实现 `conformance/tests/admission-core.js` 的坐标索引扩到 `extensions`：此前只用
+  `imports + definitions`，于是 `requires.contracts` 里的扩展坐标（如
+  `tui.dsh/v1alpha1#Backend`）在 profile 侧被当成"不在准入范围"抛错，而生产侧
+  `registryEntries()` 自 W-2 起一并读 `extensions`——同一个清单在两边结论相反。现在两边
+  同源：把索引抽成不依赖 `@dsh-std` 的 `conformance/tests/profile-index.js`，镜像门直接把它与
+  宿主 `registryEntries()` 逐坐标比对（缺失/多余都红）；新 fixture
+  `valid-extension-coordinate-plugin.json`（`requires` 引用 `tui.dsh/v1alpha1#Backend`）在
+  套件与镜像门各过一遍。套件 46 → **47 例**，镜像门 69 → **72** 条。
+- `notes/0009` 里两处过期口径随本节订正（缺口 1 的"根包 0.14.0"括注、缺口 6 的"未关闭"）。
+- `src/dsh-adapter/backend-admission.ts` 与 `src/dsh-adapter/index.ts` 的陈旧注释：两处仍写
+  "装配点是 stage C 装链路的事"，而 D-1 已把装配落在 `backend-assembly.ts`（注释级改动，
+  不改任何导出面与行为）。
+
+### Documented
+
+- 准入指南新增 `TUI-RUN-002`（信任档位必须在装/启用之前可见：进程内全信任、无沙箱、
+  不自动更新；命中首方 feed 也不豁免确认）与 `TUI-OBS-002`（`disable` / `remove` / `purge`
+  是三种效果，宿主不得把"包已移除"写成"资源已清空"；今天**没有** purge，残留只报告一次）
+  两条正文——它们此前只以 `[ ]` 出现在检查清单里、没有正文。
+- [`governance/rules.md`](governance/rules.md) §2 增加"坐标变更必须登记"的硬口径，§3 写明
+  profile 不自称版本，§4 写明历史坐标语义比较的**粒度边界**（每个 contract profile 一枚
+  digest，能答"哪个坐标变了"、答不了"哪一条变了"，因此不做语义 diff 工具）与由此决定的
+  发现路径。
+
 ## 2026-10-18（D-3：生态准入成文与对齐）
 
 ### Documented（不改坐标，无破坏性变更）
