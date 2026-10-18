@@ -42,4 +42,17 @@ TUI-only 要求使用稳定的 `TUI-*` ID，并说明适用 profile、影响范�
 
 ## 5. Evidence
 
-参考实现和 TUI Host 只能提供 evidence，不能自我认证。claim 必须绑定 std revision、profile、Host、artifact 和 suite，并区分 declared、parsed、negotiated、tested、observed 与 attested。任何 evidence 都不是安全保证。
+参考实现和 TUI Host 只能提供 evidence，不能自我认证。claim 必须绑定 std revision、profile、Host、artifact 和 suite，并区分下列六档：
+
+| 档 | 谁能提供 | 能证明什么 | 不能证明什么 |
+| --- | --- | --- | --- |
+| `declared` | 插件作者（manifest） | 作者声称需要与提供什么 | 声明成立 |
+| `parsed` | 固定 revision 的 manifest parser | 清单形状被接受 | 语义正确 |
+| `negotiated` | Host 的 protocol catalog 与 evaluator | 本 Host 下可达成 agreement 或降级 | 代码可运行 |
+| `tested` | 固定的 suite | 用例按期望通过 | 未覆盖的路径 |
+| `observed` | Host 运行时（ownership record / ledger） | 实际注册与清理了什么 | 作者意图、其他 Host |
+| `attested` | 构建平台（provenance / attestation） | artifact 由谁在哪次构建产出 | 代码质量、安全 |
+
+**任何 evidence 都不是安全保证**，也不能单独放行：attestation 不能替代清单条目、准入判定或用户确认；与已记录的 claim 不一致时按**降级**处理（一票否决），缺席只是"没有这一档"，不是失败。六档的逐条执行口径（digest、依赖闭包、执行点、措辞）见[准入与开发指南](../docs/plugin-admission-and-development.md)的「供应链证据与 provenance」，claim 的机器可读形状见 [`schemas/conformance-claim.schema.json`](../schemas/conformance-claim.schema.json)。
+
+证据在哪执行：机器检查在本仓库门禁（`verify:plugin-spec`、`verify:plugin-feed` 与 backend 族），人工核对在准入评审；**安装期与运行期都不校验** provenance / digest——宿主服务面没有这条 API，TUI 也没有网络客户端。生态收录不是证据来源（见准入指南「收录与推广」）。
