@@ -96,7 +96,7 @@ Also an experimental public surface:
   provenance is only a one-vote-to-veto seam with no online check at all (the
   host service exposes no such API; the clause and its six evidence levels are
   written up in the [admission and development
-  guide](../tui-profile/docs/plugin-admission-and-development.md)), and with no
+  guide](https://github.com/ccch1mneyyy/dsh-TUI/blob/main/tui-profile/docs/plugin-admission-and-development.md)), and with no
   service the transcript reports the CLI command and the reason instead of
   **running `dsh plugin` on the user's behalf** (no pane opens: there is no flow
   to drive).

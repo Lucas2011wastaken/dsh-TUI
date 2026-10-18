@@ -19,7 +19,7 @@
   正文规定 claim 必须绑定 std revision、profile、Host、artifact、suite、result，并给出它们与
   已发布的 [`schemas/conformance-claim.schema.json`](schemas/conformance-claim.schema.json)
   必填键的对应关系，以及"一条 claim 只有一档 evidence"「没有 artifact digest 就没有
-  claim」「作者与参考实现不能自证」四条硬口径。
+  claim」「作者与参考实现不能自证」「claim 随证据失效」四条硬口径。
 - 同文件「命名与发布规范」改写为**双轨**：裸名与 scoped 都是一等公民、不因命名被拒（bundle
   的 patch 按包名解析，裸名形态最稳），组织内新包仍建议 `@dsh-tui-ecosystem/<name>`，官方
   核心包保持 `@deepseek-harness-tui/*`；**feed 只收 scoped** 单列成一条（嫡系资格 ≠ 生态

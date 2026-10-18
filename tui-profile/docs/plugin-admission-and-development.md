@@ -438,12 +438,14 @@ G 节）。
 
 | 绑定项 | schema 键 | 说明 |
 | --- | --- | --- |
+| claim 格式 | `claimVersion` | 固定 `"0.15"`，schema 必填 |
 | Host | `hostDescriptorDigest` | `sha256:<64 hex>`；必须是 descriptor 的 digest，不是版本号 |
-| artifact | `artifactDigest` | `sha256:<64 hex>`；对象是实际安装的 tarball |
+| artifact | `subject` + `artifactDigest` | `subject` 是 `包名@精确版本`，`artifactDigest` 是 `sha256:<64 hex>`；对象是实际安装的 tarball，两者一起才绑定完整 artifact |
 | suite | `suiteVersion` | suite 名与版本的组合；失败项另列 `failedRequirements` |
 | result | `result` + `failedRequirements` | `pass` / `fail`，失败项逐条列出 |
 | evidence level | `evidenceLevel` | `Declared` / `Parsed` / `Negotiated` / `Tested` / `Observed` / `Attested` 之一 |
-| std revision + profile | `specVersion` | `community-v0.15`；**schema 没有** std revision 与 profile 摘要的独立键——这两项要随 claim 附上 registry pin（`profileHash`），是本形状的一处已知缺口，接执行体时补 |
+| spec 版本 | `specVersion` | 固定 `community-v0.15`，schema 必填；它只是 profile 接入的 spec 版本，**不承载** std revision 与 profile 摘要 |
+| std revision + profile | —（schema 无独立键） | 必须随 claim 附上 registry pin（`profileHash`）；`additionalProperties: false` 使它不能内嵌进 claim，附件载体尚未定义，是本形状的已知缺口，接执行体时补 |
 | 时间与签发 | `testedAt` / `signer` / `expiresAt` / `revoked` | `testedAt` 必填；其余可选，claim 可签发、可过期、可撤销 |
 
 四条硬口径：
@@ -1350,12 +1352,15 @@ DSH 专用服务、完整/轻量 profile 与入口 slot；发现前的路由只�
 1. **补 `dsh-plugin.json`**（包根、唯一，`TUI-PKG-001`）：
    - `$schema` 用绝对 URI；`manifestVersion: "0.15"`；manifest 由固定 revision 的
      `@dsh-std/manifest` parser 接受（**不要求联网取 schema**）；
-   - `id` 稳定且唯一（不随版本变），`version` 与 `package.json` 对齐；
+   - `id` 稳定且唯一（不随版本变），`name` / `version` 与 `package.json` 对齐；
    - `facets.host`：`entry` 指向包内入口（相对路径，不许 `..`）、`apiVersion` 写
-     `tui.dsh/v1alpha1`；不写 `client` / `worker` facet；
+     `v1alpha1`（facet API 版本，不是私有协议坐标；私有协议坐标见第 3 步）；不写
+     `client` / `worker` facet；
    - `requires.contracts`：required 必须能由本 profile 导入或拥有的 definition 解析，optional
      要写 TUI 可展示的 fallback（`TUI-PKG-002`）；
-   - `permissions`：最小集，逐条在 manifest 里写 rationale；
+   - `permissions`：`name` / `scope` / `reason` 三项，最小集，逐条写 `reason`；
+   - `contributes`：至少 `commands: []`（没有命令就写空数组）；`panels` 在 v0.15 必须为空；
+   - `subscriptions`：数组，没有就写 `[]`；
    - **不写** `provides`、**不写** `requires.services`。
 2. **保留 `cordis.patch.yml`**：组合层不变；manifest 不会替它注入行，两者是两件事。
 3. **要声明私有贡献就把坐标指向 `tui.dsh/v1alpha1`**：`Backend` 族见接缝十四；声明里的

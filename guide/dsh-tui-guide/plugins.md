@@ -70,7 +70,7 @@
   版本不兼容可登记 **精确版本豁免**；登记期间取消会等待当前写入、停止后续登记和重试，
   已写入的豁免保留。**已知缺口**：provenance 只留了「一票否决」的缝、
   没有任何在线校验（宿主服务不暴露这类 API；条款与六档 evidence 的写法见
-  [准入与开发指南](../tui-profile/docs/plugin-admission-and-development.md)的「供应链证据与
+  [准入与开发指南](https://github.com/ccch1mneyyy/dsh-TUI/blob/main/tui-profile/docs/plugin-admission-and-development.md)的「供应链证据与
   provenance」）；服务缺席时由转录给出 CLI 命令与原因
   （不弹面板：没有可驱动的流程），**不在 TUI 内代跑 `dsh plugin`**。
 - **生命周期动作已在终端里可用（C-5）**：`/plugin remove <bundle>`、`/plugin enable
