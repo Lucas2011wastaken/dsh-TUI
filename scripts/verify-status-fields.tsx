@@ -528,13 +528,18 @@ try {
     const row = statusRow(lines)
     check('R2 left-tail sits after the built-in left fields',
       row.includes('LTX')
+      // `indexOf` is -1 for a missing anchor, so every anchor must be proven
+      // present before its position is compared.
+      && row.includes('MODELX') && row.includes('34') && row.includes('uniqdir')
       && row.indexOf('MODELX') < row.indexOf('LTX')
       && row.indexOf('LTX') > row.indexOf('34')
       && row.indexOf('LTX') < row.indexOf('uniqdir'),
       JSON.stringify(row))
   }
 
-  // R3 — right-head before the host right group, right-tail at the far right.
+  // R3 — right-head before the host right group, right-tail after it. The
+  // compact row is one chain, so this proves ORDER, not the right edge; the
+  // split-layout case (R15) owns the edge assertion.
   {
     const lines = await capture(100, {
       pluginFields: [
@@ -543,11 +548,14 @@ try {
       ],
     }, channelWith({ gitBranch: true, sessionId: true }))
     const row = statusRow(lines)
-    check('R3 right-head precedes git/cwd/sessionId', row.includes('HEADX')
+    check('R3 right-head precedes git/cwd/sessionId',
+      row.includes('HEADX') && row.includes('main') && row.includes('uniqdir') && row.includes('#abcdef01')
       && row.indexOf('HEADX') < row.indexOf('main')
       && row.indexOf('HEADX') < row.indexOf('uniqdir')
       && row.indexOf('HEADX') < row.indexOf('#abcdef01'), JSON.stringify(row))
-    check('R3 right-tail is the row\'s right edge', row.indexOf('TAILX') > row.indexOf('#abcdef01'), JSON.stringify(row))
+    check('R3 right-tail follows the right group',
+      row.includes('TAILX') && row.includes('#abcdef01') && row.indexOf('TAILX') > row.indexOf('#abcdef01'),
+      JSON.stringify(row))
   }
 
   // R11 — compact merges the groups and the slots follow their group.
@@ -561,11 +569,46 @@ try {
     }, channelWith({ gitBranch: true, sessionId: true }))
     const row = statusRow(lines)
     check('R11 compact: slots keep their group position',
-      row.indexOf('MODELX') < row.indexOf('LTX')
+      row.includes('MODELX') && row.includes('LTX') && row.includes('HEADX')
+      && row.includes('main') && row.includes('#abcdef01') && row.includes('TAILX')
+      && row.indexOf('MODELX') < row.indexOf('LTX')
       && row.indexOf('LTX') < row.indexOf('HEADX')
       && row.indexOf('HEADX') < row.indexOf('main')
       && row.indexOf('main') < row.indexOf('#abcdef01')
       && row.indexOf('#abcdef01') < row.indexOf('TAILX'), JSON.stringify(row))
+  }
+
+  // R15 — the split layout keeps the groups apart: right-head opens the right
+  // group, right-tail closes it, and the row's right edge is actually the
+  // field's (the compact cases above only prove chain order).
+  {
+    const lines = await capture(100, {
+      pluginFields: [
+        field({ key: 'lt', text: 'LTX', slot: 'left-tail' }),
+        field({ key: 'rh', text: 'HEADX', slot: 'right-head' }),
+        field({ key: 'rt', text: 'TAILX', slot: 'right-tail' }),
+      ],
+    }, channelWith(
+      { compact: false, gitBranch: true, sessionId: true, contextUsage: true },
+      { contextOccupancy: { usedTokens: 12_500, contextWindow: 64_000 } },
+    ))
+    const row = statusRow(lines)
+    check('R15 split: slots follow their own groups',
+      row.includes('LTX') && row.includes('HEADX') && row.includes('TAILX')
+      && row.includes('main') && row.includes('uniqdir') && row.includes('#abcdef01')
+      && row.indexOf('LTX') < row.indexOf('HEADX')
+      && row.indexOf('HEADX') < row.indexOf('main')
+      && row.indexOf('main') < row.indexOf('uniqdir')
+      && row.indexOf('uniqdir') < row.indexOf('#abcdef01')
+      && row.indexOf('#abcdef01') < row.indexOf('TAILX'), JSON.stringify(row))
+    // The ctx chip is the trailing element that makes the edge claim
+    // falsifiable: in the split layout it joins the LEFT group, so the right
+    // group's tail really is the last cell of the row. In compact mode the
+    // same chip trails the whole chain (see the seam docs).
+    check('R15 split: ctx stays in the left group',
+      row.includes('ctx') && row.indexOf('ctx') < row.indexOf('TAILX'), JSON.stringify(row))
+    check('R15 split: right-tail sits on the row\'s right edge',
+      row.trimEnd().endsWith('TAILX'), JSON.stringify(row))
   }
 
   // R13 — stable registration order inside one slot.
