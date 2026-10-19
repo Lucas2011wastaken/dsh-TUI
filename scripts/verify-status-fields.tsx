@@ -482,6 +482,17 @@ const hover = (stdin: FakeStdin, col: number, row: number): void => {
 const statusRow = (lines: readonly string[], needle = 'MODELX'): string =>
   lines.find(line => line.includes(needle)) ?? ''
 
+/** The status row as the terminal holds it, trailing blank cells intact.
+ *  `viewportLines` trims them, and an edge assertion needs to see them. */
+const rawStatusRow = (term: InstanceType<typeof XTerm>, needle = 'MODELX'): string => {
+  const buffer = term.buffer.active
+  for (let y = 0; y < term.rows; y += 1) {
+    const line = buffer.getLine(buffer.baseY + y)?.translateToString(false) ?? ''
+    if (line.includes(needle)) return line
+  }
+  return ''
+}
+
 /** Press + release at the first on-screen occurrence of `needle`. */
 async function clickText(stdin: FakeStdin, term: InstanceType<typeof XTerm>, needle: string): Promise<boolean> {
   const at = findText(term, needle)
@@ -580,35 +591,62 @@ try {
 
   // R15 — the split layout keeps the groups apart: right-head opens the right
   // group, right-tail closes it, and the row's right edge is actually the
-  // field's (the compact cases above only prove chain order).
+  // field's (the compact cases above only prove chain order). Drawn through a
+  // dedicated rig: the edge claim needs the UNTRIMMED terminal row.
   {
-    const lines = await capture(100, {
-      pluginFields: [
-        field({ key: 'lt', text: 'LTX', slot: 'left-tail' }),
-        field({ key: 'rh', text: 'HEADX', slot: 'right-head' }),
-        field({ key: 'rt', text: 'TAILX', slot: 'right-tail' }),
-      ],
-    }, channelWith(
-      { compact: false, gitBranch: true, sessionId: true, contextUsage: true },
-      { contextOccupancy: { usedTokens: 12_500, contextWindow: 64_000 } },
-    ))
-    const row = statusRow(lines)
-    check('R15 split: slots follow their own groups',
-      row.includes('LTX') && row.includes('HEADX') && row.includes('TAILX')
-      && row.includes('main') && row.includes('uniqdir') && row.includes('#abcdef01')
-      && row.indexOf('LTX') < row.indexOf('HEADX')
-      && row.indexOf('HEADX') < row.indexOf('main')
-      && row.indexOf('main') < row.indexOf('uniqdir')
-      && row.indexOf('uniqdir') < row.indexOf('#abcdef01')
-      && row.indexOf('#abcdef01') < row.indexOf('TAILX'), JSON.stringify(row))
-    // The ctx chip is the trailing element that makes the edge claim
-    // falsifiable: in the split layout it joins the LEFT group, so the right
-    // group's tail really is the last cell of the row. In compact mode the
-    // same chip trails the whole chain (see the seam docs).
-    check('R15 split: ctx stays in the left group',
-      row.includes('ctx') && row.indexOf('ctx') < row.indexOf('TAILX'), JSON.stringify(row))
-    check('R15 split: right-tail sits on the row\'s right edge',
-      row.trimEnd().endsWith('TAILX'), JSON.stringify(row))
+    const COLUMNS = 100
+    const rig = makeRig(COLUMNS, 12)
+    const instance = await ui.render(
+      statusNode({
+        pluginFields: [
+          field({ key: 'lt', text: 'LTX', slot: 'left-tail' }),
+          field({ key: 'rh', text: 'HEADX', slot: 'right-head' }),
+          field({ key: 'rt', text: 'TAILX', slot: 'right-tail' }),
+        ],
+      }, channelWith(
+        { compact: false, gitBranch: true, sessionId: true, contextUsage: true },
+        { contextOccupancy: { usedTokens: 12_500, contextWindow: 64_000 } },
+      )),
+      {
+        stdout: rig.stdout as unknown as NodeJS.WriteStream,
+        stdin: rig.stdin as unknown as NodeJS.ReadStream,
+        exitOnCtrlC: false,
+        patchConsole: false,
+      },
+    )
+    try {
+      check('R15 split: status row ready', await settled(() => screenHas(rig.term, 'MODELX')))
+      const row = rawStatusRow(rig.term)
+      check('R15 split: slots follow their own groups',
+        row.includes('LTX') && row.includes('HEADX') && row.includes('TAILX')
+        && row.includes('main') && row.includes('uniqdir') && row.includes('#abcdef01')
+        && row.indexOf('LTX') < row.indexOf('HEADX')
+        && row.indexOf('HEADX') < row.indexOf('main')
+        && row.indexOf('main') < row.indexOf('uniqdir')
+        && row.indexOf('uniqdir') < row.indexOf('#abcdef01')
+        && row.indexOf('#abcdef01') < row.indexOf('TAILX'), JSON.stringify(row))
+      // The ctx chip is the trailing element that makes both claims
+      // falsifiable: it belongs to the LEFT group (immediately after the
+      // left-tail field, before right-head), and in compact mode it trails
+      // the whole chain instead (see the seam docs). Order alone is not
+      // enough — ctx at the HEAD of the right group gives the same
+      // `LTX < ctx < HEADX` order at the opposite end of the row, so the
+      // assertion pins the ` · ` adjacency.
+      check('R15 split: ctx keeps the left group',
+        row.includes('ctx')
+        && row.includes('LTX · ctx')
+        && row.indexOf('ctx') < row.indexOf('HEADX'), JSON.stringify(row))
+      // Width 100 minus the footer's 1-cell padding: the last content cell is
+      // column 99, so the trimmed content must be 99 cells AND end in TAILX.
+      // `trimEnd()` alone would accept blank cells after the field.
+      const content = row.replace(/\s+$/, '')
+      check('R15 split: right-tail sits on the row\'s right edge',
+        content.endsWith('TAILX') && content.length === COLUMNS - 1, JSON.stringify(row))
+    } finally {
+      instance.unmount()
+      await sleep(120) // 固定窗:pacing 等首帧/卸载落定，无单一可轮询锚点
+      rig.term.dispose()
+    }
   }
 
   // R13 — stable registration order inside one slot.
