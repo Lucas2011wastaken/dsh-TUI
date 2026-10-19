@@ -94,6 +94,23 @@ export function flattenPasteInline(value: string): string {
   return flattenInline(withoutAnsi)
 }
 
+/** Bidi overrides/isolates and zero-width marks: invisible, and a single
+ *  U+202E next to a host field (`#sessionId`, cwd) can flip the displayed
+ *  direction of the text that follows it. Footer fields sit immediately
+ *  beside those provenance tags, so they strip this class first. */
+const BIDI_ZERO_WIDTH = /[\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF]/gu
+
+/**
+ * Footer-field ingress: the common render cleanup PLUS bidi/zero-width
+ * removal. Kept separate from {@link cleanRenderText} so the existing
+ * managed-UI callers keep their exact behaviour. Non-scalars yield '' (the
+ * caller decides between refuse and clear); scalars coerce then sanitize.
+ */
+export function cleanStatusFieldText(value: unknown, maxCells: number): string {
+  if (typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'boolean') return ''
+  return cleanRenderText(String(value).replace(BIDI_ZERO_WIDTH, ''), maxCells)
+}
+
 /** Toast-bound plugin text (veto reasons, handled notices, rewind summaries)
  *  and single-line transcript notices are render-path data too: same
  *  sanitization, toast-width cap. */
