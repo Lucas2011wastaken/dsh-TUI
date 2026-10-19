@@ -8,6 +8,9 @@
  *      取消到空 = 写 `''`（没有「至少保留一个」的拒绝）。
  *  S3. 预填与收口：`*` 进高级行编辑时草稿是三组骨架；原样保存仍写 `*`，
  *      改过之后才写成显式名单。
+ *  S3c. 活注册表为空时从 `*` 打开高级行（草稿 `;;`）、原样保存仍写 `*`，
+ *       不得把它钉成 `''`。
+ *  S3d. 已固定的名单恰好等于骨架时，原样保存仍保留该名单，不收回 `*`。
  *  S4. 非法草稿：invalid、拒绝保存、零写入。
  *  S5. 未认领 key 显示为已勾选占位行；取消即移除。
  *  S6. 列表尾部的原始文本行进入既有草稿编辑器（与文本字段同一套语义）。
@@ -293,6 +296,34 @@ async function arrow(stdin: FakeStdin, direction: 'down' | 'up', times: number):
   check('S3b an edited list is written verbatim (canonical)',
     await settled(() => listWrites().includes('build,ci;git;'), { timeoutMs: 4000 }),
     listWrites().join(' | '))
+  await screen.close()
+}
+
+// ── S3c. no registered fields: an untouched skeleton must still keep `*` ───
+{
+  const screen = await openPicker('*', [])
+  if (screen === null) { check('S3c scenario opens', false); process.exit(1) }
+  // The advanced row is the only focusable row when the registry is empty.
+  screen.stdin.write('\r')
+  await settled(() => screen.has(';;▌'), { timeoutMs: 4000 })
+  screen.stdin.write('\r')
+  check('S3c an untouched skeleton with no fields keeps the automatic `*`',
+    await settled(() => listWrites().includes('*'), { timeoutMs: 4000 })
+    && !listWrites().includes(''), listWrites().join(' | '))
+  await screen.close()
+}
+
+// ── S3d. an explicit list equal to the skeleton must not collapse to `*` ───
+{
+  const screen = await openPicker('build,ci;git;pet')
+  if (screen === null) { check('S3d scenario opens', false); process.exit(1) }
+  await arrow(screen.stdin, 'down', FIELDS.length)
+  screen.stdin.write('\r')
+  await settled(() => screen.has('build,ci;git;pet▌'), { timeoutMs: 4000 })
+  screen.stdin.write('\r')
+  check('S3d an unedited explicit list stays pinned (no silent collapse to `*`)',
+    await settled(() => listWrites().includes('build,ci;git;pet'), { timeoutMs: 4000 })
+    && !listWrites().includes('*'), listWrites().join(' | '))
   await screen.close()
 }
 

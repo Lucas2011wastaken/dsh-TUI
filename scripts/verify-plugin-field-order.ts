@@ -190,10 +190,22 @@ check('P18 未列出的字段不出现，未知 key 静默跳过', () => {
 
 // --- 契约一致性 -------------------------------------------------------------
 
+/** Quoted slot literals in one source fragment, in source order. */
+function slotNames(source: string): string[] {
+  return [...source.matchAll(/'([a-z]+(?:-[a-z]+)*)'/gu)].map(match => match[1] ?? '')
+}
+
 check('P19 key 语法与槽名不漂移', () => {
   const statusSource = readFileSync(new URL('../src/dsh-adapter/status.ts', import.meta.url), 'utf8')
   assert.match(statusSource, /\^\[a-z\]\[a-z0-9_-\]\*\(:\[a-z\]\[a-z0-9_-\]\*\)\*\$/u)
-  for (const slot of STATUS_FIELD_SLOTS) assert.match(statusSource, new RegExp(`'${slot}'`, 'u'))
+  // Whole-set comparison in both directions: merely finding each name
+  // somewhere in the file would not catch a slot ADDED to status.ts (the
+  // footer renderer only handles the three below, so such a field would be
+  // admitted and then silently never render).
+  const unionLine = /export type TuiStatusFieldSlot =([^\n]+)/u.exec(statusSource)?.[1] ?? ''
+  assert.deepEqual(slotNames(unionLine), [...STATUS_FIELD_SLOTS])
+  const setLine = /const FIELD_SLOTS = new Set<TuiStatusFieldSlot>\(\[([^\]]*)\]\)/u.exec(statusSource)?.[1] ?? ''
+  assert.deepEqual(slotNames(setLine), [...STATUS_FIELD_SLOTS])
   assert.deepEqual([...STATUS_FIELD_SLOTS], ['left-tail', 'right-head', 'right-tail'])
 })
 

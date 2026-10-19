@@ -679,7 +679,8 @@ try {
     })
     const row = statusRow(lines)
     check('R13 same-slot fields keep registration order',
-      row.indexOf('AAAX') < row.indexOf('BBBX') && row.indexOf('CCCX') < row.indexOf('DDDX')
+      ['AAAX', 'BBBX', 'CCCX', 'DDDX'].every(token => row.includes(token))
+      && row.indexOf('AAAX') < row.indexOf('BBBX') && row.indexOf('CCCX') < row.indexOf('DDDX')
       && row.indexOf('BBBX') < row.indexOf('CCCX'), JSON.stringify(row))
   }
 
@@ -696,7 +697,8 @@ try {
     const auto = await capture(100, { pluginFields: four() }, channelWith({ pluginFieldsOrder: '*' }))
     const autoRow = statusRow(auto)
     check('O1 `*` renders registration order',
-      autoRow.indexOf('AAAX') < autoRow.indexOf('BBBX')
+      ['AAAX', 'BBBX', 'CCCX', 'DDDX'].every(token => autoRow.includes(token))
+      && autoRow.indexOf('AAAX') < autoRow.indexOf('BBBX')
       && autoRow.indexOf('BBBX') < autoRow.indexOf('CCCX')
       && autoRow.indexOf('CCCX') < autoRow.indexOf('DDDX'), JSON.stringify(autoRow))
 
@@ -709,7 +711,8 @@ try {
       channelWith({ pluginFieldsOrder: 'b,a;;' }))
     const reorderedRow = statusRow(reordered)
     check('O3 list order wins inside a slot',
-      reorderedRow.indexOf('BBBX') < reorderedRow.indexOf('AAAX')
+      reorderedRow.includes('BBBX') && reorderedRow.includes('AAAX')
+      && reorderedRow.indexOf('BBBX') < reorderedRow.indexOf('AAAX')
       && !reorderedRow.includes('CCCX') && !reorderedRow.includes('DDDX'), JSON.stringify(reorderedRow))
 
     // O4 — the group index overrides the plugin-declared slot: `d` was declared

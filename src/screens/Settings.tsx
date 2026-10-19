@@ -171,14 +171,14 @@ function pluginFieldDraft(text: string, fields: readonly TuiStatusFieldEntry[]):
 }
 
 /** Saving the untouched skeleton must not pin the automatic mode: only a real
- *  change makes the list explicit. */
-function pluginFieldCommit(text: string, fields: readonly TuiStatusFieldEntry[]): string {
-  const parsed = parsePluginFieldsOrder(text)
-  if (parsed.mode === 'all') return ALL_PLUGIN_FIELDS
-  if (parsed.mode !== 'groups') return text
-  const skeleton = formatPluginFieldsOrder(STATUS_FIELD_SLOTS.map(slot =>
-    fields.filter(field => field.slot === slot).map(field => field.key)))
-  return formatPluginFieldsOrder(parsed.groups) === skeleton ? ALL_PLUGIN_FIELDS : text
+ *  change makes the list explicit. The stored value is the other half of that
+ *  rule — an explicit list (even one identical to the current skeleton) is
+ *  never rewritten to `*`, or an unedited save would silently re-enable
+ *  "fields registered later". */
+function pluginFieldCommit(stored: string, text: string, fields: readonly TuiStatusFieldEntry[]): string {
+  // Only a draft that STARTED from `*` can collapse back to it.
+  if (parsePluginFieldsOrder(stored).mode !== 'all') return text
+  return text.trim() === pluginFieldDraft(stored, fields) ? ALL_PLUGIN_FIELDS : text
 }
 
 /**
@@ -989,7 +989,7 @@ export function Settings({
           form.edit(
             editing.field,
             isFieldListField(editing.ns, editing.field)
-              ? pluginFieldCommit(editing.draft, statusFields)
+              ? pluginFieldCommit(form.field(editing.field).text, editing.draft, statusFields)
               : editing.draft,
           )
           if (form.field(editing.field).invalid) {
