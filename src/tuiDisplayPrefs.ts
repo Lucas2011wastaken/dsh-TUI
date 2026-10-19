@@ -26,6 +26,10 @@ export const DEFAULT_STATUS_BAR: Readonly<StatusBarConfig> = Object.freeze({
   activity: false,
   trajectory: false,
   shortcutHint: false,
+  // Third-party text in permanent chrome: on by default (a plugin that
+  // registered a field asked to be seen), with one switch to silence all of
+  // them without disabling the plugins.
+  pluginFields: true,
 })
 
 const TOOL_BACKGROUNDS = new Set<ToolBackground>(['none', 'subtle', 'strong'])

@@ -11,6 +11,7 @@ import { formatClock } from '../trajectory/format.js'
 import { GoalStatusChip } from '../components/GoalTodoPanel.js'
 import { formatGoalBudget } from '../channel/goal-command.js'
 import { formatJobDuration, type BackgroundJobState } from '../dsh-adapter/jobs.js'
+import type { TuiStatusFieldEntry, TuiStatusFieldSlot, TuiStatusFieldTone } from '../dsh-adapter/status.js'
 
 /** Stable fallback for stubbed channels: verify/repro harnesses render the
  *  real Chat with partial channel literals that predate the jobs field. */
@@ -92,7 +93,27 @@ const MINIMAL_UI_STATUS_BAR: StatusBarConfig = Object.freeze({
   activity: false,
   trajectory: false,
   shortcutHint: false,
+  // Explicit even though it starts from the default: plugin text must never
+  // follow a future default flip into the minimal UI.
+  pluginFields: false,
 })
+
+/** Stable empty default so a footer with no plugin fields allocates nothing
+ *  and splices into the groups exactly as before this seam existed. */
+const NO_PLUGIN_FIELDS: readonly TuiStatusFieldEntry[] = Object.freeze([])
+
+/** Semantic tone → theme colour. Footer fields never take literal colours;
+ *  `dim` is the muted default and rides `dimColor` instead of a palette key. */
+const FIELD_TONE_COLOR: Record<
+  TuiStatusFieldTone,
+  'professionalBlue' | 'success' | 'warning' | 'error' | undefined
+> = {
+  dim: undefined,
+  accent: 'professionalBlue',
+  success: 'success',
+  warning: 'warning',
+  error: 'error',
+}
 
 /** Footer fields that answer a hover with a supplemental-row detail.
  *  The context bar reports the single `bar` target (see ContextBarView). */
@@ -173,6 +194,18 @@ function FieldLine({
   )
 }
 
+/** Admit one host-normalized plugin field into a `FieldPart`. Rendering only:
+ *  hover ids and clicks arrive with the interaction wiring. */
+function toFieldPart(field: TuiStatusFieldEntry): FieldPart {
+  const color = FIELD_TONE_COLOR[field.tone]
+  return {
+    key: `plugin:${field.key}`,
+    node: color === undefined
+      ? <Text dimColor>{field.text}</Text>
+      : <Text color={color}>{field.text}</Text>,
+  }
+}
+
 export function StatusLine({
   channel,
   selectionActive = false,
@@ -182,10 +215,17 @@ export function StatusLine({
   effortPicker,
   wake,
   activity: projectedActivity,
+  pluginFields,
 }: {
   channel: Channel
   selectionActive?: boolean
   helpOpen?: boolean
+  /** Plugin footer fields (`tuiStatus.setField`), already normalized by the
+   *  adapter. They join the existing left/right groups in three slots —
+   *  `left-tail` (left group's end), `right-head` (right group's start), and
+   *  `right-tail` (the row's right edge). Absent/empty renders exactly the
+   *  footer this seam found: no extra Box, no gap, no flex change. */
+  pluginFields?: readonly TuiStatusFieldEntry[]
   /** The backend's OWN permission mode (the typed `modes` capability):
    *  `id` is the backend mode id (default / acceptEdits / plan /
    *  bypassPermissions / dontAsk / auto …), `name` the label the backend
@@ -253,6 +293,15 @@ export function StatusLine({
     // footer can never grow decorations regardless of saved preferences.
     ? MINIMAL_UI_STATUS_BAR
     : normalizeStatusBar(channel.statusBar)
+  // Plugin fields pass two gates: the user switch (off also in the minimal
+  // UI) and their own `minColumns`. Everything below splices them into the
+  // SAME groups the built-ins use, so the empty case is a no-op.
+  const pluginFieldsVisible = statusBar.pluginFields && channel.minimalUi !== true
+  const visibleFields = pluginFieldsVisible
+    ? (pluginFields ?? NO_PLUGIN_FIELDS).filter(field => columns >= field.minColumns)
+    : NO_PLUGIN_FIELDS
+  const inSlot = (slot: TuiStatusFieldSlot): FieldPart[] =>
+    visibleFields.filter(field => field.slot === slot).map(toFieldPart)
   // Provider workspaces expose a remote display path alongside a host alias;
   // only the local target has identical cwd/displayCwd values to fold.
   const displayCwd = channel.displayCwd === channel.cwd
@@ -447,7 +496,7 @@ const selectionBadge = formatSelectionBadge(channel.selection)
         node: <Text color="warning">{t('status-starting', { backend: channel.backendCapabilities?.backendLabel ?? 'DSH' })}</Text>,
       }
     : undefined
-  const leftFields: FieldPart[] = [
+  const builtinLeft: FieldPart[] = [
     ...(startingPart !== undefined ? [startingPart] : []),
     ...(statusBar.model
       ? [{ key: 'model', id: 'model' as const, ...(modelPicker === undefined ? {} : { onClick: modelPicker.onOpen }), node: <Text color="inactiveShimmer">{channel.modelDisplay ?? channel.model}</Text> }]
@@ -514,7 +563,7 @@ const selectionBadge = formatSelectionBadge(channel.selection)
       : []),
   ]
 
-  const rightFields: FieldPart[] = [
+  const builtinRight: FieldPart[] = [
     // Live IDE-selection badge first: it tracks the user's in-editor gesture,
     // the freshest signal in the footer (T-FIX-02). Absent without an IDE —
     // no placeholder, matching the official Claude Code footer.
@@ -574,6 +623,16 @@ const selectionBadge = formatSelectionBadge(channel.selection)
           node: <Text dimColor>{`#${sessionShortId.slice(0, 8)}`}</Text>,
         }]
       : []),
+  ]
+
+  // Plugin fields join the built-in groups by slot — no third group, no new
+  // Box. `left-tail` and `right-head` do not move any host cell; `right-tail`
+  // pushes the right group left, which is that slot's explicit cost.
+  const leftFields: FieldPart[] = [...builtinLeft, ...inSlot('left-tail')]
+  const rightFields: FieldPart[] = [
+    ...inSlot('right-head'),
+    ...builtinRight,
+    ...inSlot('right-tail'),
   ]
 
   const hint = selectionActive

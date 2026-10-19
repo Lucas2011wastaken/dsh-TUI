@@ -669,6 +669,12 @@ export function Chat({
     subscribeStatus,
     () => statusContributions.getViewSnapshot(),
   )
+  // Plugin footer fields (tuiStatus.setField): same subscription/store as the
+  // text line, own snapshot — a mutation rebuilds only the affected list.
+  const statusFields = React.useSyncExternalStore(
+    subscribeStatus,
+    () => statusContributions.getFieldSnapshot(),
+  )
   // Shortcut handler failures surface as toasts (the registry also logs
   // them); the hook is re-pointed on every mount so a stale closure never
   // outlives its channel.
@@ -7252,6 +7258,7 @@ export function Chat({
           activity={workingActivity}
           selectionActive={selectionActive}
           helpOpen={helpOpen}
+          pluginFields={statusFields}
           // Backend-native permission modes: the footer mode segment always
           // shows (the base mode included) and clicks into the same
           // /permission picker the command opens (the launchpad param row's

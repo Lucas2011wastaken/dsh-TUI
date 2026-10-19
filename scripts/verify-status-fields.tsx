@@ -1,14 +1,16 @@
 /**
- * Plugin footer fields (`tuiStatus.setField`) — admission half.
+ * Plugin footer fields (`tuiStatus.setField`) regression.
  *
- * Runs against a real Cordis composition: the returned disposer, option
- * normalization, every refusal path (key/text/tone/slot/maxCells/minColumns/
- * onClick-without-detail), token semantics, activation ownership, caps
- * (6 total / 2 per activation), effect cleanup on fiber dispose, bidi
- * stripping, and effect-ledger records with kind `status-field`.
+ * Part A — admission, against a real Cordis composition: the returned
+ * disposer, option normalization, every refusal path (key/text/tone/slot/
+ * maxCells/minColumns/onClick-without-detail), token semantics, activation
+ * ownership, caps (6 total / 2 per activation), effect cleanup on fiber
+ * dispose, bidi stripping, and effect-ledger records with kind `status-field`.
  *
- * The rendering half (zero footprint, the three slots, hover detail, click
- * dispatch) lands with the StatusLine wiring and extends this battery.
+ * Part B — rendering, against the real StatusLine through `@xterm/headless`:
+ * zero-footprint default, the three slots and in-slot order, the user switch,
+ * minimal UI, `minColumns`, a width ladder, and compact mode. Hover detail and
+ * click dispatch extend this battery with the interaction wiring.
  *
  * Run: node --import tsx/esm scripts/verify-status-fields.tsx
  */
@@ -28,18 +30,30 @@ process.env.FORCE_COLOR = '3'
 
 const [
   { Context },
+  { PassThrough, Writable },
+  React,
+  { Terminal: XTerm },
+  ui,
   statusModule,
   ledgerModule,
+  termTest,
   { stringWidth },
 ] = await Promise.all([
   import('@deepseek-ai/cordis'),
+  import('node:stream'),
+  import('react'),
+  import('@xterm/headless'),
+  import('../src/ui.js'),
   import('../src/dsh-adapter/status.js'),
   import('../src/dsh-adapter/effect-ledger.js'),
+  import('./lib/term-test.mjs'),
   import('../src/ink/stringWidth.js'),
 ])
 
 const { TuiStatusRuntime, getHostStatusStore } = statusModule
 const { TuiEffectLedgerRuntime } = ledgerModule
+const { StatusLine } = await import('../src/screens/StatusLine.js')
+const { sleep, settled, screenHas, findText, viewportLines } = termTest
 
 let failures = 0
 let checks = 0
@@ -347,6 +361,271 @@ async function refused(name: string, run: (ctx: Context) => void): Promise<void>
   await fiber.dispose()
 }
 
-await root.fiber.dispose()
-console.log(`\n${checks} checks, ${failures} failure${failures === 1 ? '' : 's'}`)
-process.exit(failures === 0 ? 0 : 1)
+// ── Part B: rendering ───────────────────────────────────────────────────────
+
+const BASE_CHANNEL = {
+  minimalUi: false,
+  statusBar: {
+    compact: true,
+    model: true,
+    thinking: false,
+    cwd: true,
+    contextUsage: false,
+    cache: false,
+    tokens: false,
+    cost: false,
+    tps: false,
+    gitBranch: false,
+    sessionTitle: false,
+    sessionId: false,
+    goal: false,
+    mode: false,
+    contextBar: false,
+    activity: false,
+    trajectory: false,
+    shortcutHint: false,
+    pluginFields: true,
+  },
+  model: 'MODELX',
+  provider: 'test-provider',
+  contextWindow: 64_000,
+  displayCwd: '/w/uniqdir',
+  cwd: '/w/uniqdir',
+  mode: { plan: false, sandbox: 'workspace-write', approval: 'on-request' },
+  modeIndex: 0,
+  tokens: { input: 1200, output: 34 },
+  tpsSamples: [],
+  backgroundJobs: [],
+  contextSegments: {},
+  working: false,
+  activityFrames: [],
+  agentId: 'abcdef0123456789',
+  sessionRef: { sessionId: 'abcdef0123456789' },
+  reasoningEffort: undefined,
+  tps: undefined,
+  lastUsage: undefined,
+  contextBarEnabled: false,
+  gitBranch: 'main',
+}
+
+function channelWith(statusBar: Record<string, unknown> = {}, overrides: Record<string, unknown> = {}) {
+  return {
+    ...BASE_CHANNEL,
+    ...overrides,
+    statusBar: { ...BASE_CHANNEL.statusBar, ...statusBar },
+  }
+}
+
+/** One renderable field, with overrides. */
+function field(overrides: Record<string, unknown> = {}) {
+  return {
+    key: 'note',
+    text: 'NOTEX',
+    slot: 'left-tail',
+    tone: 'dim',
+    maxCells: 16,
+    minColumns: 0,
+    ...overrides,
+  }
+}
+
+class FakeStdin extends PassThrough {
+  isTTY = true
+  setRawMode() { return this }
+  ref() { return this }
+  unref() { return this }
+}
+
+function makeRig(cols: number, rows: number) {
+  const term = new XTerm({ cols, rows, scrollback: 0, allowProposedApi: true })
+  class FakeOutput extends Writable {
+    columns = cols
+    rows = rows
+    isTTY = true
+    _write(chunk: unknown, _encoding: BufferEncoding, callback: () => void): void {
+      term.write(String(chunk), callback)
+    }
+  }
+  return { term, stdout: new FakeOutput(), stderr: new FakeOutput(), stdin: new FakeStdin() }
+}
+
+function KeySink(): null {
+  ui.useInput(() => {})
+  return null
+}
+
+function statusNode(props: Record<string, unknown>, channel: Record<string, unknown>) {
+  return React.createElement(
+    ui.AlternateScreen,
+    null,
+    React.createElement(
+      ui.Box,
+      { flexDirection: 'column' },
+      React.createElement(KeySink),
+      React.createElement(StatusLine, { channel: channel as never, ...props }),
+    ),
+  )
+}
+
+/** The footer's status row: row 0 without the context bar, row 1 with it. */
+const statusRow = (lines: readonly string[], needle = 'MODELX'): string =>
+  lines.find(line => line.includes(needle)) ?? ''
+
+async function capture(cols: number, props: Record<string, unknown>, channel = BASE_CHANNEL): Promise<string[]> {
+  const rig = makeRig(cols, 12)
+  const instance = await ui.render(statusNode(props, channel), {
+    stdout: rig.stdout as unknown as NodeJS.WriteStream,
+    stdin: rig.stdin as unknown as NodeJS.ReadStream,
+    exitOnCtrlC: false,
+    patchConsole: false,
+  })
+  await settled(() => screenHas(rig.term, 'MODELX'))
+  await sleep(120) // 固定窗:pacing 等首帧/卸载落定，无单一可轮询锚点
+  const lines = viewportLines(rig.term)
+  instance.unmount()
+  await sleep(120) // 固定窗:pacing 等首帧/卸载落定，无单一可轮询锚点
+  rig.term.dispose()
+  return lines
+}
+
+try {
+  // R1/R12 — zero footprint: an absent list and an empty list are identical.
+  {
+    const absent = await capture(100, {})
+    const empty = await capture(100, { pluginFields: [] })
+    check('R1/R12 no plugin fields → identical screen rows', absent.join('\n') === empty.join('\n'),
+      JSON.stringify({ absent, empty }))
+    check('R1 no plugin fields → no extra footer row', absent.slice(2).every(line => line.trim() === ''),
+      JSON.stringify(absent))
+  }
+
+  // R2 — left-tail appends to the left group's end.
+  {
+    const lines = await capture(100, {
+      pluginFields: [field({ key: 'lt', text: 'LTX', slot: 'left-tail' })],
+    }, channelWith({ tokens: true }))
+    const row = statusRow(lines)
+    check('R2 left-tail sits after the built-in left fields',
+      row.includes('LTX')
+      && row.indexOf('MODELX') < row.indexOf('LTX')
+      && row.indexOf('LTX') > row.indexOf('34')
+      && row.indexOf('LTX') < row.indexOf('uniqdir'),
+      JSON.stringify(row))
+  }
+
+  // R3 — right-head before the host right group, right-tail at the far right.
+  {
+    const lines = await capture(100, {
+      pluginFields: [
+        field({ key: 'rh', text: 'HEADX', slot: 'right-head' }),
+        field({ key: 'rt', text: 'TAILX', slot: 'right-tail' }),
+      ],
+    }, channelWith({ gitBranch: true, sessionId: true }))
+    const row = statusRow(lines)
+    check('R3 right-head precedes git/cwd/sessionId', row.includes('HEADX')
+      && row.indexOf('HEADX') < row.indexOf('main')
+      && row.indexOf('HEADX') < row.indexOf('uniqdir')
+      && row.indexOf('HEADX') < row.indexOf('#abcdef01'), JSON.stringify(row))
+    check('R3 right-tail is the row\'s right edge', row.indexOf('TAILX') > row.indexOf('#abcdef01'), JSON.stringify(row))
+  }
+
+  // R11 — compact merges the groups and the slots follow their group.
+  {
+    const lines = await capture(120, {
+      pluginFields: [
+        field({ key: 'lt', text: 'LTX', slot: 'left-tail' }),
+        field({ key: 'rh', text: 'HEADX', slot: 'right-head' }),
+        field({ key: 'rt', text: 'TAILX', slot: 'right-tail' }),
+      ],
+    }, channelWith({ gitBranch: true, sessionId: true }))
+    const row = statusRow(lines)
+    check('R11 compact: slots keep their group position',
+      row.indexOf('MODELX') < row.indexOf('LTX')
+      && row.indexOf('LTX') < row.indexOf('HEADX')
+      && row.indexOf('HEADX') < row.indexOf('main')
+      && row.indexOf('main') < row.indexOf('#abcdef01')
+      && row.indexOf('#abcdef01') < row.indexOf('TAILX'), JSON.stringify(row))
+  }
+
+  // R13 — stable registration order inside one slot.
+  {
+    const lines = await capture(100, {
+      pluginFields: [
+        field({ key: 'a', text: 'AAAX', slot: 'left-tail' }),
+        field({ key: 'b', text: 'BBBX', slot: 'left-tail' }),
+        field({ key: 'c', text: 'CCCX', slot: 'right-head' }),
+        field({ key: 'd', text: 'DDDX', slot: 'right-head' }),
+      ],
+    })
+    const row = statusRow(lines)
+    check('R13 same-slot fields keep registration order',
+      row.indexOf('AAAX') < row.indexOf('BBBX') && row.indexOf('CCCX') < row.indexOf('DDDX')
+      && row.indexOf('BBBX') < row.indexOf('CCCX'), JSON.stringify(row))
+  }
+
+  // R4 — minimal UI never shows plugin fields.
+  {
+    const lines = await capture(100, { pluginFields: [field({ text: 'LTX' })] },
+      { ...BASE_CHANNEL, minimalUi: true })
+    check('R4 minimal UI hides plugin fields', lines.every(line => !line.includes('LTX')))
+  }
+
+  // R5 — the user switch hides them without touching the store.
+  {
+    const lines = await capture(100, { pluginFields: [field({ text: 'LTX' })] },
+      channelWith({ pluginFields: false }))
+    check('R5 statusBar.pluginFields=false hides plugin fields', lines.every(line => !line.includes('LTX')))
+  }
+
+  // R6 — minColumns is a per-field width gate.
+  {
+    const narrow = await capture(80, { pluginFields: [field({ text: 'LTX', minColumns: 100 })] })
+    const wide = await capture(120, { pluginFields: [field({ text: 'LTX', minColumns: 100 })] })
+    check('R6 field hidden below minColumns', narrow.every(line => !line.includes('LTX')))
+    check('R6 field shown at/above minColumns', wide.some(line => line.includes('LTX')))
+  }
+
+  // R7 — width ladder: no wrapping, no footer growth.
+  {
+    const barChannel = (cols: number) => channelWith(
+      { contextBar: true, contextUsage: true },
+      {
+        contextBarEnabled: true,
+        contextSegments: { system: 1200, prompt: 300, assistant: 4000, thinking: 5000, tools: 2000 },
+        contextOccupancy: { usedTokens: 12_500, contextWindow: 64_000 },
+        displayCwd: '/w/' + 'nested/'.repeat(6) + 'uniqdir',
+        cwd: '/w/' + 'nested/'.repeat(6) + 'uniqdir',
+      },
+    )
+    const fields = [
+      field({ key: 'lt', text: 'LONGLEFTFIELDTEXT', slot: 'left-tail', maxCells: 32 }),
+      field({ key: 'rh', text: 'LONGRIGHTFIELDTEXT', slot: 'right-head', maxCells: 32 }),
+    ]
+    for (const cols of [60, 80, 120, 160]) {
+      const lines = await capture(cols, { pluginFields: fields }, barChannel(cols))
+      const row = statusRow(lines, 'ctx')
+      check(`R7 ${cols} cols: footer stays within 3 rows`, lines.slice(3).every(line => line.trim() === ''),
+        JSON.stringify(lines))
+      check(`R7 ${cols} cols: status row keeps its content and ctx`, row.includes('ctx') && row.trim() !== '',
+        JSON.stringify(row))
+    }
+  }
+
+  // R8 — a long CJK field cannot push ctx or the bar off the row.
+  {
+    const lines = await capture(60, {
+      pluginFields: [field({ key: 'wide', text: '构建构建构建构建构建构建构建构建构建构建构建构建', maxCells: 32 })],
+    }, channelWith({ contextUsage: true }, {
+      contextOccupancy: { usedTokens: 12_500, contextWindow: 64_000 },
+    }))
+    check('R8 long field truncates instead of overflowing the row',
+      statusRow(lines, 'ctx').includes('ctx') && lines.slice(3).every(line => line.trim() === ''), JSON.stringify(lines))
+  }
+
+  await root.fiber.dispose()
+  console.log(`\n${checks} checks, ${failures} failure${failures === 1 ? '' : 's'}`)
+  process.exit(failures === 0 ? 0 : 1)
+} catch (error) {
+  console.error(error)
+  process.exit(1)
+}
