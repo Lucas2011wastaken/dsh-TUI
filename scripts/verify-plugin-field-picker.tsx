@@ -184,7 +184,7 @@ async function openPicker(stored: string, fields: readonly Fields[number][] = FI
   const screen = await openScreen(stored, fields)
   screen.stdin.write('\r')
   if (!await settled(() => screen.has('Plugin field list'), { timeoutMs: 4000 })) return null
-  await sleep(80) // 固定窗:焦点落在第一行只改颜色，无可 settle 的文本锚点
+  await sleep(80) // 固定窗:pacing 焦点落在第一行只改颜色，无可 settle 的文本锚点
   return screen
 }
 
@@ -192,7 +192,7 @@ async function arrow(stdin: FakeStdin, direction: 'down' | 'up', times: number):
   const key = direction === 'down' ? '\x1b[B' : '\x1b[A'
   for (let i = 0; i < times; i++) {
     stdin.write(key)
-    await sleep(60) // 固定窗:焦点步进只改颜色，无可 settle 条件
+    await sleep(60) // 固定窗:pacing 焦点步进只改颜色，无可 settle 条件
   }
 }
 
@@ -287,6 +287,7 @@ async function arrow(stdin: FakeStdin, direction: 'down' | 'up', times: number):
   screen.stdin.write('\r')
   await settled(() => screen.has('build,ci;git;pet▌'), { timeoutMs: 4000 })
   // Delete the last key ("pet") char by char, then confirm.
+  // 固定窗:pacing 退格是同步写入，逐字符之间只留一个渲染步
   for (let i = 0; i < 3; i++) { screen.stdin.write('\x7f'); await sleep(30) }
   screen.stdin.write('\r')
   check('S3b an edited list is written verbatim (canonical)',
@@ -304,6 +305,7 @@ async function arrow(stdin: FakeStdin, direction: 'down' | 'up', times: number):
   await settled(() => screen.has('build,ci;git;pet▌'), { timeoutMs: 4000 })
   // Wipe the draft and type a one-group value ("build"): groups ≠ 3.
   for (let i = 0; i < 20; i++) { screen.stdin.write('\x7f') }
+  // 固定窗:pacing 逐字符输入之间留一个渲染步，避免整串被当作一次 paste
   for (const char of 'build') { screen.stdin.write(char); await sleep(20) }
   screen.stdin.write('\r')
   check('S4 illegal list keeps the editor open with the invalid notice',
