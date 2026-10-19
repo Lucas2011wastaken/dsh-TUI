@@ -165,6 +165,11 @@ async function refused(name: string, run: (ctx: Context) => void): Promise<void>
   await refused('A2 fractional minColumns', ctx => ctx.tuiStatus.setField('cols', 'x', { minColumns: 1.5 }))
   await refused('A2 non-object options', ctx => ctx.tuiStatus.setField('opts', 'x', null))
   await refused('A2 non-string detail', ctx => ctx.tuiStatus.setField('detail', 'x', { detail: 42 }))
+  // A throwing getter is plugin-supplied input too: the documented contract is
+  // reject-and-warn, never an exception escaping into the caller.
+  await refused('A2 unreadable options', ctx => {
+    ctx.tuiStatus.setField('getter', 'x', { get slot(): never { throw new Error('boom') } })
+  })
 }
 
 // A3 — cell-accurate truncation for wide and combining text.
@@ -356,14 +361,19 @@ async function refused(name: string, run: (ctx: Context) => void): Promise<void>
   check('A12 ledger kind is status-field', records.every(record => record.resource?.kind === 'status-field'))
 }
 
-// A13 — bidi overrides and zero-width marks never reach a footer cell.
+// A13 — bidi controls and invisible separators never reach a footer cell;
+// the joiners (ZWNJ/ZWJ) DO, because they carry orthography and compose emoji.
 {
   store.clear()
   const fiber = await activate(ctx => {
     ctx.tuiStatus.setField('bidi', 'ab\u202Ecd\u200Bef', { detail: 'x\u202Ey\uFEFF' })
+    ctx.tuiStatus.setField('joiners', '\u{1F468}\u200D\u{1F469}\u200D\u{1F467}\u200Cab')
   })
-  check('A13 bidi/zero-width stripped from text', fieldOf('bidi')?.text === 'abcdef', JSON.stringify(fieldOf('bidi')?.text))
-  check('A13 bidi/zero-width stripped from detail', fieldOf('bidi')?.detail === 'xy', JSON.stringify(fieldOf('bidi')?.detail))
+  check('A13 bidi/invisible marks stripped from text', fieldOf('bidi')?.text === 'abcdef', JSON.stringify(fieldOf('bidi')?.text))
+  check('A13 bidi/invisible marks stripped from detail', fieldOf('bidi')?.detail === 'xy', JSON.stringify(fieldOf('bidi')?.detail))
+  check('A13 joiners survive (emoji ZWJ sequence, ZWNJ)',
+    fieldOf('joiners')?.text === '\u{1F468}\u200D\u{1F469}\u200D\u{1F467}\u200Cab',
+    JSON.stringify(fieldOf('joiners')?.text))
   await fiber.dispose()
 }
 
@@ -637,6 +647,13 @@ try {
         row.includes('ctx')
         && row.includes('LTX · ctx')
         && row.indexOf('ctx') < row.indexOf('HEADX'), JSON.stringify(row))
+      // …and right-head OPENS the right group. The string order above cannot
+      // tell: moving the slot into the left group after ctx keeps every order
+      // and `LTX · ctx` intact, and only leaves the flex gap between HEADX and
+      // the first built-in right field. The adjacency is what breaks.
+      check('R15 split: right-head opens the right group',
+        row.includes('HEADX · main')
+        && row.indexOf('HEADX') < row.indexOf('main'), JSON.stringify(row))
       // Width 100 minus the footer's 1-cell padding: the last content cell is
       // column 99, so the trimmed content must be 99 cells AND end in TAILX.
       // `trimEnd()` alone would accept blank cells after the field.
