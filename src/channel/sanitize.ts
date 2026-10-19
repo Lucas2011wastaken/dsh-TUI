@@ -94,21 +94,27 @@ export function flattenPasteInline(value: string): string {
   return flattenInline(withoutAnsi)
 }
 
-/** Bidi overrides/isolates and zero-width marks: invisible, and a single
+/** Bidi overrides/isolates and invisible separators: invisible, and a single
  *  U+202E next to a host field (`#sessionId`, cwd) can flip the displayed
  *  direction of the text that follows it. Footer fields sit immediately
- *  beside those provenance tags, so they strip this class first. */
-const BIDI_ZERO_WIDTH = /[\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF]/gu
+ *  beside those provenance tags, so they strip this class first.
+ *
+ *  The joiners U+200C (ZWNJ) and U+200D (ZWJ) are deliberately NOT in it:
+ *  they are orthographic (Persian, Indic) and compose emoji sequences, so
+ *  stripping them would rewrite the plugin's text and inflate its cell
+ *  width (a ZWJ family emoji measures 2 cells, 6 without the joiners). */
+const BIDI_AND_INVISIBLE_MARKS = /[\u200B\u200E\u200F\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF]/gu
 
 /**
- * Footer-field ingress: the common render cleanup PLUS bidi/zero-width
- * removal. Kept separate from {@link cleanRenderText} so the existing
- * managed-UI callers keep their exact behaviour. Non-scalars yield '' (the
- * caller decides between refuse and clear); scalars coerce then sanitize.
+ * Footer-field ingress: the common render cleanup PLUS bidi controls and
+ * invisible separators. Kept separate from {@link cleanRenderText} so the
+ * existing managed-UI callers keep their exact behaviour. Non-scalars yield
+ * '' (the caller decides between refuse and clear); scalars coerce then
+ * sanitize.
  */
 export function cleanStatusFieldText(value: unknown, maxCells: number): string {
   if (typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'boolean') return ''
-  return cleanRenderText(String(value).replace(BIDI_ZERO_WIDTH, ''), maxCells)
+  return cleanRenderText(String(value).replace(BIDI_AND_INVISIBLE_MARKS, ''), maxCells)
 }
 
 /** Toast-bound plugin text (veto reasons, handled notices, rewind summaries)

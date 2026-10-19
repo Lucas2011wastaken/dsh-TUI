@@ -618,14 +618,35 @@ export class TuiStatusRuntime extends Service {
     } else {
       rawOptions = options
     }
+    // The options object is plugin-supplied, so a throwing getter (or a Proxy)
+    // must take the documented reject-and-warn path instead of escaping into
+    // the caller. Read every option once, inside one guard: the checks below
+    // then cannot re-trigger a getter.
+    let optionMaxCells: number | undefined
+    let optionSlot: TuiStatusFieldSlot | undefined
+    let optionTone: TuiStatusFieldTone | undefined
+    let optionMinColumns: number | undefined
+    let optionDetail: string | undefined
+    let optionOnClick: (() => void) | undefined
+    try {
+      optionMaxCells = rawOptions.maxCells
+      optionSlot = rawOptions.slot
+      optionTone = rawOptions.tone
+      optionMinColumns = rawOptions.minColumns
+      optionDetail = rawOptions.detail
+      optionOnClick = rawOptions.onClick
+    } catch {
+      logger.warn(`dsh-tui: tuiStatus.setField rejected "${normalized}" — unreadable options`)
+      return noop
+    }
     const prev = existing?.entry
     let maxCells = prev?.maxCells ?? FIELD_CELLS_DEFAULT
-    if (rawOptions.maxCells !== undefined) {
-      if (typeof rawOptions.maxCells !== 'number' || !Number.isInteger(rawOptions.maxCells)) {
+    if (optionMaxCells !== undefined) {
+      if (typeof optionMaxCells !== 'number' || !Number.isInteger(optionMaxCells)) {
         logger.warn(`dsh-tui: tuiStatus.setField rejected "${normalized}" — maxCells must be an integer`)
         return noop
       }
-      maxCells = Math.min(FIELD_CELLS_MAX, Math.max(1, rawOptions.maxCells))
+      maxCells = Math.min(FIELD_CELLS_MAX, Math.max(1, optionMaxCells))
     }
     const cleaned = cleanStatusFieldText(text, maxCells)
     // Whitespace/control/bidi-only text is a clear (set() folds it the same
@@ -633,46 +654,46 @@ export class TuiStatusRuntime extends Service {
     // rendered options to validate.
     if (cleaned === '') return clear()
     let slot = prev?.slot ?? 'left-tail'
-    if (rawOptions.slot !== undefined) {
-      if (!FIELD_SLOTS.has(rawOptions.slot)) {
+    if (optionSlot !== undefined) {
+      if (!FIELD_SLOTS.has(optionSlot)) {
         logger.warn(`dsh-tui: tuiStatus.setField rejected "${normalized}" — invalid slot`)
         return noop
       }
-      slot = rawOptions.slot
+      slot = optionSlot
     }
     let tone = prev?.tone ?? 'dim'
-    if (rawOptions.tone !== undefined) {
-      if (!FIELD_TONES.has(rawOptions.tone)) {
+    if (optionTone !== undefined) {
+      if (!FIELD_TONES.has(optionTone)) {
         logger.warn(`dsh-tui: tuiStatus.setField rejected "${normalized}" — invalid tone`)
         return noop
       }
-      tone = rawOptions.tone
+      tone = optionTone
     }
     let minColumns = prev?.minColumns ?? 0
-    if (rawOptions.minColumns !== undefined) {
-      if (typeof rawOptions.minColumns !== 'number' || !Number.isInteger(rawOptions.minColumns)) {
+    if (optionMinColumns !== undefined) {
+      if (typeof optionMinColumns !== 'number' || !Number.isInteger(optionMinColumns)) {
         logger.warn(`dsh-tui: tuiStatus.setField rejected "${normalized}" — minColumns must be an integer`)
         return noop
       }
-      minColumns = Math.min(FIELD_MIN_COLUMNS_MAX, Math.max(0, rawOptions.minColumns))
+      minColumns = Math.min(FIELD_MIN_COLUMNS_MAX, Math.max(0, optionMinColumns))
     }
     let detail = prev?.detail
-    if (rawOptions.detail !== undefined) {
-      if (typeof rawOptions.detail !== 'string') {
+    if (optionDetail !== undefined) {
+      if (typeof optionDetail !== 'string') {
         logger.warn(`dsh-tui: tuiStatus.setField rejected "${normalized}" — detail must be a string`)
         return noop
       }
       // An explicitly empty/unsafe detail means "no detail", not "keep the old
       // one" — omitted is the only spelling that carries the previous value.
-      detail = cleanStatusFieldText(rawOptions.detail, FIELD_DETAIL_CELLS) || undefined
+      detail = cleanStatusFieldText(optionDetail, FIELD_DETAIL_CELLS) || undefined
     }
     let rawOnClick = existing?.rawOnClick
-    if (rawOptions.onClick !== undefined) {
-      if (typeof rawOptions.onClick !== 'function') {
+    if (optionOnClick !== undefined) {
+      if (typeof optionOnClick !== 'function') {
         logger.warn(`dsh-tui: tuiStatus.setField rejected "${normalized}" — onClick must be a function`)
         return noop
       }
-      rawOnClick = rawOptions.onClick
+      rawOnClick = optionOnClick
     }
     if (rawOnClick !== undefined && detail === undefined) {
       // D3: a clickable cell owes the user an explanation on hover.

@@ -55,13 +55,14 @@ const JOB_GROUP_FOLDS = new Set<JobGroupFoldMode>(['auto', 'always', 'never'])
 const SCROLL_GUTTERS = new Set<ScrollGutterMode>(['timeline', 'scrollbar', 'hidden'])
 
 /** Every status-bar member but the ordered list; `normalizeStatusBar` copies
- *  these only when the value is a boolean. */
+ *  these only when the value is a boolean. Derived from the defaults on
+ *  purpose: a boolean member added to `StatusBarConfig`/`DEFAULT_STATUS_BAR`
+ *  must not have to be repeated here, or `normalizeStatusBar` would silently
+ *  drop its configured value. */
 type BooleanStatusBarKey = Exclude<keyof StatusBarConfig, 'pluginFieldsOrder'>
-const STATUS_BAR_BOOLEAN_KEYS: readonly BooleanStatusBarKey[] = [
-  'compact', 'model', 'thinking', 'cwd', 'contextUsage', 'cache', 'tokens',
-  'cost', 'tps', 'gitBranch', 'sessionTitle', 'sessionId', 'goal', 'mode',
-  'contextBar', 'activity', 'trajectory', 'shortcutHint', 'pluginFields',
-]
+const STATUS_BAR_BOOLEAN_KEYS: readonly BooleanStatusBarKey[] = (
+  Object.keys(DEFAULT_STATUS_BAR) as (keyof StatusBarConfig)[]
+).filter((key): key is BooleanStatusBarKey => key !== 'pluginFieldsOrder')
 
 /** Parsed `statusBar.pluginFieldsOrder`. `invalid` is what the settings screen
  *  refuses to save; the renderer treats it as `all`. */
