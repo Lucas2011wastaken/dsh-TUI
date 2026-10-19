@@ -15,7 +15,8 @@ import type { LocalizedDescriptions } from '../commands.js'
 import type { ChannelUi as Channel } from '../adapter/channel/ui-policy.js'
 import { panelStore } from '../components/sidePanel/PanelStore.js'
 import { registerBuiltinPanels } from '../components/sidePanel/builtinPanels.js'
-import { SIDE_PANEL_ID_PATTERN } from '../tuiDisplayPrefs.js'
+import type { TuiStatusFieldEntry } from '../dsh-adapter/status.js'
+import { ALL_PLUGIN_FIELDS, formatPluginFieldsOrder, parsePluginFieldsOrder, STATUS_FIELD_SLOTS, SIDE_PANEL_ID_PATTERN, type StatusFieldSlot } from '../tuiDisplayPrefs.js'
 
 // The panel picker enumerates the live registry: builtin panels register on
 // import (same idempotent call SidePanelColumn makes), plugins come and go
@@ -44,6 +45,10 @@ type FocusEntry =
   | { kind: 'panelToggle'; ns: string; field: TuiSettingsField; panelId: string }
   /** The picker's raw-text escape hatch (reorder / future plugin ids). */
   | { kind: 'panelAdvanced'; ns: string; field: TuiSettingsField }
+  /** One checkbox row of the statusBar.pluginFieldsOrder picker. */
+  | { kind: 'fieldToggle'; ns: string; field: TuiSettingsField; fieldKey: string }
+  /** The field picker's raw-text escape hatch (the `a,b;c;d` list). */
+  | { kind: 'fieldAdvanced'; ns: string; field: TuiSettingsField }
 
 /**
  * The sidePanel.panels field renders as a checkbox multi-select over the live
@@ -54,6 +59,126 @@ type FocusEntry =
  */
 function isPanelListField(ns: string, field: TuiSettingsField): boolean {
   return ns === 'dsh-tui' && field.path.join('.') === 'sidePanel.panels'
+}
+
+/**
+ * The plugin footer field list renders as a per-slot checkbox picker over the
+ * live `tuiStatus` registry: three slot subheads, one row per field, and the
+ * advanced `a,b;c;d` row. Its stored value stays the exact list string —
+ * schema and persistence contract unchanged. Scoped to the TUI's own
+ * namespace so a plugin section carrying the same path keeps the generic row.
+ */
+function isFieldListField(ns: string, field: TuiSettingsField): boolean {
+  return ns === 'dsh-tui' && field.path.join('.') === 'statusBar.pluginFieldsOrder'
+}
+
+/** One checkbox row of the plugin footer field picker. */
+interface PluginFieldRow {
+  readonly key: string
+  readonly checked: boolean
+  readonly title: string
+  readonly description: string
+}
+
+/** One slot's run of rows. */
+interface PluginFieldGroup {
+  readonly slot: StatusFieldSlot
+  readonly rows: readonly PluginFieldRow[]
+}
+
+function fieldSlotLabel(slot: StatusFieldSlot): string {
+  return t(slot === 'left-tail' ? 'settings-fields-slot-left-tail'
+    : slot === 'right-head' ? 'settings-fields-slot-right-head'
+      : 'settings-fields-slot-right-tail')
+}
+
+/**
+ * The picker's rows for one stored value. `*` (and an invalid value, which the
+ * footer also reads as `*`) lists every field checked in its declared slot;
+ * `''` lists every field unchecked; an explicit list lists its keys in list
+ * order (checked) followed by the fields it does not name (unchecked), each in
+ * the slot it declares. A listed key whose group is not its declared slot is
+ * marked as moved — that annotation is how the screen tells the user what the
+ * plugin asked for after the list took over.
+ */
+function pluginFieldGroups(text: string, fields: readonly TuiStatusFieldEntry[]): PluginFieldGroup[] {
+  const parsed = parsePluginFieldsOrder(text)
+  const listed = parsed.mode === 'groups' ? parsed.groups : undefined
+  const allShown = parsed.mode === 'all' || parsed.mode === 'invalid'
+  const byKey = new Map(fields.map(field => [field.key, field] as const))
+  const named = new Set<string>(listed === undefined ? [] : listed.flat())
+  return STATUS_FIELD_SLOTS.map((slot, index) => {
+    const rows: PluginFieldRow[] = []
+    if (listed === undefined) {
+      for (const field of fields) {
+        if (field.slot !== slot) continue
+        rows.push({ key: field.key, checked: allShown, title: field.text, description: field.key })
+      }
+      return { slot, rows }
+    }
+    for (const key of listed[index] ?? []) {
+      const field = byKey.get(key)
+      rows.push({
+        key,
+        checked: true,
+        title: field?.text ?? key,
+        description: field === undefined
+          ? t('settings-fields-unclaimed')
+          : field.slot === slot ? field.key : `${field.key} · ${t('settings-fields-moved', { slot: fieldSlotLabel(field.slot) })}`,
+      })
+    }
+    for (const field of fields) {
+      if (named.has(field.key) || field.slot !== slot) continue
+      rows.push({ key: field.key, checked: false, title: field.text, description: field.key })
+    }
+    return { slot, rows }
+  })
+}
+
+/** Materialize a value into three mutable groups: `''` starts empty, while `*`
+ *  (and an invalid value) starts from the registry so a toggle never silently
+ *  discards the current arrangement. */
+function pluginFieldListFrom(text: string, fields: readonly TuiStatusFieldEntry[]): string[][] {
+  const parsed = parsePluginFieldsOrder(text)
+  if (parsed.mode === 'groups') return parsed.groups.map(group => [...group])
+  return STATUS_FIELD_SLOTS.map(slot => (parsed.mode === 'none'
+    ? []
+    : fields.filter(field => field.slot === slot).map(field => field.key)))
+}
+
+/** Tick/untick one key: an untick removes it wherever it sits, a tick appends
+ *  to the end of the group its row lives in (its declared slot). All groups
+ *  empty collapses to `''` — "none" is a legal state, not a refusal. */
+function togglePluginFieldText(text: string, fields: readonly TuiStatusFieldEntry[], key: string): string {
+  const groups = pluginFieldListFrom(text, fields)
+  const at = groups.findIndex(group => group.includes(key))
+  if (at >= 0) {
+    groups[at].splice(groups[at].indexOf(key), 1)
+  } else {
+    const field = fields.find(candidate => candidate.key === key)
+    if (field === undefined) return text
+    groups[STATUS_FIELD_SLOTS.indexOf(field.slot)].push(key)
+  }
+  return groups.every(group => group.length === 0) ? '' : formatPluginFieldsOrder(groups)
+}
+
+/** The draft the advanced row opens with: `*` expands to the three-group
+ *  skeleton (the declared slots become the structure the user edits), while an
+ *  explicit list or the user's typo opens verbatim. */
+function pluginFieldDraft(text: string, fields: readonly TuiStatusFieldEntry[]): string {
+  if (parsePluginFieldsOrder(text).mode !== 'all') return text
+  return formatPluginFieldsOrder(pluginFieldListFrom(text, fields))
+}
+
+/** Saving the untouched skeleton must not pin the automatic mode: only a real
+ *  change makes the list explicit. */
+function pluginFieldCommit(text: string, fields: readonly TuiStatusFieldEntry[]): string {
+  const parsed = parsePluginFieldsOrder(text)
+  if (parsed.mode === 'all') return ALL_PLUGIN_FIELDS
+  if (parsed.mode !== 'groups') return text
+  const skeleton = formatPluginFieldsOrder(STATUS_FIELD_SLOTS.map(slot =>
+    fields.filter(field => field.slot === slot).map(field => field.key)))
+  return formatPluginFieldsOrder(parsed.groups) === skeleton ? ALL_PLUGIN_FIELDS : text
 }
 
 /**
@@ -508,6 +633,10 @@ function CardRow({
   )
 }
 
+/** Stable empty default: a settings screen opened without the live registry
+ *  (tests, non-Chat hosts) still renders the field list, just empty. */
+const NO_STATUS_FIELDS: readonly TuiStatusFieldEntry[] = Object.freeze([])
+
 /**
  * The settings screen — `/settings` as a screen of its own (issue #165).
  *
@@ -526,9 +655,13 @@ function CardRow({
 export function Settings({
   channel,
   onClose,
+  statusFields = NO_STATUS_FIELDS,
 }: {
   channel: Channel
   onClose: () => void
+  /** Live plugin footer fields (`tuiStatus.setField`) the picker enumerates.
+   *  Chat already subscribes to the same store and hands the snapshot down. */
+  statusFields?: readonly TuiStatusFieldEntry[]
 }): React.ReactNode {
   // Explicit terminal size (not flexGrow) — the same rule the full-screen
   // session views follow inside the alternate screen's fixed-height box.
@@ -652,6 +785,14 @@ export function Settings({
    *  its checkbox rows plus the advanced row, in the exact order the renderer
    *  below lays them out (the focus list and the layout share this order). */
   const fieldEntries = (ns: string, field: TuiSettingsField): FocusEntry[] => {
+    if (isFieldListField(ns, field)) {
+      const text = forms.get(ns)?.field(field).text ?? ''
+      return [
+        ...pluginFieldGroups(text, statusFields).flatMap(group =>
+          group.rows.map(row => ({ kind: 'fieldToggle' as const, ns, field, fieldKey: row.key }))),
+        { kind: 'fieldAdvanced' as const, ns, field },
+      ]
+    }
     if (!isPanelListField(ns, field)) return [{ kind: 'field', ns, field }]
     return [
       ...panelPickerRows(ns, field).map(row => ({ kind: 'panelToggle' as const, ns, field, panelId: row.id })),
@@ -776,6 +917,20 @@ export function Settings({
   }
 
   /**
+   * Tick/untick one plugin footer field. The stored string keeps its exact
+   * semantics: keys already listed keep their relative order, a new tick
+   * appends to its slot group's end, unticking removes. `''` (none) is a
+   * legal outcome here — the picker has no "at least one" rule.
+   */
+  const togglePluginField = (ns: string, field: TuiSettingsField, key: string): void => {
+    const form = forms.get(ns)
+    if (form === undefined || !form.available) return
+    form.edit(field, togglePluginFieldText(form.field(field).text, statusFields, key))
+    bump()
+    saveSoon(ns)
+  }
+
+  /**
    * Activate one focusable entry — the keyboard Enter path, shared with the
    * mouse click. Groups open their subpage; picker checkbox rows toggle their
    * panel; boolean/select fields cycle their value; text/secret fields (and
@@ -795,12 +950,21 @@ export function Settings({
       togglePanel(entry.ns, entry.field, entry.panelId)
       return
     }
+    if (entry.kind === 'fieldToggle') {
+      togglePluginField(entry.ns, entry.field, entry.fieldKey)
+      return
+    }
     const form = forms.get(entry.ns)
     if (form === undefined || !form.available) return
     if (entry.kind === 'field' && (entry.field.kind === 'boolean' || entry.field.kind === 'select')) {
       cycleField(entry.ns, entry.field)
     } else {
-      setEditing({ ns: entry.ns, field: entry.field, draft: form.field(entry.field).text })
+      const text = form.field(entry.field).text
+      setEditing({
+        ns: entry.ns,
+        field: entry.field,
+        draft: isFieldListField(entry.ns, entry.field) ? pluginFieldDraft(text, statusFields) : text,
+      })
       setMode('edit')
     }
   }
@@ -822,7 +986,12 @@ export function Settings({
         // error badge and a toast; a valid one saves immediately (auto-save).
         const form = forms.get(editing.ns)
         if (form !== undefined) {
-          form.edit(editing.field, editing.draft)
+          form.edit(
+            editing.field,
+            isFieldListField(editing.ns, editing.field)
+              ? pluginFieldCommit(editing.draft, statusFields)
+              : editing.draft,
+          )
           if (form.field(editing.field).invalid) {
             setNotice({ text: t('settings-field-invalid'), tone: 'error' })
             bump()
@@ -1084,7 +1253,110 @@ export function Settings({
     })
   }
 
+  /**
+   * The plugin footer field list's block: a dim title row, one subhead per
+   * slot with its checkbox rows, then the advanced `a,b;c;d` row. The rows come
+   * from `pluginFieldGroups`, the same function `fieldEntries` fans out from,
+   * so the focus list and the layout cannot drift.
+   */
+  const addFieldPicker = (section: TuiSettingsSection, field: TuiSettingsField): void => {
+    const ns = section.ns
+    const form = forms.get(ns)
+    const state = form?.field(field) ?? { text: '', overridden: false, invalid: false }
+    entries.push({
+      key: `field-picker-header:${ns}:${field.path.join('.')}`,
+      lines: 1,
+      node: <CardRow><PanelListHeaderRow title={pick(field.label, field.descriptions)} /></CardRow>,
+    })
+    for (const group of pluginFieldGroups(state.text, statusFields)) {
+      // A slot with nothing to show stays as a one-line subhead: the three
+      // groups are the grammar, so they must not disappear with their rows.
+      entries.push({
+        key: `field-picker-slot:${ns}:${group.slot}`,
+        lines: 1,
+        node: <CardRow><PanelListHeaderRow title={fieldSlotLabel(group.slot)} /></CardRow>,
+      })
+      for (const row of group.rows) {
+        const index = focusCursor
+        focusCursor += 1
+        const isFocused = focused?.kind === 'fieldToggle' && focused.ns === ns && focused.field === field && focused.fieldKey === row.key
+        const rowEvents = mode === 'edit'
+          ? undefined
+          : {
+              onClick: (): void => {
+                setFocusIndex(index)
+                togglePluginField(ns, field, row.key)
+              },
+              onMouseEnter: (): void => {
+                setFocusIndex(index)
+              },
+            }
+        entries.push({
+          key: `field-toggle:${ns}:${group.slot}:${row.key}`,
+          lines: 1,
+          focus: index,
+          node: (
+            <CardRow highlight={isFocused}>
+              <PanelToggleRow
+                checked={row.checked}
+                icon="·"
+                title={row.title}
+                description={row.description}
+                focused={isFocused}
+                columns={columns}
+                onClick={rowEvents?.onClick}
+                onMouseEnter={rowEvents?.onMouseEnter}
+              />
+            </CardRow>
+          ),
+        })
+      }
+    }
+    // The advanced escape hatch: same row/edit/invalid conventions as a text
+    // field, seeded with the three-group skeleton on the first Enter.
+    const advIndex = focusCursor
+    focusCursor += 1
+    const advFocused = focused?.kind === 'fieldAdvanced' && focused.ns === ns && focused.field === field
+    const advEditing = advFocused && mode === 'edit' && editing !== null
+    const advEvents = mode === 'edit'
+      ? undefined
+      : {
+          onClick: (): void => {
+            setFocusIndex(advIndex)
+            activateEntry({ kind: 'fieldAdvanced', ns, field })
+          },
+          onMouseEnter: (): void => {
+            setFocusIndex(advIndex)
+          },
+        }
+    entries.push({
+      key: `field-advanced:${ns}:${field.path.join('.')}`,
+      lines: 1,
+      focus: advIndex,
+      node: (
+        <CardRow highlight={advFocused}>
+          <FieldRow
+            label={t('settings-fields-advanced')}
+            kind="text"
+            value={advEditing ? `${editing?.draft ?? ''}▌` : state.text === '' ? t('settings-field-empty') : state.text}
+            selectLabel={undefined}
+            focused={advFocused}
+            editing={advEditing}
+            invalid={state.invalid}
+            staged={form?.isStaged(field) === true}
+            onClick={advEvents?.onClick}
+            onMouseEnter={advEvents?.onMouseEnter}
+          />
+        </CardRow>
+      ),
+    })
+  }
+
   const addField = (section: TuiSettingsSection, field: TuiSettingsField): void => {
+    if (isFieldListField(section.ns, field)) {
+      addFieldPicker(section, field)
+      return
+    }
     if (isPanelListField(section.ns, field)) {
       addPanelPicker(section, field)
       return

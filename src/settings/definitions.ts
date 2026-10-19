@@ -420,6 +420,14 @@ export const SETTING_DEFINITIONS = {
     kind: 'boolean',
     group: 'status-bar',
   },
+  'statusBar.pluginFieldsOrder': {
+    label: 'Plugin field list',
+    descriptions: { zh: '插件底栏字段名单' },
+    hint: 'Three ";"-separated groups — left group tail; right group head; right group tail — with comma-separated keys inside: `a,b;c;d`. Empty shows nothing; "*" shows every field (default, fields registered later included). A listed key follows the group it sits in, overriding its plugin-declared slot.',
+    hintDescriptions: { zh: '用 ";" 分成三组——左组末尾；右组开头；右组末尾——组内逗号分隔：`a,b;c;d`。留空则一个都不显示；"*" 表示全部（默认，含以后注册的字段）。被列出的字段以名单里的组为准，覆盖插件声明的槽位。' },
+    kind: 'text',
+    group: 'status-bar',
+  },
   'statusBar.sessionId': {
     label: 'Show session id',
     descriptions: { zh: '显示会话 ID' },

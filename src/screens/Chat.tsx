@@ -6477,7 +6477,7 @@ export function Chat({
   // conversation (an early return after every hook above has run), so there
   // is no transcript underneath to be repainted or bled through.
   if (settingsOpen && launchpadGate()) {
-    const screen = <Settings channel={channel} onClose={() => setSettingsOpen(false)} />
+    const screen = <Settings channel={channel} onClose={() => setSettingsOpen(false)} statusFields={statusFields} />
     return fullscreen ? screen : <AlternateScreen>{screen}</AlternateScreen>
   }
 

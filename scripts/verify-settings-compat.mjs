@@ -17,7 +17,7 @@ import { configValues, createSettingsScope, editableConfig, resolveSettingsNames
 import { createSettingsHosts } from '../src/dsh-adapter/channel/settings-host.ts'
 import { SettingsForm } from '../src/dsh-adapter/settingsEditor.ts'
 import TuiSettingsSectionsRuntime, { getHostSettingsSections, getLocalSettingsSectionsHost, trackHostSettingsSection } from '../src/dsh-adapter/settings-sections.ts'
-import { DEFAULT_PAGE_MARGIN, DEFAULT_SIDE_PANEL_IDS, DEFAULT_STATUS_BAR, SIDE_PANEL_ID_PATTERN, isPageMarginMode, normalizePageMargin, normalizeSidePanelPanels, parsePageMarginSpec } from '../src/tuiDisplayPrefs.ts'
+import { DEFAULT_PAGE_MARGIN, DEFAULT_SIDE_PANEL_IDS, DEFAULT_STATUS_BAR, SIDE_PANEL_ID_PATTERN, isPageMarginMode, normalizePageMargin, normalizePluginFieldsOrder, normalizeSidePanelPanels, parsePageMarginSpec, parsePluginFieldsOrder } from '../src/tuiDisplayPrefs.ts'
 import { SPLASH_FONTS, SPLASH_FONT_OPTIONS, normalizeSplashFont } from '../src/components/splashFonts.ts'
 import { normalizeBrandSetting } from '../src/branding.ts'
 import { getLang, isLang } from '../src/i18n.ts'
@@ -249,6 +249,9 @@ if (modernSchema) for (const registry of ['service', 'local']) for (const entryI
       // Side-panel fields (sidePanel.panels) validate their draft against the
       // production id grammar, so the eval scope mirrors those helpers too.
       DEFAULT_SIDE_PANEL_IDS, SIDE_PANEL_ID_PATTERN, normalizeSidePanelPanels,
+      // Plugin footer field list (statusBar.pluginFieldsOrder): its parse and
+      // format callbacks validate/canonicalize through these two helpers.
+      parsePluginFieldsOrder, normalizePluginFieldsOrder,
       bootedFullscreen: true, terminalImagesDisabledByEnv: false,
       readEffortPref: () => undefined, // Do not read the developer's persisted preferences.
     })

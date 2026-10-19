@@ -61,7 +61,7 @@ import { shouldOfferOnboarding } from '../onboardingPrefs.js'
 import { resolveSessionCwd } from '../utils/workspaceRoot.js'
 import { LAUNCH_PROMPT_SENT_ENV, beginRestartAttempt, checkForTuiUpdate, installedTuiVersion, isBootDeadlockTarget, isStandaloneRuntime, isVersionNewer, logRestartEvent, resolveDshProfileName, resolveTuiUpdateTarget, restartTui, updateTuiAndRestart, writeHandoffNotice, writeLastRunRecord, type TuiRestartOptions } from '../update.js'
 import { getLang, isLang, resolveStartupLang, setLang, t, writeLangPref } from '../i18n.js'
-import { applyBtwContextBudget, applyBtwContextTurns, applyCodeFrameStyle, applyCompanionSkin, applyImageBacking, applyMathImageBacking, applyMathImageScale, applyMathRendering, applyMermaidDiagrams, applyPageMargin, applySidePanelOpen, applySidePanelRatio, applySidePanelSplitEnabled, BTW_CONTEXT_BUDGET_MAX, BTW_CONTEXT_BUDGET_MIN, BTW_CONTEXT_TURNS_MAX, BTW_CONTEXT_TURNS_MIN, DEFAULT_PAGE_MARGIN, DEFAULT_SIDE_PANEL_IDS, DEFAULT_STATUS_BAR, isPageMarginMode, normalizeJobGroupFold, normalizePageMargin, normalizeScrollGutter, normalizeSidePanelPanels, normalizeSidePanelRatio, normalizeStatusBar, normalizeToolBackground, parsePageMarginSpec, resolveMathRendering, SIDE_PANEL_ID_PATTERN, type CodeFrameStyle, type ImageBacking, type MathImageBacking, type MathImageScale, type MathRendering, type PageMarginSetting, type ScrollGutterMode, type StatusBarConfig, type ToolBackground } from '../tuiDisplayPrefs.js'
+import { applyBtwContextBudget, applyBtwContextTurns, applyCodeFrameStyle, applyCompanionSkin, applyImageBacking, applyMathImageBacking, applyMathImageScale, applyMathRendering, applyMermaidDiagrams, applyPageMargin, applySidePanelOpen, applySidePanelRatio, applySidePanelSplitEnabled, BTW_CONTEXT_BUDGET_MAX, BTW_CONTEXT_BUDGET_MIN, BTW_CONTEXT_TURNS_MAX, BTW_CONTEXT_TURNS_MIN, DEFAULT_PAGE_MARGIN, DEFAULT_SIDE_PANEL_IDS, DEFAULT_STATUS_BAR, isPageMarginMode, normalizeJobGroupFold, normalizePageMargin, normalizeScrollGutter, normalizeSidePanelPanels, normalizeSidePanelRatio, normalizePluginFieldsOrder, normalizeStatusBar, normalizeToolBackground, parsePageMarginSpec, parsePluginFieldsOrder, resolveMathRendering, SIDE_PANEL_ID_PATTERN, type CodeFrameStyle, type ImageBacking, type MathImageBacking, type MathImageScale, type MathRendering, type PageMarginSetting, type ScrollGutterMode, type StatusBarConfig, type ToolBackground } from '../tuiDisplayPrefs.js'
 import {
   draftComboConflicts,
   effectiveComboString,
@@ -89,7 +89,7 @@ import { getHostThemes, type TuiThemeHost, type TuiThemeRuntime } from './themes
 import type { DshAuthService } from './oauth/service.js'
 import { attachSessionToWorkspace } from './workspace.js'
 import { createLocalWorkspaceRuntime, getHostWorkspaceRuntime } from './workspaces.js'
-import { trackHostSettingsSection, type TuiSettingsField, type TuiSettingsSection } from './settings-sections.js'
+import { trackHostSettingsSection, type TuiSettingsField, type TuiSettingsFieldWrite, type TuiSettingsSection } from './settings-sections.js'
 import { compositionRoot, withHostRootCapability } from './host-access.js'
 import { armAdmissionLoader } from './admission-loader.js'
 import { assembleBackendsFromProfile } from './backend-assembly.js'
@@ -1226,6 +1226,7 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
           trajectory: Schema.boolean().default(DEFAULT_STATUS_BAR.trajectory),
           shortcutHint: Schema.boolean().default(DEFAULT_STATUS_BAR.shortcutHint),
           pluginFields: Schema.boolean().default(DEFAULT_STATUS_BAR.pluginFields),
+          pluginFieldsOrder: Schema.string().default(DEFAULT_STATUS_BAR.pluginFieldsOrder),
         }).default({ ...DEFAULT_STATUS_BAR }),
         // Side-panel preferences. No schema defaults on purpose (same rule as
         // foldTerminalCommand/expandEditor above): a default here would come
@@ -1795,6 +1796,25 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
         },
         {
           ...settingField('statusBar.pluginFields'),
+        },
+        {
+          ...settingField('statusBar.pluginFieldsOrder'),
+          // An empty draft means "show none" here, not the editor's default
+          // "clear" (which would fall back to `*` and silently re-show every
+          // field). `*` stays reachable by typing it, and an illegal shape
+          // (`a`, `a;b`, a duplicate key) blocks the save instead of being
+          // normalized into something the user did not ask for.
+          parse(text: string): TuiSettingsFieldWrite | undefined {
+            return parsePluginFieldsOrder(text).mode === 'invalid'
+              ? undefined
+              : { kind: 'set', value: normalizePluginFieldsOrder(text) }
+          },
+          // Unset in the user layer: show the value the footer actually uses
+          // (the schema default, `*`) instead of a blank row that would read
+          // as "none" next to the all-unchecked boxes.
+          format(value: unknown): string {
+            return normalizePluginFieldsOrder(value)
+          },
         },
         {
           ...settingField('sidePanel.splitEnabled'),
