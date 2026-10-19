@@ -10,9 +10,10 @@
  * Part B — rendering, against the real StatusLine through `@xterm/headless`:
  * zero-footprint default, the three slots and in-slot order, the user switch,
  * minimal UI, `minColumns`, a width ladder, compact mode, hover detail, click
- * dispatch, and a throwing click that must be reported (never reach the
- * renderer). The toast itself is Chat's wiring (`setFieldErrorHandler` →
- * `channel.notify`); this battery drives the same handler shape Chat installs.
+ * dispatch, and a throwing click plus a REJECTED async click that must both be
+ * reported (never reach the renderer). The toast itself is Chat's wiring
+ * (`setFieldErrorHandler` → `channel.notify`); this battery drives the same
+ * handler shape Chat installs.
  *
  * Run: node --import tsx/esm scripts/verify-status-fields.tsx
  */
@@ -241,6 +242,9 @@ async function refused(name: string, run: (ctx: Context) => void): Promise<void>
   } catch (error) {
     escaped = error
   }
+  // The funnel reports on a microtask (`Promise.resolve().then(...)`), so the
+  // synchronous half is checked first, then the report.
+  await new Promise<void>(resolve => setImmediate(resolve))
   check('A6 click error is swallowed', escaped === undefined, String(escaped))
   check('A6 error handler sees the key and the error once', handledKey === 'boom' && handledMessage === 'kaboom',
     `${handledKey}/${handledMessage}`)
@@ -711,6 +715,45 @@ try {
       check('R10 the throwing handler replaced the counting one', clicks === 1, `clicks=${clicks}`)
       check('R10 throwing click is reported, not thrown', await settled(() => reported === 'click'), `reported=${reported}`)
       check('R10 TUI survives the throwing click', screenHas(rig.term, 'CLICKME') && screenHas(rig.term, 'MODELX'))
+    } finally {
+      store.setFieldErrorHandler(undefined)
+      instance.unmount()
+      await sleep(120) // 固定窗:pacing 等首帧/卸载落定，无单一可轮询锚点
+      rig.term.dispose()
+      await fiber.dispose()
+    }
+  }
+
+  // R14 — a REJECTED async click is reported and cannot reach the process
+  // guard. No fatal sink is registered in this battery, so an unhandled
+  // rejection rethrows and kills the run: the bad baseline fails loudly, and
+  // the fix must keep the process alive through the same report path.
+  {
+    store.clear()
+    const rig = makeRig(100, 12)
+    let reported: string | undefined
+    store.setFieldErrorHandler(key => { reported = key })
+    const fiber = await activate(ctx => {
+      ctx.tuiStatus.setField('async-click', 'ASYNCX', {
+        detail: 'ASYNC-DETAIL',
+        onClick: async () => { throw new Error('async boom') },
+      })
+    })
+    const instance = await ui.render(
+      statusNode({ pluginFields: [...store.getFieldSnapshot()] }, BASE_CHANNEL),
+      {
+        stdout: rig.stdout as unknown as NodeJS.WriteStream,
+        stdin: rig.stdin as unknown as NodeJS.ReadStream,
+        exitOnCtrlC: false,
+        patchConsole: false,
+      },
+    )
+    try {
+      check('R14 field ready on screen', await settled(() => screenHas(rig.term, 'ASYNCX')))
+      fieldOf('async-click')?.onClick?.()
+      check('R14 rejected async click is reported', await settled(() => reported === 'async-click'), `reported=${reported}`)
+      check('R14 the process survives an async click rejection',
+        screenHas(rig.term, 'ASYNCX') && screenHas(rig.term, 'MODELX'))
     } finally {
       store.setFieldErrorHandler(undefined)
       instance.unmount()

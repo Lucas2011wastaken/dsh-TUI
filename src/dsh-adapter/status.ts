@@ -127,7 +127,10 @@ export interface TuiStatusViewEntry {
 }
 
 /** Where a plugin footer field joins the footer: the left group's tail, the
- *  right group's head, or the right group's tail (the row's right edge). */
+ *  right group's head, or the right group's tail. `right-tail` is the row's
+ *  right edge in the split layout only: `statusBar.compact` (the default)
+ *  merges both groups into one left-aligned chain, where the slots order that
+ *  chain and the ctx chip / trailing free space stay to the field's right. */
 export type TuiStatusFieldSlot = 'left-tail' | 'right-head' | 'right-tail'
 
 /** Semantic theme tone for a footer field. Literal colours are refused so a
@@ -689,18 +692,21 @@ export class TuiStatusRuntime extends Service {
       logger.warn(`dsh-tui: tuiStatus.setField rejected "${normalized}" — the field belongs to another activation`)
       return noop
     }
-    // The wrapper lives HERE, not in the UI: a throwing click is logged and
-    // reported as a toast, never allowed to reach the renderer's dispatch.
+    // The wrapper lives HERE, not in the UI: a throwing click and a REJECTED
+    // async click share one funnel — both are logged and reported as a toast.
+    // A bare `rawOnClick()` leaves a returned promise unobserved, and an
+    // unhandled rejection is fatal to the process guard; `shortcuts.ts` uses
+    // the same deferred funnel for its handlers.
     const onClick = rawOnClick === undefined
       ? undefined
       : (): void => {
-          try {
-            rawOnClick()
-          } catch (error) {
-            const failure = error instanceof Error ? error : new Error(String(error))
-            logger.warn(`dsh-tui: tuiStatus.setField "${normalized}" click failed: ${failure.message}`)
-            store.reportFieldError(normalized, failure)
-          }
+          Promise.resolve()
+            .then(() => rawOnClick())
+            .catch((error: unknown) => {
+              const failure = error instanceof Error ? error : new Error(String(error))
+              logger.warn(`dsh-tui: tuiStatus.setField "${normalized}" click failed: ${failure.message}`)
+              store.reportFieldError(normalized, failure)
+            })
         }
     const token = state.nextToken++
     const entry: TuiStatusFieldEntry = Object.freeze({
