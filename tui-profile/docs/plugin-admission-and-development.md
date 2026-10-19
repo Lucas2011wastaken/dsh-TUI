@@ -1164,6 +1164,15 @@ tui?.setField('build', undefined)     // 主动清除（传 '' 同效）
 toast，**不会打断 TUI**。inline 模式没有鼠标——不要假设点击一定发生；
 键盘等价物请用接缝十二的快捷键。
 
+用户侧可控（宿主设置，不是接缝契约）：`statusBar.pluginFields` 是总闸；
+`statusBar.pluginFieldsOrder` 是逐字段名单——恰好三组（`;` 分隔），组序号
+即槽位（`left-tail; right-head; right-tail`），组内顺序即显示顺序。
+`''` = 一个都不显示，`*`（默认）= 全部（含以后注册的）。**被列出的 key 以
+名单里的组为准**，即用户的显式选择可以覆盖插件声明的 `slot`；这与
+`statusBar.compact` 一样属于「用户展示选择优先」。名单一旦被固定，之后新注册
+的字段默认不出现，直到用户在 `/settings` 勾选；因此不要假设 `setField` 一定
+可见，也不要为不可见设计交互（文本仍是唯一内容，用户关掉即可）。
+
 稳定性：本方法属接缝十一「稳定候选（形态冻结）」档内的**加法**——只增
 不改，导出面不删任何现有类型；`TuiStatusFieldOptions` /
 `TuiStatusFieldSlot` / `TuiStatusFieldTone` 随 `./extensions` 与 `./api` 导出，

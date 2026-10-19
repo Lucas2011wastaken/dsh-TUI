@@ -44,7 +44,11 @@ reference**, not a promise:
 options?)` joins one keyed text cell into the footer's existing left/right
 groups (three slots — `left-tail` / `right-head` / `right-tail` — with an
 optional hover detail and a fullscreen-only click) without adding a row;
-`/settings → statusBar.pluginFields` turns every plugin field off at once.
+`/settings → statusBar.pluginFields` turns every plugin field off at once, and
+`statusBar.pluginFieldsOrder` lets the user tick fields individually and order
+them by slot group: `build,ci;git;pet` — three groups, three slots, and a
+**listed field follows its group** (overriding the declared slot). Once the user
+pins a list, fields registered later stay hidden until ticked.
 Contract, rule table, and example: seam XI "footer fields" in the
 [admission & development guide](../tui-profile/docs/plugin-admission-and-development.md).
 

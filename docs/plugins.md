@@ -40,7 +40,10 @@
 - **底栏插件字段（接缝十一的加法）**：`ctx.tuiStatus.setField(key, text,
   options?)` 把一段键控文本并进底栏既有的左右组（`left-tail` /
   `right-head` / `right-tail` 三槽，可选 hover 详情与全屏点击），不新增行；
-  `/settings → statusBar.pluginFields` 可一键关掉全部插件字段。契约、规则表与
+  `/settings → statusBar.pluginFields` 可一键关掉全部插件字段，另有
+  `statusBar.pluginFieldsOrder` 让用户逐字段启停、按「槽组」排序：
+  `build,ci;git;pet` 三组即三槽，**列进名单的字段跟随所在组**（覆盖插件声明的槽）。
+  用户把名单固定后，之后新注册的字段默认不出现，直到用户勾选。契约、规则表与
   示例见[准入与开发指南](../tui-profile/docs/plugin-admission-and-development.md)接缝十一「底栏字段」。
 - `@deepseek-harness-tui/dsh-tui/api`（纯类型入口）为实验性公开面。
 - **preset 内的行（实验性，接缝七）**：bundle 用 `@deepseek-harness-tui/dsh-tui/preset-patch`

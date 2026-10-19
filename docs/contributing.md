@@ -322,6 +322,7 @@ CI 回归都要跑。窄改动还要跑最近的聚焦脚本：
 | --- | --- |
 | 通用无头屏幕组装 | `pnpm smoke` |
 | 底栏字段 / 状态接缝（`tuiStatus.setField`、StatusLine 三槽与 hover/click） | `node --import tsx/esm scripts/verify-status-fields.tsx` |
+| 底栏字段名单（`statusBar.pluginFieldsOrder` 语法/归一化/渲染、设置页三槽勾选与预填） | `node --import tsx/esm scripts/verify-plugin-field-order.ts`、`node --import tsx/esm scripts/verify-plugin-field-picker.tsx` |
 | 跨代理会话迁移（src/migrate、adapter 解析或事件合成） | `node --import tsx/esm scripts/verify-migrate.mjs` |
 | 共享投影器、DSH 翻译器 | `pnpm verify:projection-golden`、`node --import tsx/esm scripts/verify-dsh-translate.ts`、`pnpm verify:agent-domain` |
 | Claude 后端 | 对应的 `scripts/verify-claude-*`（假 SDK，不花钱）与 `node --import tsx/esm scripts/verify-backend-channel.ts`；`verify:claude-live`/`verify:claude-headless` 调用真实 CLI，只在有意花费时手动跑（钉在 haiku） |

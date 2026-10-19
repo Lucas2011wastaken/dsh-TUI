@@ -603,6 +603,7 @@ An empty session shows the whale logo area at the top (scrolls away with the con
 - right group: git branch → working directory (basename only in compact mode) → session title → short session ID (`#` + first 8 chars, for `--resume`)
 - `statusBar.compact` merges the two sides into one row.
 - **Plugin footer fields**: plugins may contribute fields via `ctx.tuiStatus.setField` (three slots: left group's tail / right group's head / right group's tail, with optional hover detail and fullscreen click); `statusBar.pluginFields` (default on) hides every plugin field at once without uninstalling anything.
+- **Per-field control and order**: `/settings → Status bar → Plugin field list` (`statusBar.pluginFieldsOrder`) lists the fields in their three slot groups for individual ticking, with an `Advanced` row at the bottom for ordering. The value looks like `build,ci;git;pet` — exactly three `;`-separated groups, group index = slot, order inside a group = display order; a listed key follows its group (overriding the plugin-declared slot). Empty = show none; `*` (default) = all of them (future registrations included, in their declared slots and registration order). Entering the advanced row from `*` pre-fills the three-group skeleton, and saving it untouched keeps the mode; once a list is fixed, newly registered fields stay hidden until ticked.
 - Default on: compact, model, thinking, cwd, contextUsage, cache, cost, goal, contextBar, pluginFields.
 - Default off: tokens, tps, gitBranch, sessionTitle, sessionId, mode, activity, trajectory.
 
@@ -650,7 +651,7 @@ Common items below, full list on the /settings screen. Most topics (**Appearance
 | pageMargin | page margin: inset from all four terminal edges. Presets none / slim / normal (default) / roomy, or custom `NxM` (details below). Applies immediately |
 | foldTerminalCommand | fold terminal commands (default off): multi-line commands on terminal cards (Bash/PowerShell) fold to first line + count; `Ctrl+O` or click to expand |
 | expandEditor | full-screen draft editor (default on): `⛶` at the input line end or `Ctrl+Shift+E` expands to a full-screen editor; `Ctrl+Enter` send, `Esc` collapse (draft kept); off hides both entries |
-| statusBar.* | all status-bar toggles above (compact/model/thinking/cwd/contextUsage/cache/tokens/cost/tps/gitBranch/sessionTitle/sessionId/mode/contextBar/activity/trajectory/pluginFields; statusBar.sessionId is the bottom-bar display toggle, unrelated to cordis startup sessionId) |
+| statusBar.* | all status-bar toggles above (compact/model/thinking/cwd/contextUsage/cache/tokens/cost/tps/gitBranch/sessionTitle/sessionId/mode/contextBar/activity/trajectory/pluginFields/pluginFieldsOrder; statusBar.sessionId is the bottom-bar display toggle, unrelated to cordis startup sessionId; pluginFieldsOrder is the plugin field list: `''`=none, `*`=all, `a,b;c;d`=three groups and three slots) |
 
 **effortDefault**: when the model lacks that level, drop one level and show a notice; priority settings user layer > the last `/effort`
 (effort.json, the level the last session ran) > cordis `effort` (deployment default) > model default.
