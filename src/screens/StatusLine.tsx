@@ -3,7 +3,7 @@ import { Box, Text, useTerminalSize, useTheme } from '../ui.js'
 import type { Color } from '../ink/styles.js'
 import { formatTokens } from '../terminal-utils/format.js'
 import { t } from '../i18n.js'
-import { formatContextUsage, DEFAULT_STATUS_BAR, normalizeStatusBar, type StatusBarConfig } from '../tuiDisplayPrefs.js'
+import { applyPluginFieldsOrder, formatContextUsage, DEFAULT_STATUS_BAR, normalizeStatusBar, type StatusBarConfig } from '../tuiDisplayPrefs.js'
 import { estimateSessionCostSnapshotCny, isDeepSeekOfficialProvider, isPeakHour } from '../deepseekPricing.js'
 import { getActiveBrand } from '../branding.js'
 import { ActivityLine, contextPressurePct, type ActivityLineValue } from '../components/ActivityLine.js'
@@ -300,12 +300,15 @@ export function StatusLine({
     // footer can never grow decorations regardless of saved preferences.
     ? MINIMAL_UI_STATUS_BAR
     : normalizeStatusBar(channel.statusBar)
-  // Plugin fields pass two gates: the user switch (off also in the minimal
-  // UI) and their own `minColumns`. Everything below splices them into the
-  // SAME groups the built-ins use, so the empty case is a no-op.
+  // Plugin fields pass three gates: the user switch (off also in the minimal
+  // UI), the user's ordered list (empty = none, `*` = all unchanged, groups =
+  // ordered and re-slotted), and their own `minColumns`. Everything below
+  // splices them into the SAME groups the built-ins use, so the empty case is
+  // a no-op.
   const pluginFieldsVisible = statusBar.pluginFields && channel.minimalUi !== true
   const visibleFields = pluginFieldsVisible
-    ? (pluginFields ?? NO_PLUGIN_FIELDS).filter(field => columns >= field.minColumns)
+    ? applyPluginFieldsOrder(pluginFields ?? NO_PLUGIN_FIELDS, statusBar.pluginFieldsOrder)
+      .filter(field => columns >= field.minColumns)
     : NO_PLUGIN_FIELDS
   const inSlot = (slot: TuiStatusFieldSlot): FieldPart[] =>
     visibleFields.filter(field => field.slot === slot).map(toFieldPart)

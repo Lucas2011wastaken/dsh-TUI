@@ -1,6 +1,20 @@
 import type { ToolBackground, ScrollGutterMode, PageMarginSetting, PageMarginMode, PageMarginSpec, StatusBarConfig, JobGroupFoldMode } from './adapter/ports/channel-display.js'
 export type { ToolBackground, ScrollGutterMode, PageMarginSetting, PageMarginMode, PageMarginSpec, StatusBarConfig, JobGroupFoldMode } from './adapter/ports/channel-display.js'
 
+/** Where a plugin footer field joins the status row, in the list order the
+ *  user's `statusBar.pluginFieldsOrder` groups map onto by index. Kept
+ *  structurally identical to `TuiStatusFieldSlot` in `dsh-adapter/status.ts`
+ *  (a script compares the two literal sets). */
+export const STATUS_FIELD_SLOTS = ['left-tail', 'right-head', 'right-tail'] as const
+export type StatusFieldSlot = typeof STATUS_FIELD_SLOTS[number]
+
+/** `statusBar.pluginFieldsOrder`'s "show everything" token — the default. */
+export const ALL_PLUGIN_FIELDS = '*'
+
+/** The key grammar `tuiStatus.setField` admits, so the settings layer can
+ *  never write a key the admission would reject. Kept in step with
+ *  KEY_PATTERN in `dsh-adapter/status.ts` (a script compares the sources). */
+const PLUGIN_FIELD_KEY = /^[a-z][a-z0-9_-]*(:[a-z][a-z0-9_-]*)*$/u
 
 /** Defaults keep the essential route/context information visible. */
 export const DEFAULT_STATUS_BAR: Readonly<StatusBarConfig> = Object.freeze({
@@ -30,12 +44,128 @@ export const DEFAULT_STATUS_BAR: Readonly<StatusBarConfig> = Object.freeze({
   // registered a field asked to be seen), with one switch to silence all of
   // them without disabling the plugins.
   pluginFields: true,
+  // The per-field layer under `pluginFields`: `*` is "all of them, each in its
+  // plugin-declared slot, registration order" — i.e. the behaviour before this
+  // key existed, so an upgrade changes nothing.
+  pluginFieldsOrder: ALL_PLUGIN_FIELDS,
 })
 
 const TOOL_BACKGROUNDS = new Set<ToolBackground>(['none', 'subtle', 'strong'])
 const JOB_GROUP_FOLDS = new Set<JobGroupFoldMode>(['auto', 'always', 'never'])
 const SCROLL_GUTTERS = new Set<ScrollGutterMode>(['timeline', 'scrollbar', 'hidden'])
-const STATUS_BAR_KEYS = Object.keys(DEFAULT_STATUS_BAR) as (keyof StatusBarConfig)[]
+
+/** Every status-bar member but the ordered list; `normalizeStatusBar` copies
+ *  these only when the value is a boolean. */
+type BooleanStatusBarKey = Exclude<keyof StatusBarConfig, 'pluginFieldsOrder'>
+const STATUS_BAR_BOOLEAN_KEYS: readonly BooleanStatusBarKey[] = [
+  'compact', 'model', 'thinking', 'cwd', 'contextUsage', 'cache', 'tokens',
+  'cost', 'tps', 'gitBranch', 'sessionTitle', 'sessionId', 'goal', 'mode',
+  'contextBar', 'activity', 'trajectory', 'shortcutHint', 'pluginFields',
+]
+
+/** Parsed `statusBar.pluginFieldsOrder`. `invalid` is what the settings screen
+ *  refuses to save; the renderer treats it as `all`. */
+export type ParsedPluginFieldsOrder =
+  | { readonly mode: 'all' }
+  | { readonly mode: 'none' }
+  | { readonly mode: 'groups'; readonly groups: readonly (readonly string[])[] }
+  | { readonly mode: 'invalid'; readonly reason: 'groups' | 'token' | 'duplicate' | 'sentinel' }
+
+/** Strict parse of one `statusBar.pluginFieldsOrder` value:
+ *  - `*` — every plugin field (the default);
+ *  - `''` (or three empty groups) — none;
+ *  - otherwise exactly three `;`-separated groups of comma-separated keys, the
+ *    group index picking the slot and the group order the sequence.
+ *  Any other shape is `invalid`: the settings screen blocks the save, and the
+ *  renderer falls back to `all` so a hand-edited typo can only ever show MORE
+ *  than asked, never hide a plugin silently. */
+export function parsePluginFieldsOrder(value: string): ParsedPluginFieldsOrder {
+  const trimmed = value.trim()
+  if (trimmed === ALL_PLUGIN_FIELDS) return { mode: 'all' }
+  if (trimmed === '') return { mode: 'none' }
+  const parts = trimmed.split(';')
+  if (parts.length !== STATUS_FIELD_SLOTS.length) return { mode: 'invalid', reason: 'groups' }
+  // The sentinel is a whole-value form: `*;a;b` must not read as a key list.
+  if (parts.some(part => part.includes(ALL_PLUGIN_FIELDS))) return { mode: 'invalid', reason: 'sentinel' }
+  const seen = new Set<string>()
+  const groups: string[][] = []
+  for (const part of parts) {
+    const body = part.trim()
+    if (body === '') {
+      groups.push([])
+      continue
+    }
+    const group: string[] = []
+    for (const raw of body.split(',')) {
+      const key = raw.trim().toLowerCase()
+      // An empty token is a typing error (`a,,b`, `a,`), not a silent no-op.
+      if (key === '' || !PLUGIN_FIELD_KEY.test(key)) return { mode: 'invalid', reason: 'token' }
+      // A key in two groups would make "move it here" a silent no-op when the
+      // old position was not removed; refuse the write instead.
+      if (seen.has(key)) return { mode: 'invalid', reason: 'duplicate' }
+      seen.add(key)
+      group.push(key)
+    }
+    groups.push(group)
+  }
+  // `;;` is structurally fine and means the same as `''`.
+  return seen.size === 0 ? { mode: 'none' } : { mode: 'groups', groups }
+}
+
+/** Render parsed groups back to their canonical text (trimmed, lower-cased,
+ *  one separator between groups). */
+export function formatPluginFieldsOrder(groups: readonly (readonly string[])[]): string {
+  return groups.map(group => group.join(',')).join(';')
+}
+
+/** Normalize a settings/config-layer value: valid values land in canonical
+ *  form, an invalid string is kept (so the settings screen can show and fix
+ *  it), and anything that is not a string becomes the default `*`. */
+export function normalizePluginFieldsOrder(value: unknown): string {
+  if (typeof value !== 'string') return ALL_PLUGIN_FIELDS
+  const parsed = parsePluginFieldsOrder(value)
+  if (parsed.mode === 'invalid') return value.trim()
+  if (parsed.mode === 'all') return ALL_PLUGIN_FIELDS
+  if (parsed.mode === 'none') return ''
+  return formatPluginFieldsOrder(parsed.groups)
+}
+
+/** The structural minimum the footer renders from — keeps this module free of
+ *  a `dsh-adapter` type import. */
+export interface StatusFieldOrderEntry {
+  readonly key: string
+  readonly slot: StatusFieldSlot
+}
+
+const NO_ORDERED_FIELDS: readonly StatusFieldOrderEntry[] = Object.freeze([])
+
+/** Apply the user's list to the live field registry. `all` (and any invalid
+ *  value) returns the input array itself — the default mode allocates nothing;
+ *  `none` returns the shared empty array; `groups` returns new entries in list
+ *  order with the slot taken from the group index (the user's group overrides
+ *  the plugin-declared slot). Unknown keys are skipped. */
+export function applyPluginFieldsOrder<T extends StatusFieldOrderEntry>(
+  fields: readonly T[],
+  order: string,
+): readonly T[] {
+  const parsed = parsePluginFieldsOrder(order)
+  if (parsed.mode === 'all' || parsed.mode === 'invalid') return fields
+  if (parsed.mode === 'none') return NO_ORDERED_FIELDS as readonly T[]
+  const byKey = new Map(fields.map(field => [field.key, field] as const))
+  const ordered: T[] = []
+  parsed.groups.forEach((group, index) => {
+    const slot = STATUS_FIELD_SLOTS[index] as StatusFieldSlot
+    for (const key of group) {
+      const field = byKey.get(key)
+      if (field === undefined) continue
+      // One entry per key: the parser rejects duplicates, this only keeps a
+      // defensive double render impossible.
+      byKey.delete(key)
+      ordered.push({ ...field, slot } as T)
+    }
+  })
+  return ordered
+}
 
 /** Normalize untrusted/config-layer values without mutating the input. */
 export function normalizeToolBackground(value: unknown): ToolBackground {
@@ -64,9 +194,12 @@ export function normalizeStatusBar(value: unknown): StatusBarConfig {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return normalized
 
   const input = value as Record<string, unknown>
-  for (const key of STATUS_BAR_KEYS) {
+  for (const key of STATUS_BAR_BOOLEAN_KEYS) {
     if (typeof input[key] === 'boolean') normalized[key] = input[key]
   }
+  // The one non-boolean member: a hand-written invalid list stays verbatim so
+  // the settings screen can show it, and the renderer reads it as `all`.
+  normalized.pluginFieldsOrder = normalizePluginFieldsOrder(input.pluginFieldsOrder ?? DEFAULT_STATUS_BAR.pluginFieldsOrder)
   return normalized
 }
 

@@ -391,6 +391,7 @@ const BASE_CHANNEL = {
     trajectory: false,
     shortcutHint: false,
     pluginFields: true,
+    pluginFieldsOrder: '*',
   },
   model: 'MODELX',
   provider: 'test-provider',
@@ -663,6 +664,74 @@ try {
     check('R13 same-slot fields keep registration order',
       row.indexOf('AAAX') < row.indexOf('BBBX') && row.indexOf('CCCX') < row.indexOf('DDDX')
       && row.indexOf('BBBX') < row.indexOf('CCCX'), JSON.stringify(row))
+  }
+
+  // O1-O8 — the user's ordered list (statusBar.pluginFieldsOrder).
+  {
+    const four = () => [
+      field({ key: 'a', text: 'AAAX', slot: 'left-tail' }),
+      field({ key: 'b', text: 'BBBX', slot: 'left-tail' }),
+      field({ key: 'c', text: 'CCCX', slot: 'right-head' }),
+      field({ key: 'd', text: 'DDDX', slot: 'right-tail' }),
+    ]
+
+    // O1 — the default `*` keeps registration order (no explicit value at all).
+    const auto = await capture(100, { pluginFields: four() }, channelWith({ pluginFieldsOrder: '*' }))
+    const autoRow = statusRow(auto)
+    check('O1 `*` renders registration order',
+      autoRow.indexOf('AAAX') < autoRow.indexOf('BBBX')
+      && autoRow.indexOf('BBBX') < autoRow.indexOf('CCCX')
+      && autoRow.indexOf('CCCX') < autoRow.indexOf('DDDX'), JSON.stringify(autoRow))
+
+    // O2 — `''` means none, independent of the master switch.
+    const none = await capture(100, { pluginFields: four() }, channelWith({ pluginFieldsOrder: '' }))
+    check('O2 empty list hides every plugin field', none.every(line => !/AAA|BBB|CCC|DDD/u.test(line)))
+
+    // O3 — the list reorders inside a slot.
+    const reordered = await capture(100, { pluginFields: four() },
+      channelWith({ pluginFieldsOrder: 'b,a;;' }))
+    const reorderedRow = statusRow(reordered)
+    check('O3 list order wins inside a slot',
+      reorderedRow.indexOf('BBBX') < reorderedRow.indexOf('AAAX')
+      && !reorderedRow.includes('CCCX') && !reorderedRow.includes('DDDX'), JSON.stringify(reorderedRow))
+
+    // O4 — the group index overrides the plugin-declared slot: `d` was declared
+    // right-tail and is listed in group 1, so it joins the LEFT chain.
+    const moved = await capture(100, { pluginFields: four() },
+      channelWith({ pluginFieldsOrder: 'd;;' }))
+    const movedRow = statusRow(moved)
+    check('O4 listed group overrides the declared slot',
+      movedRow.includes('DDDX') && movedRow.includes('MODELX') && movedRow.includes('uniqdir')
+      && movedRow.indexOf('DDDX') > movedRow.indexOf('MODELX')
+      && movedRow.indexOf('DDDX') < movedRow.indexOf('uniqdir') && !movedRow.includes('CCCX'),
+      JSON.stringify(movedRow))
+
+    // O5 — keys missing from the list are hidden.
+    const partial = await capture(100, { pluginFields: four() },
+      channelWith({ pluginFieldsOrder: 'c;;' }))
+    const partialRow = statusRow(partial)
+    check('O5 unlisted fields are hidden', partialRow.includes('CCCX')
+      && !partialRow.includes('AAAX') && !partialRow.includes('BBBX') && !partialRow.includes('DDDX'),
+      JSON.stringify(partialRow))
+
+    // O6 — an unknown key is skipped, not rendered as a hole.
+    const unknown = await capture(100, { pluginFields: four() },
+      channelWith({ pluginFieldsOrder: 'a,zz;;' }))
+    check('O6 unknown keys are skipped', statusRow(unknown).includes('AAAX')
+      && !statusRow(unknown).includes('zz'), JSON.stringify(statusRow(unknown)))
+
+    // O7 — the master switch outranks the list.
+    const muted = await capture(100, { pluginFields: four() },
+      channelWith({ pluginFields: false, pluginFieldsOrder: 'a,b,c,d;;' }))
+    check('O7 pluginFields=false outranks the list', muted.every(line => !/AAA|BBB|CCC|DDD/u.test(line)))
+
+    // O8 — a hand-edited invalid value falls back to `*` (show more, never hide).
+    const invalid = await capture(100, { pluginFields: four() },
+      channelWith({ pluginFieldsOrder: 'a;b' }))
+    const invalidRow = statusRow(invalid)
+    check('O8 invalid list renders as `*`',
+      invalidRow.includes('AAAX') && invalidRow.includes('BBBX')
+      && invalidRow.includes('CCCX') && invalidRow.includes('DDDX'), JSON.stringify(invalidRow))
   }
 
   // R4 — minimal UI never shows plugin fields.
