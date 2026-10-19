@@ -117,7 +117,7 @@ const FIELD_TONE_COLOR: Record<
 
 /** Footer fields that answer a hover with a supplemental-row detail.
  *  The context bar reports the single `bar` target (see ContextBarView). */
-type HoverTarget =
+type BuiltinHoverTarget =
   | 'ctx'
   | 'mode'
   | 'effort'
@@ -133,6 +133,9 @@ type HoverTarget =
   | 'cwd'
   | 'title'
   | 'bar'
+
+/** Hover ids are an open set: plugin fields add `plugin:<key>` to the built-ins. */
+type HoverTarget = BuiltinHoverTarget | `plugin:${string}`
 
 /** One inline footer field: `node` renders inside a shrinkable, optionally
  *  hoverable Box; `key` doubles as the React key in its row. */
@@ -194,12 +197,16 @@ function FieldLine({
   )
 }
 
-/** Admit one host-normalized plugin field into a `FieldPart`. Rendering only:
- *  hover ids and clicks arrive with the interaction wiring. */
+/** Admit one host-normalized plugin field into a `FieldPart`. The id (and
+ *  therefore the hover affordance) exists only when the plugin declared a
+ *  detail: a field with nothing to say on hover must not catch the pointer. */
 function toFieldPart(field: TuiStatusFieldEntry): FieldPart {
+  const id: `plugin:${string}` = `plugin:${field.key}`
   const color = FIELD_TONE_COLOR[field.tone]
   return {
-    key: `plugin:${field.key}`,
+    key: id,
+    ...(field.detail === undefined ? {} : { id }),
+    ...(field.onClick === undefined ? {} : { onClick: field.onClick }),
     node: color === undefined
       ? <Text dimColor>{field.text}</Text>
       : <Text color={color}>{field.text}</Text>,
@@ -680,6 +687,7 @@ const selectionBadge = formatSelectionBadge(channel.selection)
   // hint (never the activity line) while the pointer dwells on a field.
   const detail = buildHoverDetail(
     hover,
+    visibleFields,
     channel,
     occupancy,
     usage,
@@ -836,6 +844,7 @@ function formatRateLimit(rateLimit: Channel['rateLimit']): string | undefined {
 
 function buildHoverDetail(
   hover: HoverTarget | null,
+  fields: readonly TuiStatusFieldEntry[],
   channel: Channel,
   occupancy: ContextOccupancy | undefined,
   usage: UsageSnapshot | undefined,
@@ -846,6 +855,16 @@ function buildHoverDetail(
   usedColors: readonly Color[],
 ): React.ReactNode | null {
   if (hover === null) return null
+  // Plugin fields first: their detail is verbatim host-sanitized text. A field
+  // that vanished mid-hover (disposed, reloaded, filtered out) is simply not
+  // found and falls through to null — the idle hint returns by the same
+  // guarded-leave rule the built-ins use.
+  if (hover.startsWith('plugin:')) {
+    const field = fields.find(candidate => `plugin:${candidate.key}` === hover)
+    return field?.detail === undefined
+      ? null
+      : <Text color="inactiveShimmer">{field.detail}</Text>
+  }
   const contextUsed = occupancy?.usedTokens
   // The hover surfaces report the SAME occupancy the field/bar above show; the
   // 'model' chip below stays a pure route-capacity readout.

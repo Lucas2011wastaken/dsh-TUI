@@ -9,8 +9,10 @@
  *
  * Part B — rendering, against the real StatusLine through `@xterm/headless`:
  * zero-footprint default, the three slots and in-slot order, the user switch,
- * minimal UI, `minColumns`, a width ladder, and compact mode. Hover detail and
- * click dispatch extend this battery with the interaction wiring.
+ * minimal UI, `minColumns`, a width ladder, compact mode, hover detail, click
+ * dispatch, and a throwing click that must be reported (never reach the
+ * renderer). The toast itself is Chat's wiring (`setFieldErrorHandler` →
+ * `channel.notify`); this battery drives the same handler shape Chat installs.
  *
  * Run: node --import tsx/esm scripts/verify-status-fields.tsx
  */
@@ -467,9 +469,24 @@ function statusNode(props: Record<string, unknown>, channel: Record<string, unkn
   )
 }
 
+/** Hover: SGR mode-1003 motion with no buttons (coords 1-indexed). */
+const hover = (stdin: FakeStdin, col: number, row: number): void => {
+  stdin.write(`\x1b[<35;${col};${row}M`)
+}
+
 /** The footer's status row: row 0 without the context bar, row 1 with it. */
 const statusRow = (lines: readonly string[], needle = 'MODELX'): string =>
   lines.find(line => line.includes(needle)) ?? ''
+
+/** Press + release at the first on-screen occurrence of `needle`. */
+async function clickText(stdin: FakeStdin, term: InstanceType<typeof XTerm>, needle: string): Promise<boolean> {
+  const at = findText(term, needle)
+  if (at === null) return false
+  stdin.write(`\x1b[<0;${at.col + 1};${at.row + 1}M`)
+  await sleep(30) // 固定窗:pacing 鼠标 press→release 步间
+  stdin.write(`\x1b[<0;${at.col + 1};${at.row + 1}m`)
+  return true
+}
 
 async function capture(cols: number, props: Record<string, unknown>, channel = BASE_CHANNEL): Promise<string[]> {
   const rig = makeRig(cols, 12)
@@ -620,6 +637,87 @@ try {
     }))
     check('R8 long field truncates instead of overflowing the row',
       statusRow(lines, 'ctx').includes('ctx') && lines.slice(3).every(line => line.trim() === ''), JSON.stringify(lines))
+  }
+
+  // R9 — hover swaps the supplemental row to the plugin detail, and leaving
+  // restores the idle state.
+  {
+    const rig = makeRig(100, 12)
+    const instance = await ui.render(
+      statusNode({ pluginFields: [field({ key: 'h', text: 'HOVERME', detail: 'DETAIL-LINE' })] }, BASE_CHANNEL),
+      {
+        stdout: rig.stdout as unknown as NodeJS.WriteStream,
+        stdin: rig.stdin as unknown as NodeJS.ReadStream,
+        exitOnCtrlC: false,
+        patchConsole: false,
+      },
+    )
+    try {
+      check('R9 field ready on screen', await settled(() => screenHas(rig.term, 'HOVERME')))
+      const at = findText(rig.term, 'HOVERME')
+      check('R9 hover target located', at !== null)
+      if (at !== null) {
+        hover(rig.stdin, at.col + 1, at.row + 1)
+        check('R9 hover shows the plugin detail', await settled(() => screenHas(rig.term, 'DETAIL-LINE')))
+        hover(rig.stdin, 1, 1)
+        check('R9 leaving restores the idle row', await settled(() => !screenHas(rig.term, 'DETAIL-LINE')))
+      }
+    } finally {
+      instance.unmount()
+      await sleep(120) // 固定窗:pacing 等首帧/卸载落定，无单一可轮询锚点
+      rig.term.dispose()
+    }
+  }
+
+  // R10 — click dispatches once; a throwing click is reported and the TUI
+  // keeps running. The entries come from a real activation, so the click the
+  // renderer invokes is the host-WRAPPED one (the throw is caught in the
+  // service, exactly as in production).
+  {
+    store.clear()
+    const rig = makeRig(100, 12)
+    let clicks = 0
+    let reported: string | undefined
+    store.setFieldErrorHandler(key => { reported = key })
+    let pluginCtx: Context | undefined
+    const fiber = await activate(ctx => {
+      pluginCtx = ctx
+      ctx.tuiStatus.setField('click', 'CLICKME', {
+        detail: 'CLICK-DETAIL',
+        onClick: () => { clicks += 1 },
+      })
+    })
+    const instance = await ui.render(statusNode({ pluginFields: [...store.getFieldSnapshot()] }, BASE_CHANNEL), {
+      stdout: rig.stdout as unknown as NodeJS.WriteStream,
+      stdin: rig.stdin as unknown as NodeJS.ReadStream,
+      exitOnCtrlC: false,
+      patchConsole: false,
+    })
+    try {
+      check('R10 field ready on screen', await settled(() => screenHas(rig.term, 'CLICKME')))
+      check('R10 click dispatched', await clickText(rig.stdin, rig.term, 'CLICKME'))
+      check('R10 callback ran exactly once', await settled(() => clicks === 1), `clicks=${clicks}`)
+      // Same activation updates the same key: the new click throws.
+      pluginCtx?.tuiStatus.setField('click', 'CLICKME', {
+        detail: 'CLICK-DETAIL',
+        onClick: () => { throw new Error('click boom') },
+      })
+      instance.rerender(statusNode({ pluginFields: [...store.getFieldSnapshot()] }, BASE_CHANNEL))
+      check('R10 throwing field re-rendered', await settled(() => screenHas(rig.term, 'CLICKME')))
+      // Past the renderer's 500ms multi-click window: a second click in the
+      // same cell would otherwise become a word-select, not a click.
+      await sleep(600) // 固定窗:墙钟 renderer 的 500ms 多击窗本身就是被测语义
+      await clickText(rig.stdin, rig.term, 'CLICKME')
+      check('R10 the throwing handler replaced the counting one', clicks === 1, `clicks=${clicks}`)
+      check('R10 throwing click is reported, not thrown', await settled(() => reported === 'click'), `reported=${reported}`)
+      check('R10 TUI survives the throwing click', screenHas(rig.term, 'CLICKME') && screenHas(rig.term, 'MODELX'))
+    } finally {
+      store.setFieldErrorHandler(undefined)
+      instance.unmount()
+      await sleep(120) // 固定窗:pacing 等首帧/卸载落定，无单一可轮询锚点
+      rig.term.dispose()
+      await fiber.dispose()
+    }
   }
 
   await root.fiber.dispose()

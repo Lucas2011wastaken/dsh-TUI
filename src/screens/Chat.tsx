@@ -675,6 +675,15 @@ export function Chat({
     subscribeStatus,
     () => statusContributions.getFieldSnapshot(),
   )
+  // A plugin's footer-field click that threw is logged by the service; the
+  // user-facing signal is a toast naming the key (same shape as the shortcut
+  // handler above). The service never lets the throw reach the renderer.
+  React.useEffect(() => {
+    statusContributions.setFieldErrorHandler(key => {
+      channel.notify(t('ext-status-field-failed', { key }), { color: 'error', timeoutMs: 4000 })
+    })
+    return () => statusContributions.setFieldErrorHandler(undefined)
+  }, [statusContributions, channel])
   // Shortcut handler failures surface as toasts (the registry also logs
   // them); the hook is re-pointed on every mount so a stale closure never
   // outlives its channel.
