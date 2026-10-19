@@ -36,9 +36,17 @@ reference**, not a promise:
 
 | Tier | Seams |
 | --- | --- |
-| Stable candidate (shape frozen; breaking changes go through a minor-version deprecation warning before removal) | VI settings sections · VIII full-screen scenes · X managed dialogs · XI status line · XII keyboard shortcuts · XIII entry renderers |
+| Stable candidate (shape frozen; breaking changes go through a minor-version deprecation warning before removal) | VI settings sections · VIII full-screen scenes · X managed dialogs · XI status line (+ footer fields via `setField`) · XII keyboard shortcuts · XIII entry renderers |
 | Experimental (may still shift with dsh-std / the TUI Profile) | IX decision events · toast notifications (`ctx.tuiToast`, new) · **Side panels (`ctx.tuiPanels`, full panel + compact row, experimental)** |
 | Upstream-tracked (stability owned by the cordis / dsh mechanisms underneath) | I session events · II official prompt slots · III bundled skills · IV themes · V system-prompt sections · VII profile composition |
+
+**Footer fields (an addition to seam XI)**: `ctx.tuiStatus.setField(key, text,
+options?)` joins one keyed text cell into the footer's existing left/right
+groups (three slots — `left-tail` / `right-head` / `right-tail` — with an
+optional hover detail and a fullscreen-only click) without adding a row;
+`/settings → statusBar.pluginFields` turns every plugin field off at once.
+Contract, rule table, and example: seam XI "footer fields" in the
+[admission & development guide](../tui-profile/docs/plugin-admission-and-development.md).
 
 Also an experimental public surface:
 

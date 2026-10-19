@@ -399,6 +399,7 @@ export const Config: Schema<Config, RuntimeConfig<Config>> = editableConfig<Conf
     activity: Schema.boolean().default(DEFAULT_STATUS_BAR.activity),
     trajectory: Schema.boolean().default(DEFAULT_STATUS_BAR.trajectory),
     shortcutHint: Schema.boolean().default(DEFAULT_STATUS_BAR.shortcutHint),
+    pluginFields: Schema.boolean().default(DEFAULT_STATUS_BAR.pluginFields),
   }).default({ ...DEFAULT_STATUS_BAR }),
   // Side-panel preferences, same shape as statusBar: every member carries a
   // default so an unset cordis.yml block and a partially hand-written one

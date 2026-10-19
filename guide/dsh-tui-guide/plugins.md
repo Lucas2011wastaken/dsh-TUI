@@ -31,12 +31,17 @@
 
 | 分级 | 接缝 |
 | --- | --- |
-| 稳定候选（形态冻结；如有破坏性变更，先在次版本弃用告警再移除） | 六 设置区块 · 八 全屏场景 · 十 托管对话框 · 十一 状态行 · 十二 键盘快捷键 · 十三 条目渲染器 |
+| 稳定候选（形态冻结；如有破坏性变更，先在次版本弃用告警再移除） | 六 设置区块 · 八 全屏场景 · 十 托管对话框 · 十一 状态行（+ 底栏字段 `setField`） · 十二 键盘快捷键 · 十三 条目渲染器 |
 | 实验性（仍可能随 dsh-std / TUI Profile 演进调整） | 九 决策事件 · toast 通知（`ctx.tuiToast`，新增） · **侧栏 Panel（`ctx.tuiPanels`，full 面板与 compact 行，实验性）** |
 | 跟随上游（稳定性由 cordis / dsh 官方机制决定） | 一 会话事件 · 二 官方 prompt 槽位 · 三 技能打包 · 四 主题 · 五 system prompt 段 · 七 profile 组合 |
 
 另：
 
+- **底栏插件字段（接缝十一的加法）**：`ctx.tuiStatus.setField(key, text,
+  options?)` 把一段键控文本并进底栏既有的左右组（`left-tail` /
+  `right-head` / `right-tail` 三槽，可选 hover 详情与全屏点击），不新增行；
+  `/settings → statusBar.pluginFields` 可一键关掉全部插件字段。契约、规则表与
+  示例见[准入与开发指南](../tui-profile/docs/plugin-admission-and-development.md)接缝十一「底栏字段」。
 - `@deepseek-harness-tui/dsh-tui/api`（纯类型入口）为实验性公开面。
 - **preset 内的行（实验性，接缝七）**：bundle 用 `@deepseek-harness-tui/dsh-tui/preset-patch`
   行改 dsh-TUI 注册的 preset 里某一行的 `config`（例如关掉 `standard` 的

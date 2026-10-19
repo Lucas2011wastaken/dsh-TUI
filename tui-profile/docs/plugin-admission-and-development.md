@@ -571,7 +571,7 @@ evaluator 成功时成立。
 | 八 · 全屏场景 | `ctx.tuiScenes` | 整屏 React 页面（`/trace` 形态） |
 | 九 · 决策事件 | cordis serial/parallel 事件 | 拦截/改写输入、rewind、会话切换、压缩 |
 | 十 · 托管对话框 | `ctx.tuiDialogs` | select / confirm / input 弹窗 |
-| 十一 · 状态行 | `ctx.tuiStatus` | 提示框上方的键控状态行 |
+| 十一 · 状态行 | `ctx.tuiStatus` | 提示框上方的键控状态行 + 底栏插件字段（`setField`） |
 | 十二 · 键盘快捷键 | `ctx.tuiShortcuts` | 注册全局组合键 |
 | 十三 · 条目渲染器 | `ctx.tuiRenderers` | 自定义会话事件 → transcript 文本行 |
 | 十四 · 后端 | 贡献族声明 + 注册 | 第三方后端接入（Backend 贡献族） |
@@ -1119,6 +1119,53 @@ status?.set('my-plugin', undefined)      // 主动清除（传 '' 同效）
   状态会永久留在界面。
 - 状态行是**纯展示**：要可点/可按键的东西请用快捷键（接缝十二）或场景
   （接缝八）。
+
+### 底栏字段（`setField`）
+
+`set` 写的是提示框**上方**的状态行；`setField` 写的是提示框**下方**底栏
+第 2 行——与宿主字段并排的键控文本 cell，不新增行、不新增分组。字段在三个
+槽里自选：`left-tail`（左组末尾，默认）、`right-head`（右组开头）、
+`right-tail`（右组末尾，整行最右）。宿主把文本当纯文本渲染，**不接受组件**
+（富内容用接缝八 / `registerView`）。
+
+```ts
+const tui = ctx.get('tuiStatus', false)
+const dispose = tui?.setField('build', '构建 42%', {
+  slot: 'right-head',
+  tone: 'success',
+  maxCells: 20,
+  detail: 'watch 任务 #42 · 点击查看 /build status',
+  onClick: () => { void openBuildPanel() },
+})
+ctx.effect(() => () => dispose?.())   // 清理挂在【调用者】自己的 fiber 上
+tui?.setField('build', undefined)     // 主动清除（传 '' 同效）
+```
+
+规则（全部"拒绝 + 告警，不抛错"；省略的选项沿用该 key 上一次的值）：
+
+| 项 | 规则 |
+| --- | --- |
+| key | 与 `set` 同一正则；字段与状态行、`registerView` 是**独立槽**，同一 key 可同时出现在多处 |
+| 文本 | 只接受标量；非标量拒绝（不是清除）。清洗后为空（纯空白/控制字符/bidi）按清除处理 |
+| `maxCells` | 单字段 cell 上限，默认 16、夹到 1…32；宿主强制截断 |
+| `minColumns` | 终端列数低于此值时该字段不渲染，默认 0、夹到 0…400 |
+| `tone` | 只接受 `dim` / `accent` / `success` / `warning` / `error`（主题语义色，不接受字面色） |
+| `slot` | 只接受 `left-tail` / `right-head` / `right-tail` |
+| `detail` | hover 时第 3 行显示的纯文本，≤160 cell；非 string 拒绝 |
+| `onClick` | 必须是函数，且**必须同时声明 `detail`**——可点 cell 欠一句悬停说明 |
+| 段数 | 全局 ≤6、单 activation ≤2（新增 key 才计数） |
+| 归属 | 同一 key 只能由首次注册的 activation 更新/清除 |
+| disposer | 与 `set` 相同的 token 语义：旧 disposer 不清新值 |
+
+交互：指针停在字段上时，补充行（hint/activity 所在行）显示 `detail`；点击
+只在**全屏模式**可用（鼠标跟踪只在备用屏开启），回调抛错由宿主记日志并
+toast，**不会打断 TUI**。inline 模式没有鼠标——不要假设点击一定发生；
+键盘等价物请用接缝十二的快捷键。
+
+稳定性：本方法属接缝十一「稳定候选（形态冻结）」档内的**加法**——只增
+不改，导出面不删任何现有类型；`TuiStatusFieldOptions` /
+`TuiStatusFieldSlot` / `TuiStatusFieldTone` 随 `./extensions` 与 `./api` 导出，
+宿主侧归一化后的 `TuiStatusFieldEntry` 不导出（里面含回调）。
 
 ## 接缝十二：键盘快捷键（tuiShortcuts）
 

@@ -265,6 +265,7 @@
     "verify:channel-trace-read": "node --import tsx/esm scripts/verify-channel-trace-read.ts",
     "verify:activity-store": "node --import tsx/esm scripts/verify-activity-store.ts",
     "verify:activity-store-render": "node --import tsx/esm scripts/verify-activity-store-render.tsx",
+    "verify:status-fields": "node --import tsx/esm scripts/verify-status-fields.tsx",
     "verify:activity-ownership": "node --import tsx/esm scripts/verify-activity-ownership.ts"
   },
   "peerDependencies": {

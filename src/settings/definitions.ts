@@ -412,6 +412,14 @@ export const SETTING_DEFINITIONS = {
     kind: 'boolean',
     group: 'status-bar',
   },
+  'statusBar.pluginFields': {
+    label: 'Show plugin fields',
+    descriptions: { zh: '显示插件底栏字段' },
+    hint: 'Show footer fields contributed by plugins. Turning this off does not uninstall anything.',
+    hintDescriptions: { zh: '显示插件贡献的底栏字段；关闭不会卸载任何插件。' },
+    kind: 'boolean',
+    group: 'status-bar',
+  },
   'statusBar.sessionId': {
     label: 'Show session id',
     descriptions: { zh: '显示会话 ID' },

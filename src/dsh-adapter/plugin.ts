@@ -1225,6 +1225,7 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
           activity: Schema.boolean().default(DEFAULT_STATUS_BAR.activity),
           trajectory: Schema.boolean().default(DEFAULT_STATUS_BAR.trajectory),
           shortcutHint: Schema.boolean().default(DEFAULT_STATUS_BAR.shortcutHint),
+          pluginFields: Schema.boolean().default(DEFAULT_STATUS_BAR.pluginFields),
         }).default({ ...DEFAULT_STATUS_BAR }),
         // Side-panel preferences. No schema defaults on purpose (same rule as
         // foldTerminalCommand/expandEditor above): a default here would come
@@ -1791,6 +1792,9 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
         },
         {
           ...settingField('statusBar.shortcutHint'),
+        },
+        {
+          ...settingField('statusBar.pluginFields'),
         },
         {
           ...settingField('sidePanel.splitEnabled'),

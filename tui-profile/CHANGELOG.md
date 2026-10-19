@@ -9,6 +9,27 @@
 都必须在最新条目里写出**坐标与原因**——这是"历史坐标的语义变更怎么被发现"的唯一人工记录
 （digest 只回答哪个坐标变了，不回答哪一条变了；见 governance §2/§4）。
 
+## 2026-10-19（接缝十一：底栏插件字段）
+
+### Added
+
+- `ctx.tuiStatus.setField(key, text, options?, identity?)`：接缝十一的**加法**——把
+  一段键控纯文本并进底栏既有的左右组（`left-tail` / `right-head` / `right-tail`
+  三个插入槽），不新增行、不新增分组、不新增服务、不新增能力位。选项含
+  `slot` / `tone`（主题语义色）/ `maxCells`（≤32）/ `minColumns` / `detail`
+  （hover 补充行）/ `onClick`（全屏鼠标，且必须同时声明 `detail`）。准入沿用
+  `set()` 的 caller/activation 归属、token disposer、effect-ledger 记录（新
+  resource kind `status-field`），并加全局 ≤6、单 activation ≤2 的段数上限；
+  所有拒绝路径告警不抛错。插件可用 `statusBar.pluginFields`（`/settings` 或
+  `cordis.yml`）一键关闭渲染，关闭不卸载插件。导出面只增不删：
+  `TuiStatusFieldOptions` / `TuiStatusFieldSlot` / `TuiStatusFieldTone` 进
+  `./extensions` 与 `./api`；宿主侧 `TuiStatusFieldEntry` 不导出。
+
+### Documented
+
+- 准入指南接缝十一新增「底栏字段（`setField`）」小节（契约、规则表、示例、
+  hover/点击的 mouse-only 说明、稳定性归属）；接缝总览与生态速览同步标注。
+
 ## 2026-10-18（D-4：生态治理三件收口）
 
 ### Changed
