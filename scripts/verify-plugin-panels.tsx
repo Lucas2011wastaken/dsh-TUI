@@ -24,7 +24,13 @@
  * card and the chat body stays intact; the 3rd reportError flips the entry
  * to the session-disabled card and fires one channel.notify toast.
  *
- * Run: node --import tsx/esm scripts/verify-plugin-panels.ts
+ * Kit surface (headless XTerm): ui.Markdown / ui.CodeBlock render inside a
+ * panel-narrowed TerminalSizeContext — 28/38 columns plus a resize to 60,
+ * fence length outgrows inner ``` runs, the language label sheds backticks
+ * and spaces, ui.CodeBlock keeps prompt-analysis tag blocks (raw code), and
+ * the code body picks up cli-highlight's colours once it loads.
+ *
+ * Run: node --import tsx/esm scripts/verify-plugin-panels.tsx
  */
 process.env.FORCE_COLOR = '3'
 process.env.DSH_TUI_LANG = 'zh'
@@ -381,36 +387,53 @@ function CodePanel({ ui: kit }: TuiPanelProps): ReactNode {
   return <CodeBlock code={TRICKY_CODE} language="ts" />
 }
 
+/** `<context>` 是宿主对聊天正文剥离的 prompt 标签块；`ui.CodeBlock` 承诺
+ *  「原始代码」，这三行必须原样到达屏幕（`ui.Markdown` 则保持聊天口径）。 */
+const TAGGED_CODE = 'const before = 1\n<context>\nkept line\n</context>\nconst after = 2'
+
+function TaggedPanel({ ui: kit }: TuiPanelProps): ReactNode {
+  const { CodeBlock } = kit
+  return <CodeBlock code={TAGGED_CODE} language="ts" />
+}
+
 let richDispose: (() => void) | undefined
 let codeDispose: (() => void) | undefined
+let taggedDispose: (() => void) | undefined
 root.inject(['tuiPanels'], ctx => {
   const panels = ctx.get('tuiPanels') as PanelsService
   richDispose = panels.register({ apiVersion: 1, id: 'rich', title: 'Rich', component: RichPanel as never })
   codeDispose = panels.register({ apiVersion: 1, id: 'tricky', title: 'Tricky', component: CodePanel as never })
+  taggedDispose = panels.register({ apiVersion: 1, id: 'tagged', title: 'Tagged', component: TaggedPanel as never })
 })
 await new Promise(resolve => setImmediate(resolve))
 const panelIdBySuffix = (suffix: string): string =>
   panelStore.list().find(entry => entry.definition.id.endsWith(':' + suffix))?.definition.id ?? ''
 const richPanelId = panelIdBySuffix('rich')
 const codePanelId = panelIdBySuffix('tricky')
-check('kit panels registered', richPanelId !== '' && codePanelId !== '')
+const taggedPanelId = panelIdBySuffix('tagged')
+check('kit panels registered', richPanelId !== '' && codePanelId !== '' && taggedPanelId !== '')
 
 /** 只挂 PanelHost 的一条 app：面板占左侧 width 列，外层终端更宽——于是
  *  「面板宽靠 TerminalSizeContext 收窄」才有可观测后果（终端宽 - 面板宽 >
- *  0 时，收窄一旦丢失，表格右边框就会落到裁剪线之外）。 */
+ *  0 时，收窄一旦丢失，表格右边框就会落到裁剪线之外）。resize 用同一棵树
+ *  走 Ink 的 rerender，证明宽度感知节点跟随面板宽度变化。 */
 async function openPanelScreen(
   panelId: string,
   width: number,
   height: number,
-): Promise<{ lines: () => string[]; close: () => Promise<void> }> {
-  const rows = height + 4
+): Promise<{
+  lines: () => string[]
+  cell: (x: number, y: number) => { isFgDefault(): boolean } | undefined
+  resize: (nextWidth: number, nextHeight: number) => void
+  close: () => Promise<void>
+}> {
   // 外层要足够宽：误用外层宽度时 contentWidth（宽 - 4）必须越过 CodeBlockFrame
   // 的 56 列宽表头阈值，收窄丢失才有可见后果。
-  const cols = width + 40
-  const xterm = new XTerm({ cols, rows, scrollback: 0, allowProposedApi: true })
+  const outerCols = (panelWidth: number): number => panelWidth + 40
+  const xterm = new XTerm({ cols: outerCols(width), rows: height + 4, scrollback: 0, allowProposedApi: true })
   const out = new FakeStdout(xterm)
-  out.columns = cols
-  out.rows = rows
+  out.columns = xterm.cols
+  out.rows = xterm.rows
   const controller = {
     enabledPanelIds: [panelId],
     activePanelId: panelId,
@@ -418,29 +441,39 @@ async function openPanelScreen(
     zoom: false,
     runtime: { registerInput: () => () => {}, dispatchKey: () => false },
   }
-  const rendered = await render(
+  const tree = (panelWidth: number, panelHeight: number): ReactNode => (
     <AlternateScreen>
       <ThemeProvider theme="dark">
-        <Box width={width}>
-          <PanelHost controller={controller as never} channel={channelStub as never} width={width} height={height} />
+        <Box width={panelWidth}>
+          <PanelHost controller={controller as never} channel={channelStub as never} width={panelWidth} height={panelHeight} />
         </Box>
       </ThemeProvider>
-    </AlternateScreen>,
-    {
-      stdout: out as unknown as NodeJS.WriteStream,
-      stdin: new FakeStdin() as unknown as NodeJS.ReadStream,
-      stderr: new FakeStderr() as unknown as NodeJS.WriteStream,
-      exitOnCtrlC: false,
-      patchConsole: false,
-    },
+    </AlternateScreen>
   )
+  const rendered = await render(tree(width, height), {
+    stdout: out as unknown as NodeJS.WriteStream,
+    stdin: new FakeStdin() as unknown as NodeJS.ReadStream,
+    stderr: new FakeStderr() as unknown as NodeJS.WriteStream,
+    exitOnCtrlC: false,
+    patchConsole: false,
+  })
   const read = (): string[] => {
     const buf = xterm.buffer.active
-    const out2: string[] = []
-    for (let y = 0; y < rows; y += 1) out2.push((buf.getLine(y)?.translateToString(false) ?? '').trimEnd())
-    return out2
+    const lines: string[] = []
+    for (let y = 0; y < xterm.rows; y += 1) lines.push((buf.getLine(y)?.translateToString(false) ?? '').trimEnd())
+    return lines
   }
-  return { lines: read, close: async () => { await rendered.unmount() } }
+  return {
+    lines: read,
+    cell: (x, y) => xterm.buffer.active.getLine(y)?.getCell(x),
+    resize: (nextWidth, nextHeight) => {
+      xterm.resize(outerCols(nextWidth), nextHeight + 4)
+      out.columns = xterm.cols
+      out.rows = xterm.rows
+      rendered.rerender(tree(nextWidth, nextHeight))
+    },
+    close: async () => { await rendered.unmount() },
+  }
 }
 
 const wide = await openPanelScreen(richPanelId, 38, 32)
@@ -479,6 +512,24 @@ check(
 )
 await narrow.close()
 
+// 尺寸变化（#1456 验收）：同一棵树重渲染成 60 列，宽度感知节点必须换形态——
+// 60 - 4 = 56 到达 CodeBlockFrame 的宽表头阈值，表头从 `┌─ ts` 变成带分隔线。
+const resized = await openPanelScreen(richPanelId, 38, 32)
+check('markdown panel: narrow form before resize', await settled(() => resized.lines().includes('┌─ ts')))
+resized.resize(60, 32)
+check(
+  'markdown panel: resize re-lays width-aware nodes against the new width',
+  await settled(() => resized.lines().some(line => line.startsWith('┌─ ts ─'))),
+)
+const resizedLines = resized.lines()
+const resizedTable = resizedLines.find(line => line.includes('列A')) ?? ''
+check(
+  'markdown panel: resized frame and table fit the new width',
+  resizedLines.filter(line => stringWidth(line) > 60).length === 0 && resizedTable.endsWith('│'),
+  resizedLines.filter(line => stringWidth(line) > 60)[0] ?? resizedTable,
+)
+await resized.close()
+
 const code = await openPanelScreen(codePanelId, 38, 16)
 check('code block: body renders', await settled(() => code.lines().some(line => line.includes('const a = 1'))))
 const codeLines = code.lines()
@@ -491,7 +542,41 @@ check(
   'rail rows=' + String(codeLines.filter(line => line.startsWith('│ ')).length),
 )
 check('code block: only one frame header (no stray re-opened fence)', codeLines.filter(line => line.startsWith('┌─ ')).length === 1)
+// 高亮是异步加载的（文档第①条限制）：cli-highlight 就绪后，代码体里必须出现
+// 非默认前景色。轨道（x=0）自带主题色，所以从 x=2（body 首列）起查。
+const { getCliHighlightPromise } = await import('../src/terminal-utils/cliHighlight.js')
+await getCliHighlightPromise()
+check(
+  'code block: body picks up cli-highlight colours once loaded',
+  await settled(() => {
+    const rows = code.lines()
+    const row = rows.findIndex(line => line.includes('const a = 1'))
+    if (row < 0) return false
+    for (let x = 2; x <= 80; x += 1) {
+      const cell = code.cell(x, row)
+      if (cell !== undefined && !cell.isFgDefault()) return true
+    }
+    return false
+  }),
+)
 await code.close()
+
+const tagged = await openPanelScreen(taggedPanelId, 38, 20)
+check(
+  'code block: prompt-analysis tags stay in raw code',
+  await settled(() => {
+    const rows = tagged.lines()
+    return rows.some(line => line.includes('<context>')) &&
+      rows.some(line => line.includes('kept line')) &&
+      rows.some(line => line.includes('</context>'))
+  }),
+)
+check(
+  'code block: tagged body keeps all five rows in one frame',
+  tagged.lines().filter(line => line.startsWith('│ ')).length === 5,
+  'rail rows=' + String(tagged.lines().filter(line => line.startsWith('│ ')).length),
+)
+await tagged.close()
 
 check('fenced(): plain body gets three backticks', fenced('x').startsWith('```\n'))
 check('fenced(): an inner ``` run gets four', fenced('a\n```\nb').startsWith('````\n'))
@@ -500,6 +585,7 @@ check('fenced(): the language label sheds backticks and spaces', fenced('x', 'ts
 
 richDispose?.()
 codeDispose?.()
+taggedDispose?.()
 
 rmSync(ledgerDir, { recursive: true, force: true })
 if (failed > 0) {

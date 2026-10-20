@@ -72,8 +72,12 @@ Also an experimental public surface:
   Panel bodies can use `ui.Markdown` / `ui.CodeBlock` (experimental, narrowed
   wrappers): the first takes a markdown string, the second raw code plus an
   optional language tag (fence length, language-tag sanitising and syntax
-  highlighting are the host's job). Four limits: ① **no highlighting on the
-  first frame** (`cli-highlight` loads asynchronously, same as host prose);
+  highlighting are the host's job). `ui.Markdown` keeps chat parity: the host
+  first strips `<commit_analysis>` / `<context>` / `<function_analysis>` /
+  `<pr_analysis>` tag blocks (inside code fences too), while `ui.CodeBlock`
+  skips that pass and keeps the raw code line for line. Four limits: ① **no
+  highlighting on the first frame** (`cli-highlight` loads asynchronously,
+  same as host prose);
   ② panels are **not selectable/copyable** (the whole sidebar column is
   `noSelect`; a copy capability is a separate proposal); ③ block `$$` math
   **follows the user's `mathRendering` setting** (an image when the terminal

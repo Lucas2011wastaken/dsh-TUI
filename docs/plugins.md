@@ -59,7 +59,10 @@
   `@deepseek-harness-tui/dsh-tui/panels` 与 `./api`。
   面板正文可用 `ui.Markdown` / `ui.CodeBlock`（实验性，收窄包装）：前者收一段
   markdown 字符串，后者收原始代码与可选语言标签（围栏长度、语言标签清洗与
-  语法高亮由宿主负责）。四条限制：① **首帧无语法高亮**（`cli-highlight` 异步
+  语法高亮由宿主负责）。`ui.Markdown` 与聊天正文同一口径：宿主会先剥离
+  `<commit_analysis>` / `<context>` / `<function_analysis>` / `<pr_analysis>`
+  标签块（代码围栏内也会）；`ui.CodeBlock` 不做这层剥离，原始代码逐行保留。
+  四条限制：① **首帧无语法高亮**（`cli-highlight` 异步
   加载完成后补上，与宿主正文同理）；② 面板**不可选择/复制**（侧栏整列
   `noSelect`，复制能力位另议）；③ 块级 `$$` 公式**跟随用户的 `mathRendering`
   偏好**（终端支持图形时走图片），行内公式不走图片、仍排成 Unicode；④ 正文

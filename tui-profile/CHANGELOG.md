@@ -23,7 +23,9 @@
   `TuiPanelEvent` / `TuiPanelSummary` 此前只在 `./panels`，`./api` 这次一并
   补齐。`apiVersion` 与 descriptor 形状均不变。
   面板仍是实验面：首帧无语法高亮、面板不可选择/复制、块级公式跟随用户的
-  `mathRendering`；限制与记忆化口径写在 `docs/plugins.md` 的侧栏 Panel 段。
+  `mathRendering`；`ui.Markdown` 沿用聊天口径（先剥 prompt-analysis 标签块），
+  `ui.CodeBlock` 不剥这层（原始代码逐行保留）。限制与记忆化口径写在
+  `docs/plugins.md` 的侧栏 Panel 段。
 
 ## 2026-10-19（接缝十一：底栏插件字段）
 
