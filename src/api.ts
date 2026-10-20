@@ -96,9 +96,12 @@ export type {
   TuiPanelDescriptor,
   TuiPanelProps,
   TuiPanelCompactProps,
+  TuiPanelMarkdownProps,
+  TuiPanelCodeBlockProps,
   TuiPanelHostApi,
   TuiPanelSnapshot,
   TuiPanelKeyEvent,
+  TuiPanelUi,
 } from './panels.js'
 // The single curated runtime value (a frozen integer contract marker); the
 // rest of this module stays types-only.

@@ -33,6 +33,8 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PassThrough, Writable } from 'node:stream'
+import type { ReactNode } from 'react'
+import type { TuiPanelProps } from '../src/panels.js'
 
 const [cordis, React, XTermMod, ui, termTest, prefs, i18nMod, adapterMod, storeMod, bridgeMod, panelAdapterMod] = await Promise.all([
   import('@deepseek-ai/cordis'),
@@ -51,7 +53,7 @@ const { Context } = cordis
 const { Terminal: XTerm } = XTermMod
 const { render, ThemeProvider, AlternateScreen, Box, Text } = ui
 const { settled, sleep } = termTest
-const { applySidePanelPanels, DEFAULT_SIDE_PANEL_IDS, getSidePanelPanels, parseSidePanelIds } = prefs
+const { applySidePanelPanels, applyCodeFrameStyle, DEFAULT_SIDE_PANEL_IDS, getSidePanelPanels, parseSidePanelIds } = prefs
 const { setLang } = i18nMod
 const { applyConfiguredSidePanelPanels, applySidePanelPanelsFromSettings, TuiPanelRuntime, getHostPanelRuntime } = adapterMod
 const { panelStore } = storeMod
@@ -331,6 +333,173 @@ check('render smoke: disabled card after 3 crashes', lines().some(l => l.include
 check('render smoke: disable toast fired once', notifyCalls.filter(text => text.includes('禁用')).length === 1)
 await app.unmount()
 smokeDispose?.()
+
+// ── kit surface: ui.Markdown / ui.CodeBlock（#1456）──────────────────────
+// 单独起 app：不放 chat 列、行数够，外层终端比面板宽 40 列。上面那条 60×16
+// 的 app 面板正文只有 12 行、且第 0–19 列是 chat 列——九特性夹具在那里必然
+// 被裁。外层终端必须明显更宽：「误用外层宽度」只有在越过 CodeBlockFrame 的
+// 56 列宽表头阈值之后才看得见（见 openPanelScreen 的注释）。
+const { stringWidth } = await import('../src/ink/stringWidth.js')
+const { fenced } = await import('../src/components/sidePanel/panelMarkdown.js')
+
+// 固定成 light：只有 header + rail，没有右边墙与底边，形态断言才确定。
+applyCodeFrameStyle('light')
+
+const RICH_MARKDOWN = [
+  '# 面板标题',
+  '',
+  '一段足够长的正文，用来验证它在面板宽度内折行，而不是溢出后被裁掉。',
+  '',
+  '- 列表项一',
+  '- 列表项二',
+  '',
+  '> 引用块',
+  '',
+  '- [x] 已完成的任务',
+  '',
+  '~~删除线~~ 与 [链接](https://example.com)',
+  '',
+  '| 列A | 列B |',
+  '| --- | --- |',
+  '| 1 | 2 |',
+  '',
+  '```ts',
+  'const answer = 42',
+  '```',
+].join('\n')
+
+/** 正文里含 ```：围栏必须比它长，否则后两行会跑到框外。 */
+const TRICKY_CODE = 'const a = 1\n```\nconst b = 3'
+
+function RichPanel({ ui: kit }: TuiPanelProps): ReactNode {
+  const { Markdown } = kit
+  return <Markdown>{RICH_MARKDOWN}</Markdown>
+}
+
+function CodePanel({ ui: kit }: TuiPanelProps): ReactNode {
+  const { CodeBlock } = kit
+  return <CodeBlock code={TRICKY_CODE} language="ts" />
+}
+
+let richDispose: (() => void) | undefined
+let codeDispose: (() => void) | undefined
+root.inject(['tuiPanels'], ctx => {
+  const panels = ctx.get('tuiPanels') as PanelsService
+  richDispose = panels.register({ apiVersion: 1, id: 'rich', title: 'Rich', component: RichPanel as never })
+  codeDispose = panels.register({ apiVersion: 1, id: 'tricky', title: 'Tricky', component: CodePanel as never })
+})
+await new Promise(resolve => setImmediate(resolve))
+const panelIdBySuffix = (suffix: string): string =>
+  panelStore.list().find(entry => entry.definition.id.endsWith(':' + suffix))?.definition.id ?? ''
+const richPanelId = panelIdBySuffix('rich')
+const codePanelId = panelIdBySuffix('tricky')
+check('kit panels registered', richPanelId !== '' && codePanelId !== '')
+
+/** 只挂 PanelHost 的一条 app：面板占左侧 width 列，外层终端更宽——于是
+ *  「面板宽靠 TerminalSizeContext 收窄」才有可观测后果（终端宽 - 面板宽 >
+ *  0 时，收窄一旦丢失，表格右边框就会落到裁剪线之外）。 */
+async function openPanelScreen(
+  panelId: string,
+  width: number,
+  height: number,
+): Promise<{ lines: () => string[]; close: () => Promise<void> }> {
+  const rows = height + 4
+  // 外层要足够宽：误用外层宽度时 contentWidth（宽 - 4）必须越过 CodeBlockFrame
+  // 的 56 列宽表头阈值，收窄丢失才有可见后果。
+  const cols = width + 40
+  const xterm = new XTerm({ cols, rows, scrollback: 0, allowProposedApi: true })
+  const out = new FakeStdout(xterm)
+  out.columns = cols
+  out.rows = rows
+  const controller = {
+    enabledPanelIds: [panelId],
+    activePanelId: panelId,
+    focus: 'panel' as const,
+    zoom: false,
+    runtime: { registerInput: () => () => {}, dispatchKey: () => false },
+  }
+  const rendered = await render(
+    <AlternateScreen>
+      <ThemeProvider theme="dark">
+        <Box width={width}>
+          <PanelHost controller={controller as never} channel={channelStub as never} width={width} height={height} />
+        </Box>
+      </ThemeProvider>
+    </AlternateScreen>,
+    {
+      stdout: out as unknown as NodeJS.WriteStream,
+      stdin: new FakeStdin() as unknown as NodeJS.ReadStream,
+      stderr: new FakeStderr() as unknown as NodeJS.WriteStream,
+      exitOnCtrlC: false,
+      patchConsole: false,
+    },
+  )
+  const read = (): string[] => {
+    const buf = xterm.buffer.active
+    const out2: string[] = []
+    for (let y = 0; y < rows; y += 1) out2.push((buf.getLine(y)?.translateToString(false) ?? '').trimEnd())
+    return out2
+  }
+  return { lines: read, close: async () => { await rendered.unmount() } }
+}
+
+const wide = await openPanelScreen(richPanelId, 38, 32)
+check(
+  'markdown panel (38): renders heading/list/quote/strike/link',
+  await settled(() => {
+    const rows = wide.lines()
+    return ['面板标题', '列表项一', '引用块', '删除线', 'example.com'].every(text => rows.some(line => line.includes(text)))
+  }),
+)
+const wideLines = wide.lines()
+const wideOverflow = wideLines.filter(line => stringWidth(line) > 38)
+const wideTable = wideLines.find(line => line.includes('列A')) ?? ''
+// 承重信号是「宽度感知节点按面板宽排版」，不是帧宽：
+// - 代码框表头在 34 列内容宽下是窄形态（`┌─ ts`，无分隔线）；收窄一丢，
+//   contentWidth 变 56，表头立刻带上分隔线。
+// - 表格在 34 列预算下仍是有边框形态；收窄一丢，它按 56 排版并在 38 处折行，
+//   表头那行不再以右边框收尾。
+// 普通文本会被 Ink 按盒宽折行，帧宽永远不越界，所以宽断言本身证明不了收窄。
+check(
+  'markdown panel (38): width-aware nodes lay out against the panel width',
+  wideOverflow.length === 0 && wideLines.includes('┌─ ts') && wideTable.endsWith('│'),
+  wideOverflow[0] ?? (wideLines.find(line => line.startsWith('┌─')) ?? wideTable),
+)
+await wide.close()
+
+const narrow = await openPanelScreen(richPanelId, 28, 32)
+check('markdown panel (28): renders at the default minColumns', await settled(() => narrow.lines().some(line => line.includes('列A'))))
+const narrowLines = narrow.lines()
+const narrowOverflow = narrowLines.filter(line => stringWidth(line) > 28)
+const narrowTable = narrowLines.find(line => line.includes('列A')) ?? ''
+check(
+  'markdown panel (28): width-aware nodes lay out against the panel width',
+  narrowOverflow.length === 0 && narrowLines.includes('┌─ ts') && narrowTable.endsWith('│'),
+  narrowOverflow[0] ?? (narrowLines.find(line => line.startsWith('┌─')) ?? narrowTable),
+)
+await narrow.close()
+
+const code = await openPanelScreen(codePanelId, 38, 16)
+check('code block: body renders', await settled(() => code.lines().some(line => line.includes('const a = 1'))))
+const codeLines = code.lines()
+// 38 宽面板 → contentWidth 34 < 56，表头是窄形态（无分隔线）。出现分隔线
+// 就说明 code frame 拿到了面板外的宽度。
+check('code block: header stays in the panel-width form', codeLines.includes('┌─ ts'), codeLines.find(line => line.startsWith('┌─')) ?? '')
+check(
+  'code block: one frame holds all three rows (inner ``` did not close it)',
+  codeLines.filter(line => line.startsWith('│ ')).length === 3,
+  'rail rows=' + String(codeLines.filter(line => line.startsWith('│ ')).length),
+)
+check('code block: only one frame header (no stray re-opened fence)', codeLines.filter(line => line.startsWith('┌─ ')).length === 1)
+await code.close()
+
+check('fenced(): plain body gets three backticks', fenced('x').startsWith('```\n'))
+check('fenced(): an inner ``` run gets four', fenced('a\n```\nb').startsWith('````\n'))
+check('fenced(): an inner ````` run gets six', fenced('a\n`````\nb').startsWith('``````\n'))
+check('fenced(): the language label sheds backticks and spaces', fenced('x', 'ts`\n````').startsWith('```ts\n'))
+
+richDispose?.()
+codeDispose?.()
 
 rmSync(ledgerDir, { recursive: true, force: true })
 if (failed > 0) {
