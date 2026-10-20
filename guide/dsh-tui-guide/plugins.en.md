@@ -77,9 +77,10 @@ Also an experimental public surface:
   ② panels are **not selectable/copyable** (the whole sidebar column is
   `noSelect`; a copy capability is a separate proposal); ③ block `$$` math
   **follows the user's `mathRendering` setting** (an image when the terminal
-  supports graphics) — inline math is off; ④ keep the content string's
-  **identity stable** to hit `React.memo`; a fresh string per frame re-runs
-  lexing and layout.
+  supports graphics); inline math never becomes an image and stays Unicode;
+  ④ keep the body content **unchanged** to hit `React.memo` (strings compare
+  by value, so a fresh string with the same content still hits; only changed
+  content re-runs formatting and layout, while lexing is cached by content).
 - The `@deepseek-harness-tui/dsh-tui/test-utils` subpath and
   `ctx.tuiPluginHost.grants.corrupt` were removed in the adapter layering
   refactor (#705).

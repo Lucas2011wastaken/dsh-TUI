@@ -19,10 +19,11 @@
   **新定义的收窄包装**（`components/sidePanel/panelMarkdown.tsx`），只承诺
   字符串入参：插件拿不到 marked 的 token、`CliHighlight` 句柄或 `ref`，
   `Assert` 类型守卫把这条钉成编译错误。`TuiPanelMarkdownProps` /
-  `TuiPanelCodeBlockProps` 进 `./panels` 与 `./api`；`TuiPanelUi` 此前只在
-  `./panels`，`./api` 这次一并补齐。`apiVersion` 与 descriptor 形状均不变。
+  `TuiPanelCodeBlockProps` 进 `./panels` 与 `./api`；`TuiPanelUi` /
+  `TuiPanelEvent` / `TuiPanelSummary` 此前只在 `./panels`，`./api` 这次一并
+  补齐。`apiVersion` 与 descriptor 形状均不变。
   面板仍是实验面：首帧无语法高亮、面板不可选择/复制、块级公式跟随用户的
-  `mathRendering`，三条限制写在 `docs/plugins.md` 的侧栏 Panel 段。
+  `mathRendering`；限制与记忆化口径写在 `docs/plugins.md` 的侧栏 Panel 段。
 
 ## 2026-10-19（接缝十一：底栏插件字段）
 
