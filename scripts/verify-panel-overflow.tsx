@@ -15,7 +15,12 @@
  *      question / option rows / key hint still on screen;
  *   3. a 40-line question: same invariant for the questionnaire panel;
  *   4. the same long command on a 24-row terminal: the panel shrinks its
- *      preview instead of pushing the tail off screen.
+ *      preview instead of pushing the tail off screen — asserted through the
+ *      omitted count itself, so the frame really was laid out at 24 rows;
+ *   5. a spent preview budget: the asker's reason keeps its marker instead of
+ *      being dropped (long command + long reason on that 24-row terminal);
+ *   6. a short question plus a six-row detail on the same terminal: the
+ *      question's unused rows reach the detail, so nothing folds.
  *
  * Run: node --import tsx/esm scripts/verify-panel-overflow.tsx
  */
@@ -31,7 +36,7 @@ const [
   { QuestionStore },
   { ApprovalStore },
   { default: instances },
-  { settle, viewportLines },
+  { settle, settled, viewportLines },
 ] = await Promise.all([
   import('node:stream'),
   import('react'),
@@ -131,11 +136,12 @@ const fakeApprovalReq = (callId: string, command: string) => ({
 const longCommand = Array.from({ length: 300 }, (_, index) => `line ${index + 1}`).join('\n')
 const longQuestion = Array.from({ length: 40 }, (_, index) => `问题第 ${index + 1} 行`).join('\n')
 
-const questionReq = (question: string) => ({
+const questionReq = (question: string, detail?: string) => ({
   questions: [{
     id: 'q1',
     header: 'Overflow probe',
     question,
+    ...(detail === undefined ? {} : { detail }),
     options: [{ label: 'Option Alpha' }, { label: 'Option Beta' }],
   }],
 }) as never
@@ -160,6 +166,14 @@ const approvePanelVisible = (): boolean =>
 const questionPanelVisible = (): boolean =>
   visible('Option Alpha') && visible('Option Beta') && visible('↑/↓ 选择')
 
+/** Rows the fold marker reports as hidden — undefined when no marker is up. */
+const omittedCount = (text: string): number | undefined => {
+  const match = /… 另有 (\d+) 行未显示/.exec(text)
+  return match === null ? undefined : Number(match[1])
+}
+/** Marker count on the wide-terminal frame; the 24-row frame must exceed it. */
+let wideOmitted: number | undefined
+
 const approvals = new ApprovalStore()
 const questions = new QuestionStore()
 // A real fullscreen session wraps Chat in <AlternateScreen>: its boxes are
@@ -181,13 +195,13 @@ app.rerender(tree())
 ink.setAltScreenActive(true, true)
 await settle(() => visible('hello'), { timeoutMs: 5000 })
 
-// 1) A short command renders as before: nothing folded.
+// 1) A short command renders as before: nothing folded, reason intact.
 {
   const parked = approvals.park(fakeApprovalReq('short', 'rm -rf /tmp/x\nls -la'))
-  const shown = await settle(() => visible('要允许这次操作吗？'), { timeoutMs: 3000 })
-  void shown
+  await settle(() => visible('要允许这次操作吗？'), { timeoutMs: 3000 })
   check('short command: panel tail visible', approvePanelVisible(), screenText())
   check('short command: no fold marker', !visible('行未显示'), screenText())
+  check('short command: the reason shows', visible('verify probe'), screenText())
   stdin.write('2')
   await parked
   await settle(() => !visible('要允许这次操作吗？'))
@@ -198,9 +212,11 @@ await settle(() => visible('hello'), { timeoutMs: 5000 })
   const parked = approvals.park(fakeApprovalReq('long', longCommand))
   await settle(() => visible('要允许这次操作吗？'), { timeoutMs: 3000 })
   const text = screenText()
+  wideOmitted = omittedCount(text)
   check('long command: panel tail visible', approvePanelVisible(), text)
-  check('long command: folded with a marker', /… 另有 \d+ 行未显示/.test(text), text)
+  check('long command: folded with a marker', wideOmitted !== undefined, text)
   check('long command: the tail is not painted', !text.includes('line 300'), text)
+  check('long command: the reason still shows', visible('verify probe'), text)
   stdin.write('2')
   await parked
   await settle(() => !visible('要允许这次操作吗？'))
@@ -224,12 +240,47 @@ await settle(() => visible('hello'), { timeoutMs: 5000 })
   stdout.rows = 24
   term.resize(COLS, 24)
   stdout.emit('resize')
-  await settle(() => rows().length === 24, { timeoutMs: 3000 })
   const parked = approvals.park(fakeApprovalReq('small', longCommand))
-  await settle(() => visible('要允许这次操作吗？'), { timeoutMs: 3000 })
+  // The resize is observed through the panel itself: a 24-row budget folds
+  // more of the command, so the omitted count must grow past the 40-row one.
+  // Counting the viewport's rows cannot prove this — viewportLines always
+  // returns `rows` lines — so the marker carries the layout evidence.
+  const shrunk = await settled(
+    () => wideOmitted !== undefined && (omittedCount(screenText()) ?? 0) > wideOmitted,
+    { timeoutMs: 3000 },
+  )
+  check('24 rows: preview shrinks with the terminal', shrunk, screenText())
   check('24 rows: panel tail visible', approvePanelVisible(), screenText())
   stdin.write('2')
   await parked
+  await settle(() => !visible('要允许这次操作吗？'))
+}
+
+// 5) A spent preview budget marks the asker's reason instead of dropping it:
+//    the command takes every row (still the 24-row terminal), so the reason
+//    can only be its omitted marker.
+{
+  const longReason = Array.from({ length: 10 }, (_, index) => `理由第 ${index + 1} 行`).join('\n')
+  const parked = approvals.park({ ...fakeApprovalReq('reason', longCommand), reason: longReason })
+  const marked = await settled(() => /… 另有 10 行未显示/.test(screenText()), { timeoutMs: 3000 })
+  check('spent budget: reason is marked, not dropped', marked, screenText())
+  check('spent budget: panel tail still visible', approvePanelVisible(), screenText())
+  stdin.write('2')
+  await parked
+}
+
+// 6) The question's unused allowance reaches the detail: on the same 24-row
+//    terminal a one-line question plus a six-row detail still fits unfolded.
+{
+  const detail = Array.from({ length: 6 }, (_, index) => `说明第 ${index + 1} 行`).join('\n')
+  const asked = questions.ask(questionReq('短问题', detail)).catch(() => undefined)
+  await settle(() => visible('Option Alpha'), { timeoutMs: 3000 })
+  const text = screenText()
+  check('24 rows: short question keeps the detail unfolded', visible('说明第 6 行'), text)
+  check('24 rows: no fold marker for a fitting detail', !visible('行未显示'), text)
+  check('24 rows: question panel tail visible', questionPanelVisible(), text)
+  stdin.write('\x1b')
+  await asked
 }
 
 if (failures > 0) {

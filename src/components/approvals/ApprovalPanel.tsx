@@ -76,9 +76,12 @@ const TITLE_MAX_LINES = 3
 const REASON_MAX_LINES = 3
 
 /**
- * Rows the chat screen keeps below and beside the panel: the input cluster
- * (composer + status line) and at least one transcript row. Same reserve the
- * overlay budget uses for the prompt slot.
+ * Rows kept for the rest of the bottom chrome while this panel is up: the
+ * status line plus a floor of transcript rows. The composer does not count —
+ * Chat replaces it with this panel (`PromptInput` stays mounted but suspended,
+ * rendering nothing). The value deliberately matches the picker overlay's
+ * prompt-slot reserve so both surfaces leave the same footer budget; the two
+ * stay separate literals because the overlay's composer IS on screen.
  */
 const CHROME_RESERVED_ROWS = 8
 
@@ -239,14 +242,17 @@ export function ApprovalPanel({ approval, background = false, onDecide }: Approv
     + (approval.subagentId === undefined ? 0 : 1)
     + (approval.external === true ? 1 : 0)
     + (approval.blockedPath === undefined ? 0 : 1)
-  // divider + content margin + warnings + "proceed" + options margin +
-  // option rows + the focused row's spacer + hint margin + hint.
-  const fixedRows = 7 + warningRows + options.length
+  // root margin + divider + content margin + warnings + "proceed" + options
+  // margin + option rows + the focused row's spacer + hint margin + hint.
+  const fixedRows = 8 + warningRows + options.length
   let previewRowsLeft = Math.max(1, rows - fixedRows - CHROME_RESERVED_ROWS)
+  // A present text is never dropped: once the budget is spent it still keeps
+  // its omitted marker, overdrawing the chrome reserve by at most one row per
+  // block. Silently hiding the asker's reason reads as "there was none".
   const takePreview = (text: string | undefined, cells: number, cap: number): PreviewRowView | undefined => {
-    if (text === undefined || previewRowsLeft < 1) return undefined
-    const view = clipPreviewRows(text, cells, Math.min(cap, previewRowsLeft))
-    previewRowsLeft -= view.rows.length + (view.omitted > 0 ? 1 : 0)
+    if (text === undefined) return undefined
+    const view = clipPreviewRows(text, cells, Math.max(1, Math.min(cap, previewRowsLeft)))
+    previewRowsLeft = Math.max(0, previewRowsLeft - view.rows.length - (view.omitted > 0 ? 1 : 0))
     return view
   }
   // The gated command is what the decision is about: it takes the budget

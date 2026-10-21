@@ -291,9 +291,22 @@ export function AskUserQuestionPanel({
   ))
   const questionView = clipPreviewRows(question.question, contentCells, previewMaxRows)
   const questionBlockRows = questionView.rows.length + (questionView.omitted > 0 ? 1 : 0)
+  // The question's unused allowance flows to the detail — but only the rows
+  // the terminal frees up beyond the chrome floor. On a terminal already at
+  // that floor every preview row is contested, and the cap is what keeps the
+  // option list and the hint on screen; above it a one-line question must not
+  // fold the detail against a budget the question never needed.
+  const sparePreviewRows = Math.max(
+    0,
+    terminalRows - QUESTION_CHROME_ROWS - questionBlockRows,
+  )
+  const detailMaxRows = Math.max(2, Math.min(
+    QUESTION_PREVIEW_MAX_ROWS,
+    previewMaxRows + sparePreviewRows,
+  ))
   const detailView = question.detail === undefined
     ? undefined
-    : clipPreviewRows(question.detail, contentCells, previewMaxRows)
+    : clipPreviewRows(question.detail, contentCells, detailMaxRows)
   const detailRows = detailView === undefined
     ? (linkText === '' ? 0 : 2)
     : detailView.rows.length + (detailView.omitted > 0 ? 1 : 0) + 1 + (linkText === '' ? 0 : 1)
