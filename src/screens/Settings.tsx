@@ -787,20 +787,23 @@ export function Settings({
   )
 
   /**
-   * Checkbox rows of one picker field, in display order: every registered
-   * panel (registry order — builtins by `order`, then plugins), then the
-   * well-formed ids nothing claims yet as checked placeholder rows (the
-   * extension story: tick a future id now, the plugin claims it later), then
-   * the advanced raw-text row. Checked derives from the same resolver the
-   * PanelBar uses, so `*` (the default) shows every registered panel — plugin
-   * panels included — as checked.
+   * Checkbox rows of one picker field, always in the **documented default
+   * order** — the order `sidePanel.panels` ships with — so the list never
+   * reshuffles when the stored value changes or a plugin registers: built-ins
+   * by `DEFAULT_SIDE_PANEL_IDS`, then plugin panels in registry order. Checked
+   * derives from the same resolver the PanelBar uses, so `*` (the default)
+   * shows every registered panel — plugin panels included — as checked. An
+   * explicit list's own order stays user data for the PanelBar and the
+   * advanced row; a well-formed id nothing claims yet stays as a checked
+   * placeholder at the tail (the extension story: tick a future id now, the
+   * plugin claims it later).
    */
   const panelPickerRows = (ns: string, field: TuiSettingsField): { id: string; checked: boolean }[] => {
     const text = forms.get(ns)?.field(field).text ?? ''
     const enabled = new Set(panelEnabledIds(text, registeredPanelIds))
     const claimed = new Set(registeredPanelIds)
-    const rows = panelEntries.map(entry => ({ id: entry.definition.id, checked: enabled.has(entry.definition.id) }))
-    // Placeholders only exist in explicit mode: `*` has no stored id list.
+    const rows = panelEnabledIds(ALL_SIDE_PANELS, registeredPanelIds)
+      .map(id => ({ id, checked: enabled.has(id) }))
     const parsed = parseSidePanelPanels(text)
     if (parsed.mode === 'list') {
       for (const id of parsed.ids) {

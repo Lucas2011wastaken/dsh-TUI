@@ -7,9 +7,9 @@
  *  r. 纯解析器：`*` = 全部已注册面板（内置按默认顺序、其余按注册表顺序）；
  *     显式列表原样返回（含未注册占位 id）；空/非法归一为 `*`；`*` 是整值
  *     形式（`*,todo` 非法）。
- *  p. 勾选↔值映射：内置面板行从 panelStore 注册表现场枚举（图标+名称+
- *     一句话描述），勾选态由 `*`/显式列表经同一解析器派生；Enter 与真 SGR
- *     鼠标点击都走同一 toggle（点击即勾选/取消）。
+ *  p. 勾选↔值映射：行序固定为默认顺序（内置默认顺序 + 插件注册顺序），不随存储
+ *     列表顺序或勾选移动；勾选态由同一解析器派生；Enter 与真 SGR 鼠标点击都走
+ *     同一 toggle（点击即勾选/取消）。
  *  o. 顺序保真：已有 id 保持现有相对顺序（PanelBar 顺序是用户数据），
  *     新勾选追加到尾、取消即移除——写入的字符串逐字断言；`*` 下取消一行
  *     会先物化完整列表，绝不丢插件 id（issue #1662）。
@@ -216,9 +216,20 @@ async function openPicker(stored: string) {
   return screen
 }
 
-// Builtin rows render in registry order (order: todo 10, info 15, jobs 20,
-// btw 22, trajectory 25, agents 30, workspace 35, companion 40).
-const ROW_TODO = 0, ROW_JOBS = 2, ROW_COMPANION = 7
+/** Row index of one picker row in focus order: rows are exactly one line
+ *  each, so the distance from the first checkbox row is the index. */
+function rowOf(screen: { view(): string }, needle: string): number {
+  const lines = screen.view().split('\n')
+  const first = lines.findIndex(line => /\[[✓ ] \]/.test(line))
+  const target = lines.findIndex(line => line.includes(needle))
+  return first >= 0 && target >= first ? target - first : -1
+}
+
+// Rows always render in the documented default order (the order the value
+// ships with), independent of the stored list order: todo, jobs, agents,
+// info, trajectory, workspace, btw, companion — plugin panels appended in
+// registry order. Toggling or registering must never reshuffle this list.
+const ROW_JOBS = 1, ROW_COMPANION = 7
 
 // ── r. the pure resolver: the one source both the picker and PanelBar read ──
 {
@@ -288,6 +299,9 @@ const ROW_TODO = 0, ROW_JOBS = 2, ROW_COMPANION = 7
 {
   const screen = await openPicker('agents,todo')
   if (screen === null) { check('o custom order scenario opened', false); process.exit(1) }
+  // The stored order is `agents,todo`, but the list keeps the default order
+  // (todo 0, jobs 1, ...): ticking Jobs appends it to the stored list without
+  // moving the rows.
   cursor = await arrow(screen.stdin, 'down', ROW_JOBS, cursor)
   screen.stdin.write('\r')
   check('o custom order kept, new id appended after it',
@@ -302,7 +316,8 @@ const ROW_TODO = 0, ROW_JOBS = 2, ROW_COMPANION = 7
   if (screen === null) { check('u unclaimed scenario opened', false); process.exit(1) }
   check('u unclaimed id renders as a checked tail row', /[✓][^\n]*· demo:future/.test(screen.view()))
   check('u unclaimed row carries the waiting hint', screen.has(t('settings-panels-unclaimed')))
-  // Row 8 = the unclaimed row (after the 8 builtin rows).
+  // Row 8 = the unclaimed row: registered panels keep the default order and
+  // unclaimed placeholders sit at the tail.
   cursor = await arrow(screen.stdin, 'down', 8, cursor)
   screen.stdin.write('\r')
   check('u unchecking the placeholder removes only it',
@@ -349,8 +364,7 @@ const ROW_TODO = 0, ROW_JOBS = 2, ROW_COMPANION = 7
     source: 'plugin',
     component: () => null,
   }, { pluginId: 'demo' })
-  const ROW_PLUGIN = 8   // builtins occupy 0-7 in registry order
-  const ROW_ADVANCED = 9 // then the plugin row, then the advanced raw row
+  const ROW_ADVANCED = 9 // 8 builtins in default order, then the plugin row
 
   // s1. checked state under `*`: every registered panel, plugin included.
   {
@@ -361,14 +375,21 @@ const ROW_TODO = 0, ROW_JOBS = 2, ROW_COMPANION = 7
     check('s advanced row shows the * sentinel',
       screen.view().split('\n').some(line => line.includes(t('settings-panels-advanced')) && line.includes('*')))
 
-    // s2. untick a builtin: the materialized list keeps the plugin id.
-    cursor = await arrow(screen.stdin, 'down', ROW_COMPANION, cursor)
+    // s2. untick a builtin: the materialized list keeps the plugin id. The
+    // rows re-order to the new explicit list, so locate the plugin row again
+    // before the second tick instead of assuming its old index.
+    const moveTo = async (row: number): Promise<void> => {
+      const delta = row - cursor
+      if (delta === 0) return
+      cursor = await arrow(screen.stdin, delta > 0 ? 'down' : 'up', Math.abs(delta), cursor)
+    }
+    await moveTo(rowOf(screen, 'Companion'))
     screen.stdin.write('\r')
     check('s unticking a builtin keeps plugin ids',
       await settled(() => panelSetWrites().includes('todo,jobs,agents,info,trajectory,workspace,btw,demo:md'), { timeoutMs: 4000 }),
       panelSetWrites().join(' | '))
 
-    cursor = await arrow(screen.stdin, 'down', ROW_PLUGIN - ROW_COMPANION, cursor)
+    await moveTo(rowOf(screen, 'Markdown demo'))
     screen.stdin.write('\r')
     check('s unticking the plugin row removes it from the explicit list',
       await settled(() => panelSetWrites().includes('todo,jobs,agents,info,trajectory,workspace,btw'), { timeoutMs: 4000 }),
