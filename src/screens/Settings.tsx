@@ -211,6 +211,33 @@ function panelCommit(stored: string, text: string, registered: readonly string[]
   return text.trim() === panelDraft(stored, registered) ? ALL_SIDE_PANELS : text
 }
 
+/** Insert a newly ticked id where its row sits — after the last enabled id
+ *  that precedes it in the documented default order (the order the picker and
+ *  `*` use) — instead of appending it to the tail. Existing ids keep their
+ *  relative order, so a custom list from the advanced row is preserved; only
+ *  the insertion point follows the displayed order. Ids with no registry row
+ *  (unclaimed placeholders) keep their slots; a plain append stays the
+ *  fallback for a panel the registry does not know. */
+function insertAtDefaultPosition(
+  current: readonly string[],
+  panelId: string,
+  registered: readonly string[],
+): string[] {
+  const rank = new Map(
+    resolveSidePanelIds(ALL_SIDE_PANELS, registered).map((id, index) => [id, index] as const),
+  )
+  const target = rank.get(panelId)
+  if (target === undefined) return [...current, panelId]
+  let at = 0
+  for (let index = 0; index < current.length; index += 1) {
+    const rankOf = rank.get(current[index]!)
+    if (rankOf !== undefined && rankOf < target) at = index + 1
+  }
+  const next = [...current]
+  next.splice(at, 0, panelId)
+  return next
+}
+
 /** One-line descriptions for the builtin picker rows (plugin rows show their
  * plugin id; unclaimed rows show the waiting hint). */
 const PANEL_DESCRIPTION_KEYS: Readonly<Record<string, I18nKey>> = {
@@ -929,10 +956,11 @@ export function Settings({
    * materialized first — default order plus every registered panel, plugin
    * panels included — so one toggle writes the whole explicit list instead of
    * silently dropping the ids the stored text never mentioned. On an explicit
-   * list, ids keep their relative order (PanelBar order is user data), a new
-   * tick appends at the end, unticking removes. An empty selection is refused:
-   * `''` means "use the default `*`", so writing it would silently re-enable
-   * every panel.
+   * list, ids keep their relative order (PanelBar order is user data), and a
+   * new tick goes back to the position its row occupies in the fixed default
+   * order instead of being appended to the tail; unticking removes. An empty
+   * selection is refused: `''` means "use the default `*`", so writing it
+   * would silently re-enable every panel.
    */
   const togglePanel = (ns: string, field: TuiSettingsField, panelId: string): void => {
     const form = forms.get(ns)
@@ -940,7 +968,7 @@ export function Settings({
     const current = panelEnabledIds(form.field(field).text, registeredPanelIds)
     const next = current.includes(panelId)
       ? current.filter(id => id !== panelId)
-      : [...current, panelId]
+      : insertAtDefaultPosition(current, panelId, registeredPanelIds)
     if (next.length === 0) {
       setNotice({ text: t('settings-panels-min-one'), tone: 'error' })
       return

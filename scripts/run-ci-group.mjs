@@ -902,8 +902,8 @@ const GROUPS = {
 // revision 冲突、其他 ns 转给宿主设置服务。
     ["verify-tui-settings", ['node', '--import', 'tsx/esm', 'scripts/verify-tui-settings.ts']],
 // sidePanel.panels 多选：默认 `*` = 全部已注册面板（插件面板显示为已勾选），勾选行固定按默认
-// 顺序排列（不随存储值/勾选移动）、与显式列表互转且保序、未注册 id 保留为尾部占位行、至少保留一个、
-// 高级原始编辑（改序/手填 id、非法草稿拒绝）。
+// 顺序排列（不随存储值/勾选移动）、新勾选插回默认位置而非追加尾部、取消即移除、未注册 id 保留为
+// 尾部占位行、至少保留一个、高级原始编辑（改序/手填 id、非法草稿拒绝）。
     ["verify-panel-settings-picker", ['node', '--import', 'tsx/esm', 'scripts/verify-panel-settings-picker.tsx']],
     ["verify-compact", ['node', '--import', 'tsx/esm', 'scripts/verify-compact.mjs']],
     ["verify-compaction-progress", ['node', '--import', 'tsx/esm', 'scripts/verify-compaction-progress.tsx']],

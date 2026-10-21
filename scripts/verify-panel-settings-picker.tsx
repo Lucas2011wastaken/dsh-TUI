@@ -10,9 +10,9 @@
  *  p. 勾选↔值映射：行序固定为默认顺序（内置默认顺序 + 插件注册顺序），不随存储
  *     列表顺序或勾选移动；勾选态由同一解析器派生；Enter 与真 SGR 鼠标点击都走
  *     同一 toggle（点击即勾选/取消）。
- *  o. 顺序保真：已有 id 保持现有相对顺序（PanelBar 顺序是用户数据），
- *     新勾选追加到尾、取消即移除——写入的字符串逐字断言；`*` 下取消一行
- *     会先物化完整列表，绝不丢插件 id（issue #1662）。
+ *  o. 顺序：已有 id 保持现有相对顺序（PanelBar 顺序是用户数据），新勾选**插回**
+ *     它在固定默认顺序里的位置（不追加到尾部），取消即移除——写入的字符串逐字断言；
+ *     `*` 下取消一行会先物化完整列表，绝不丢插件 id（issue #1662）。
  *  u. 「格式合法但尚无面板认领」的 id 在显式列表里显示为已勾选的占位行，
  *     不被静默丢弃；取消即移除。
  *  l. 活注册表：设置屏打开期间插件面板（plugin:panel 命名空间）注册即
@@ -268,7 +268,7 @@ const ROW_JOBS = 1, ROW_COMPANION = 7
 
   cursor = await arrow(screen.stdin, 'down', ROW_COMPANION, cursor)
   screen.stdin.write('\r')
-  check('o Enter checks Companion -> appended at the end',
+  check('o Enter checks Companion -> inserted at its default position (the tail)',
     await settled(() => screen.has('[✓ ] ♥'), { timeoutMs: 4000 })
     && await settled(() => panelSetWrites().includes('todo,jobs,agents,companion'), { timeoutMs: 4000 }),
     panelSetWrites().join(' | '))
@@ -300,12 +300,26 @@ const ROW_JOBS = 1, ROW_COMPANION = 7
   const screen = await openPicker('agents,todo')
   if (screen === null) { check('o custom order scenario opened', false); process.exit(1) }
   // The stored order is `agents,todo`, but the list keeps the default order
-  // (todo 0, jobs 1, ...): ticking Jobs appends it to the stored list without
-  // moving the rows.
+  // (todo 0, jobs 1, ...). Ticking Jobs inserts it after its displayed
+  // predecessor (Todo), which happens to be the tail here; the rows never move.
   cursor = await arrow(screen.stdin, 'down', ROW_JOBS, cursor)
   screen.stdin.write('\r')
-  check('o custom order kept, new id appended after it',
+  check('o custom order kept, tick inserted after its displayed predecessor',
     await settled(() => panelSetWrites().includes('agents,todo,jobs'), { timeoutMs: 4000 }),
+    panelSetWrites().join(' | '))
+  await screen.close()
+}
+
+// ── o. a new tick goes back to its displayed position, not the tail ────────
+{
+  const screen = await openPicker('todo,companion')
+  if (screen === null) { check('o insert-at-position scenario opened', false); process.exit(1) }
+  // Rows are in the fixed default order, so Jobs sits at row 1: ticking it must
+  // write the id after Todo (its display predecessor), not after Companion.
+  cursor = await arrow(screen.stdin, 'down', ROW_JOBS, cursor)
+  screen.stdin.write('\r')
+  check('o a new tick is inserted at its display position, not appended',
+    await settled(() => panelSetWrites().includes('todo,jobs,companion'), { timeoutMs: 4000 }),
     panelSetWrites().join(' | '))
   await screen.close()
 }
