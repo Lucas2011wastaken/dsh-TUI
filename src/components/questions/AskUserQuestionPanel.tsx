@@ -44,6 +44,7 @@ import { flattenPasteInline } from '../../dsh-adapter/sanitize.js'
 import { readClipboard, type ClipboardRead } from '../../utils/clipboard.js'
 import { createHyperlink } from '../../terminal-utils/hyperlink.js'
 import { listWindow } from '../listWindow.js'
+import { clipPreviewRows } from '../previewRows.js'
 
 /** Unmodified arrows switch questions; Ctrl/Alt/Super/Shift stay caret motion. */
 function isPlainArrow(key: { ctrl?: boolean; meta?: boolean; super?: boolean; shift?: boolean }): boolean {
@@ -66,6 +67,15 @@ const SECRET_MASK = '•'
  * PlanReviewPanel (the two panels share the same input contract).
  */
 const ANSWER_PASTE_MAX_POINTS = 8000
+
+/**
+ * Preview caps (#1664): the question text and its detail fold to at most
+ * these rows so the option list and the key hint always stay on screen. A
+ * short terminal shrinks them further through QUESTION_CHROME_ROWS — the
+ * rows the chrome and the panel scaffolding need before any preview text.
+ */
+const QUESTION_PREVIEW_MAX_ROWS = 6
+const QUESTION_CHROME_ROWS = 20
 
 export type AskUserQuestionPanelProps = {
   /** The question to render (from the QuestionStore snapshot). */
@@ -184,7 +194,7 @@ export function AskUserQuestionPanel({
   // Opening Tab and later keys may share one stdin batch. Stop the list
   // synchronously, before the nested editor has had a chance to mount.
   const editingRef = React.useRef(false)
-  const { rows: terminalRows } = useTerminalSize()
+  const { columns: terminalColumns, rows: terminalRows } = useTerminalSize()
   /** Rows: the real options plus the inline input row at the tail. */
   const rowCount = options.length + (hideCustomInput ? 0 : 1)
   // A saved draft wins over the wizard's default selection (returning to a
@@ -268,10 +278,28 @@ export function AskUserQuestionPanel({
   // lists then use fixed one/two-line rows so listWindow's budget is exact;
   // short questionnaires retain their existing wrapped presentation.
   const linkText = question.link === undefined || question.link === '' ? '' : createHyperlink(question.link)
-  const detailRows = (question.detail === undefined ? 0 : question.detail.split('\n').length + 1)
-    + (linkText === '' ? 0 : question.detail === undefined ? 2 : 1)
+  // The question and its detail are preview text above the option list, and
+  // `wrap` re-flows every long line: counting source lines undercounts the
+  // rows they really take, and neither text had a cap — a long question
+  // pushed the options and the hint off screen with nothing left to answer
+  // (#1664). Pre-wrap to the panel's content width, fold past the cap, and
+  // charge the REAL row count to the option budget below.
+  const contentCells = Math.max(8, terminalColumns - 4)
+  const previewMaxRows = Math.max(2, Math.min(
+    QUESTION_PREVIEW_MAX_ROWS,
+    terminalRows - QUESTION_CHROME_ROWS,
+  ))
+  const questionView = clipPreviewRows(question.question, contentCells, previewMaxRows)
+  const questionBlockRows = questionView.rows.length + (questionView.omitted > 0 ? 1 : 0)
+  const detailView = question.detail === undefined
+    ? undefined
+    : clipPreviewRows(question.detail, contentCells, previewMaxRows)
+  const detailRows = detailView === undefined
+    ? (linkText === '' ? 0 : 2)
+    : detailView.rows.length + (detailView.omitted > 0 ? 1 : 0) + 1 + (linkText === '' ? 0 : 1)
   const reservedRows = 12
     + (question.header === undefined ? 0 : 1)
+    + (questionBlockRows - 1)
     + detailRows
     + (hideCustomInput ? 0 : 1)
     + (error === null ? 0 : 2)
@@ -876,16 +904,28 @@ export function AskUserQuestionPanel({
             ◈ {question.header}
           </Text>
         )}
-        <Text bold wrap="wrap">
-          {question.question}
-        </Text>
+        {questionView.rows.length > 0 && (
+          <Text bold wrap="wrap">
+            {questionView.rows.join('\n')}
+          </Text>
+        )}
+        {questionView.omitted > 0 && (
+          <Text dimColor wrap="truncate-end">
+            {t('panel-preview-omitted', { count: questionView.omitted })}
+          </Text>
+        )}
         {(question.detail !== undefined || linkText !== '') && (
           <Box flexDirection="column" marginTop={1}>
-            {question.detail?.split('\n').map((line, index) => (
-              <Text key={index} dimColor italic wrap="wrap">
-                {line}
+            {detailView !== undefined && detailView.rows.length > 0 && (
+              <Text dimColor italic wrap="wrap">
+                {detailView.rows.join('\n')}
               </Text>
-            ))}
+            )}
+            {detailView !== undefined && detailView.omitted > 0 && (
+              <Text dimColor wrap="truncate-end">
+                {t('panel-preview-omitted', { count: detailView.omitted })}
+              </Text>
+            )}
             {linkText !== '' && <Text wrap="wrap">{linkText}</Text>}
           </Box>
         )}

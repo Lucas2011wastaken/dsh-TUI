@@ -1039,6 +1039,9 @@ const GROUPS = {
 // 审批面板选项（中英）：DSH 无选项时与原来一致、后端三选项、defaultToNo 时拒绝在首位
 // 且无单键批准、allow-always 抑制、输入拒绝理由。
     ["verify-approval-panel-options", ['node', '--import', 'tsx/esm', 'scripts/verify-approval-panel-options.tsx']],
+// 面板溢出（#1664）：真 Chat + 100x40 备用屏下，300 行命令与 40 行问题折叠并标注剩余行数，
+// 决策问题、选项行与键位提示始终上屏；24 行终端缩预览而不是挤掉尾部。
+    ["verify-panel-overflow", ['node', '--import', 'tsx/esm', 'scripts/verify-panel-overflow.tsx']],
 // Claude 凭证：dsh-auth 登录 > 环境变量 > 本机 claude login 的优先级与 env 清洗、到期前
 // 刷新（文件锁内落盘）、认证失败刷新后同会话 resume 一次、再失败引导 /login；事件、
 // 提示和日志里都不出现令牌。

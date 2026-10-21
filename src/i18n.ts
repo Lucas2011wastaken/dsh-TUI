@@ -1778,6 +1778,7 @@ const dict = {
   'approval-feedback-row': { zh: '{{label}}：{{reason}}', en: '{{label}}: {{reason}}' },
   'approval-subagent': { zh: '来自子代理 {{id}} 的请求', en: 'Requested by subagent {{id}}' },
   'approval-blocked-path': { zh: '涉及允许目录之外的路径：{{path}}', en: 'Outside the allowed directories: {{path}}' },
+  'panel-preview-omitted': { zh: '… 另有 {{count}} 行未显示', en: { one: '… {{count}} more line not shown', other: '… {{count}} more lines not shown' } },
 
   // ── components/Subagent*.tsx ────────────────────────────────────────
   'subagent-model': { zh: '模型', en: 'Model' },

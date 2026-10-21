@@ -31,6 +31,7 @@ import { isPlainReturnInput } from '../../utils/modifiers.js'
 import { Divider } from '../design-system/Divider.js'
 import { POINTER } from '../../terminal-utils/figures.js'
 import { flattenPasteInline } from '../../channel/sanitize.js'
+import { clipPreviewRows, type PreviewRowView } from '../previewRows.js'
 import {
   panelOutcomeOf,
   visiblePermissionOptions,
@@ -62,6 +63,24 @@ const FEEDBACK_MAX_POINTS = 2000
 const ROW_CHROME_CELLS = 5
 /** The reason never takes more than this many rows of the option list. */
 const FEEDBACK_MAX_LINES = 2
+
+/**
+ * Preview caps. The panel is in-flow in the bottom chrome, so its height is
+ * its content height: an unbounded command pushed the question, the option
+ * rows and the hint off screen and left the user nothing to answer (#1664).
+ * These caps are the worst case; the terminal-row budget below shrinks them
+ * further on a short terminal.
+ */
+const COMMAND_MAX_LINES = 8
+const TITLE_MAX_LINES = 3
+const REASON_MAX_LINES = 3
+
+/**
+ * Rows the chat screen keeps below and beside the panel: the input cluster
+ * (composer + status line) and at least one transcript row. Same reserve the
+ * overlay budget uses for the prompt slot.
+ */
+const CHROME_RESERVED_ROWS = 8
 
 /** The longest tail of `text` that fits in `cells` display cells. */
 function tailWithin(text: string, cells: number): string {
@@ -117,7 +136,7 @@ function optionLabel(option: PermissionOptionView): string {
 
 export function ApprovalPanel({ approval, background = false, onDecide }: ApprovalPanelProps): React.ReactNode {
   const options = visiblePermissionOptions(approval)
-  const { columns } = useTerminalSize()
+  const { columns, rows } = useTerminalSize()
   // `defaultToNo` opens on the rejection (sorted first); otherwise on the
   // first option, as the DSH panel always has. The ref is the synchronous
   // source of truth: one stdin chunk can carry a focus move and the typing
@@ -209,6 +228,48 @@ export function ApprovalPanel({ approval, background = false, onDecide }: Approv
     }
   }, { isActive: true })
 
+  // ── Preview budget ─────────────────────────────────────────────────────
+  // The divider, the proceed question, the option rows and the key hint are
+  // always painted; the preview text between them must fold instead of
+  // growing the panel past the viewport (#1664).
+  const contentCells = Math.max(8, columns - 4)
+  // The command sits in a Box with paddingX={2} inside the panel's 2+2.
+  const commandCells = Math.max(8, columns - 8)
+  const warningRows = (background ? 1 : 0)
+    + (approval.subagentId === undefined ? 0 : 1)
+    + (approval.external === true ? 1 : 0)
+    + (approval.blockedPath === undefined ? 0 : 1)
+  // divider + content margin + warnings + "proceed" + options margin +
+  // option rows + the focused row's spacer + hint margin + hint.
+  const fixedRows = 7 + warningRows + options.length
+  let previewRowsLeft = Math.max(1, rows - fixedRows - CHROME_RESERVED_ROWS)
+  const takePreview = (text: string | undefined, cells: number, cap: number): PreviewRowView | undefined => {
+    if (text === undefined || previewRowsLeft < 1) return undefined
+    const view = clipPreviewRows(text, cells, Math.min(cap, previewRowsLeft))
+    previewRowsLeft -= view.rows.length + (view.omitted > 0 ? 1 : 0)
+    return view
+  }
+  // The gated command is what the decision is about: it takes the budget
+  // first, then the backend's reason, then the prompt sentence.
+  const commandView = takePreview(approval.command, commandCells, COMMAND_MAX_LINES)
+  const reasonView = takePreview(approval.reason, contentCells, REASON_MAX_LINES)
+  const titleView = takePreview(approval.title, contentCells, TITLE_MAX_LINES)
+  /** Preview rows (already wrapped to one row each) and the omitted marker. */
+  const preview = (view: PreviewRowView | undefined, dim = false): React.ReactNode => view === undefined ? null : (
+    <>
+      {view.rows.length > 0 && (
+        <Text dimColor={dim} wrap="wrap">
+          {view.rows.join('\n')}
+        </Text>
+      )}
+      {view.omitted > 0 && (
+        <Text dimColor wrap="truncate-end">
+          {t('panel-preview-omitted', { count: view.omitted })}
+        </Text>
+      )}
+    </>
+  )
+
   return (
     <Box flexDirection="column" marginTop={1} paddingLeft={2} paddingRight={2} width="100%">
       <Divider color="permission" title={t('approval-waiting', { tool: approval.toolName })} />
@@ -224,21 +285,13 @@ export function ApprovalPanel({ approval, background = false, onDecide }: Approv
         {approval.external === true && (
           <Text color="warning" wrap="wrap">[external] {t('approval-external-hint')}</Text>
         )}
-        {approval.title !== undefined && (
-          <Text wrap="wrap">{approval.title}</Text>
-        )}
-        {approval.command !== undefined && (
+        {preview(titleView)}
+        {commandView !== undefined && (
           <Box flexDirection="column" paddingX={2}>
-            <Text dimColor wrap="wrap">
-              {approval.command}
-            </Text>
+            {preview(commandView, true)}
           </Box>
         )}
-        {approval.reason !== undefined && (
-          <Text dimColor wrap="wrap">
-            {approval.reason}
-          </Text>
-        )}
+        {preview(reasonView, true)}
         {approval.blockedPath !== undefined && (
           <Text color="warning" wrap="wrap">{t('approval-blocked-path', { path: approval.blockedPath })}</Text>
         )}
