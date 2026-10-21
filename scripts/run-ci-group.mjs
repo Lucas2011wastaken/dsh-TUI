@@ -901,8 +901,8 @@ const GROUPS = {
 // TUI 自有设置文档（~/.dsh-tui/settings.json）：首启从 profile 补丁一次性导入、mutate 与
 // revision 冲突、其他 ns 转给宿主设置服务。
     ["verify-tui-settings", ['node', '--import', 'tsx/esm', 'scripts/verify-tui-settings.ts']],
-// sidePanel.panels 多选：勾选行与逗号字符串互转且保序、未注册 id 保留为占位行、
-// 插件面板注册即出现、至少保留一个、高级原始编辑（改序/手填 id、非法草稿拒绝）。
+// sidePanel.panels 多选：默认 `*` = 全部已注册面板（插件面板显示为已勾选），勾选行与显式
+// 列表互转且保序、未注册 id 保留为占位行、至少保留一个、高级原始编辑（改序/手填 id、非法草稿拒绝）。
     ["verify-panel-settings-picker", ['node', '--import', 'tsx/esm', 'scripts/verify-panel-settings-picker.tsx']],
     ["verify-compact", ['node', '--import', 'tsx/esm', 'scripts/verify-compact.mjs']],
     ["verify-compaction-progress", ['node', '--import', 'tsx/esm', 'scripts/verify-compaction-progress.tsx']],

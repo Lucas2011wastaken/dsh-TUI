@@ -495,7 +495,16 @@ export const applyImageBacking = imageBackingStore.apply
 /** Panel id grammar (plugins register under a `plugin:sub` namespace). */
 export const SIDE_PANEL_ID_PATTERN = /^[a-z][a-z0-9_-]*(:[a-z][a-z0-9_-]*)*$/
 
+/** Every built-in panel's id in the order the default lays them out. This is
+ *  the ordering skeleton of `ALL_SIDE_PANELS`, not a snapshot of what is
+ *  enabled: the resolver drops the ids that are not registered. */
 export const DEFAULT_SIDE_PANEL_IDS = 'todo,jobs,agents,info,trajectory,workspace,btw,companion'
+
+/** `sidePanel.panels`'s "show everything" token — the default. Under it the
+ *  enabled set follows the registry: plugin panels registered later appear
+ *  (and unregistered ones leave) without any settings write, and the picker
+ *  reads the same value as "all checked". */
+export const ALL_SIDE_PANELS = '*'
 
 function normalizeBoolean(value: unknown, fallback: boolean): boolean {
   return typeof value === 'boolean' ? value : fallback
@@ -508,22 +517,88 @@ export function normalizeSidePanelRatio(value: unknown): number {
   return Math.min(0.95, Math.max(0.1, value))
 }
 
-/** Comma-separated enabled-panel ids: tokens that fail the id grammar are
- *  dropped (a typo must never wedge the layout); unknown-but-well-formed
- *  ids survive — a plugin may register them later in the session. */
-export function normalizeSidePanelPanels(value: unknown): string {
-  if (typeof value !== 'string') return DEFAULT_SIDE_PANEL_IDS
-  const seen = new Set<string>()
-  for (const token of value.split(',')) {
-    const id = token.trim().toLowerCase()
-    if (id !== '' && SIDE_PANEL_ID_PATTERN.test(id)) seen.add(id)
+/** Parsed `sidePanel.panels`. `*` is "every registered panel"; `''` is the
+ *  settings screen's clear (use the default); otherwise the exact ids, in
+ *  PanelBar order. `invalid` is what the settings screen refuses to save; the
+ *  renderer treats it as `all`, so a hand-edited typo can only ever show MORE
+ *  than asked, never hide a panel silently. */
+export type ParsedSidePanelPanels =
+  | { readonly mode: 'all' }
+  | { readonly mode: 'empty' }
+  | { readonly mode: 'list'; readonly ids: readonly string[] }
+  | { readonly mode: 'invalid'; readonly reason: 'sentinel' | 'token' | 'empty' }
+
+/** Strict parse of one `sidePanel.panels` value (the settings save gate). */
+export function parseSidePanelPanels(value: string): ParsedSidePanelPanels {
+  const trimmed = value.trim()
+  if (trimmed === ALL_SIDE_PANELS) return { mode: 'all' }
+  if (trimmed === '') return { mode: 'empty' }
+  // The sentinel is a whole-value form: `*,todo` must not read as an id list.
+  if (trimmed.split(',').some(token => token.trim() === ALL_SIDE_PANELS)) {
+    return { mode: 'invalid', reason: 'sentinel' }
   }
-  return seen.size > 0 ? [...seen].join(',') : DEFAULT_SIDE_PANEL_IDS
+  const ids: string[] = []
+  const seen = new Set<string>()
+  for (const raw of trimmed.split(',')) {
+    const id = raw.trim().toLowerCase()
+    // Tolerate `a,,b` / a trailing comma: the old gate did, and the store
+    // canonicalizes the same way.
+    if (id === '') continue
+    if (!SIDE_PANEL_ID_PATTERN.test(id)) return { mode: 'invalid', reason: 'token' }
+    if (seen.has(id)) continue
+    seen.add(id)
+    ids.push(id)
+  }
+  // `,` names nothing: refuse the write instead of folding it into a clear
+  // (which would silently re-enable the default set).
+  return ids.length > 0 ? { mode: 'list', ids } : { mode: 'invalid', reason: 'empty' }
 }
 
-/** Enabled panel ids in PanelBar order. */
-export function parseSidePanelIds(value: string): readonly string[] {
-  return normalizeSidePanelPanels(value).split(',')
+/** Tolerant normalization for the config/store entry points: `*`, a
+ *  non-string, a blank or an all-malformed value fold to `*`; otherwise
+ *  tokens are lower-cased, de-duped and order-preserved. Unlike the picker's
+ *  strict gate, a malformed token is dropped here — a typo must never wedge
+ *  the layout — while unknown-but-well-formed ids survive, because a plugin
+ *  may register them later in the session. */
+export function normalizeSidePanelPanels(value: unknown): string {
+  if (typeof value !== 'string') return ALL_SIDE_PANELS
+  const trimmed = value.trim()
+  if (trimmed === ALL_SIDE_PANELS) return ALL_SIDE_PANELS
+  const seen = new Set<string>()
+  for (const token of trimmed.split(',')) {
+    const id = token.trim().toLowerCase()
+    if (id === '' || id === ALL_SIDE_PANELS) continue
+    if (SIDE_PANEL_ID_PATTERN.test(id)) seen.add(id)
+  }
+  return seen.size > 0 ? [...seen].join(',') : ALL_SIDE_PANELS
+}
+
+/** The one derivation of "which panels are enabled", given the stored value
+ *  and the live registry (ids in registry order).
+ *
+ *  - `*` (and an invalid hand-edited value): the built-ins in their default
+ *    order, then every other registered panel in registry order — the same
+ *    tail order the old registration-time append produced, so an upgrade
+ *    changes no visible tab order.
+ *  - an explicit list: returned verbatim, including ids nothing claims yet
+ *    (they stay as placeholders until a plugin registers them). */
+export function resolveSidePanelIds(
+  configured: string | undefined,
+  registered: readonly string[],
+): readonly string[] {
+  const parsed = parseSidePanelPanels(configured ?? ALL_SIDE_PANELS)
+  if (parsed.mode === 'list') return parsed.ids
+  const remaining = new Set(registered)
+  const ids: string[] = []
+  for (const id of DEFAULT_SIDE_PANEL_IDS.split(',')) {
+    if (!remaining.delete(id)) continue
+    ids.push(id)
+  }
+  for (const id of registered) {
+    if (!remaining.delete(id)) continue
+    ids.push(id)
+  }
+  return ids
 }
 
 const sidePanelSplitEnabledStore = createLiveSetting<boolean>(true, value => normalizeBoolean(value, true))
@@ -541,7 +616,7 @@ export const subscribeSidePanelRatio = sidePanelRatioStore.subscribe
 export const getSidePanelRatio = sidePanelRatioStore.get
 export const applySidePanelRatio = sidePanelRatioStore.apply
 
-const sidePanelPanelsStore = createLiveSetting<string>(DEFAULT_SIDE_PANEL_IDS, normalizeSidePanelPanels)
+const sidePanelPanelsStore = createLiveSetting<string>(ALL_SIDE_PANELS, normalizeSidePanelPanels)
 export const subscribeSidePanelPanels = sidePanelPanelsStore.subscribe
 export const getSidePanelPanels = sidePanelPanelsStore.get
 export const applySidePanelPanels = sidePanelPanelsStore.apply

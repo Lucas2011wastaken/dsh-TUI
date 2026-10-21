@@ -255,7 +255,7 @@ dsh-tui
   点右端的 `⤢` 把当前面板放大成整屏。悬停中缝会提亮，按住鼠标左键左右拖拽即可实时调宽：
   向左加宽侧栏、向右缩窄，聊天列至少 64 列、侧栏至少 28 列；拖拽会退出 zoom，保留键盘焦点，
   宽度在当前会话内保留。聊天内起拖只选聊天文字，右栏内起拖可选右栏文字。
-- **面板**：全部 8 个内置面板默认启用，可在 `sidePanel.panels` 调整。`todo`（Goals/Todos，分栏时从输入框上方迁到这里）、`jobs`（后台任务，点转录里的任务卡
+- **面板**：默认（`sidePanel.panels: '*'`）启用全部面板——8 个内置面板加上之后注册的插件面板；可在 `sidePanel.panels` 或 `/settings` 勾选里改成显式列表。`todo`（Goals/Todos，分栏时从输入框上方迁到这里）、`jobs`（后台任务，点转录里的任务卡
   会直接定位到该任务）、`agents`（子代理 Dashboard 与详情：Enter 进详情、Esc 逐级返回）、`companion`
    （宠物：跟随会话状态换心情动画，点击
    比爱心、Enter 戳一戳；皮肤 `dsh-tui.companion.skin` 可选 deepy（默认，非官方粉丝作品 deepy

@@ -288,8 +288,8 @@ export const SETTING_DEFINITIONS = {
     label: 'Enabled panels',
     descriptions: { zh: '启用的面板' },
     group: 'side-panel',
-    hint: 'Tick the panels the side panel bar shows: a new tick appends at the end, unticking removes. Panels registered by plugins appear here automatically, and a well-formed id nothing claims yet stays as a checked placeholder. The Advanced row edits the raw comma list (e.g. to reorder). Applies immediately.',
-    hintDescriptions: { zh: '勾选侧栏标签栏要显示的面板：新勾选的追加在末尾，取消即移除。插件注册的面板会自动出现在这里；格式合法但尚无面板认领的 id 会保留为已勾选的占位行。「高级」行可编辑原始逗号列表（如调整顺序）。立即生效。' },
+    hint: 'Default `*` shows every panel — the built-ins plus plugin panels registered later. Unticking a checkbox writes an explicit list: from then on a panel registered after the fact stays off until ticked (an unlisted registered panel shows unchecked, an unlisted well-formed id stays as a checked placeholder). The Advanced row edits the raw list (`*` = all). Applies immediately.',
+    hintDescriptions: { zh: '默认 `*` 显示全部面板——内置面板加上之后注册的插件面板。取消勾选会写成显式列表：此后新注册的面板保持关闭，直到勾选（已注册但未列出的面板显示为未勾选；未列出但格式合法的 id 仍保留为已勾选占位行）。「高级」行编辑原始列表（`*` = 全部）。立即生效。' },
     kind: 'text',
   },
   'sidePanel.ratio': {

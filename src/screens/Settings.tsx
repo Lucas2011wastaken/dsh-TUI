@@ -16,7 +16,7 @@ import type { ChannelUi as Channel } from '../adapter/channel/ui-policy.js'
 import { panelStore } from '../components/sidePanel/PanelStore.js'
 import { registerBuiltinPanels } from '../components/sidePanel/builtinPanels.js'
 import type { TuiStatusFieldEntry } from '../dsh-adapter/status.js'
-import { ALL_PLUGIN_FIELDS, formatPluginFieldsOrder, parsePluginFieldsOrder, STATUS_FIELD_SLOTS, SIDE_PANEL_ID_PATTERN, type StatusFieldSlot } from '../tuiDisplayPrefs.js'
+import { ALL_PLUGIN_FIELDS, ALL_SIDE_PANELS, formatPluginFieldsOrder, parsePluginFieldsOrder, parseSidePanelPanels, resolveSidePanelIds, STATUS_FIELD_SLOTS, type StatusFieldSlot } from '../tuiDisplayPrefs.js'
 
 // The panel picker enumerates the live registry: builtin panels register on
 // import (same idempotent call SidePanelColumn makes), plugins come and go
@@ -182,17 +182,33 @@ function pluginFieldCommit(stored: string, text: string, fields: readonly TuiSta
 }
 
 /**
- * Enabled panel ids in PanelBar order from the field's draft text — the same
- * grammar the store normalizes (lowercase tokens, deduped, order preserved),
- * so the checkboxes can never disagree with what the PanelBar will show.
+ * The picker's draft helpers. `*` (the default) is not a list: the stored
+ * value only says "every registered panel", so both the checkbox rows and the
+ * toggle derive the effective ids through the same resolver the PanelBar
+ * uses. An explicit list is user data and stays literally editable.
  */
-function panelIdsFromText(text: string): string[] {
-  const seen = new Set<string>()
-  for (const token of text.split(',')) {
-    const id = token.trim().toLowerCase()
-    if (id !== '' && SIDE_PANEL_ID_PATTERN.test(id)) seen.add(id)
-  }
-  return [...seen]
+
+/** The effective enabled ids for one stored draft (`*`/invalid → every
+ *  registered panel, in default order; an explicit list → its ids). */
+function panelEnabledIds(text: string, registered: readonly string[]): readonly string[] {
+  return resolveSidePanelIds(text, registered)
+}
+
+/** The draft the advanced row opens with: `*` expands to the effective list
+ *  (the registry order becomes the structure the user edits), while an
+ *  explicit list or the user's typo opens verbatim. */
+function panelDraft(text: string, registered: readonly string[]): string {
+  return parseSidePanelPanels(text).mode === 'all' ? panelEnabledIds(text, registered).join(',') : text
+}
+
+/** Saving the untouched expansion must not pin the automatic mode: only a
+ *  draft that STARTED from `*` and was not changed collapses back to it. An
+ *  explicit list (even one identical to the current expansion) is never
+ *  rewritten to `*`, or an unedited save would silently re-enable "panels
+ *  registered later". */
+function panelCommit(stored: string, text: string, registered: readonly string[]): string {
+  if (parseSidePanelPanels(stored).mode !== 'all') return text
+  return text.trim() === panelDraft(stored, registered) ? ALL_SIDE_PANELS : text
 }
 
 /** One-line descriptions for the builtin picker rows (plugin rows show their
@@ -763,20 +779,33 @@ export function Settings({
    *  register/unregister (a plugin landing mid-session adds its row on the
    *  open screen — the list is never a frozen snapshot). */
   const panelEntries = React.useSyncExternalStore(panelStore.subscribe, () => panelStore.list())
+  /** Registered ids in registry order — the `*` resolver's input (also what
+   *  the toggle materializes an explicit list from). */
+  const registeredPanelIds = React.useMemo(
+    () => panelEntries.map(entry => entry.definition.id),
+    [panelEntries],
+  )
 
   /**
    * Checkbox rows of one picker field, in display order: every registered
    * panel (registry order — builtins by `order`, then plugins), then the
    * well-formed ids nothing claims yet as checked placeholder rows (the
    * extension story: tick a future id now, the plugin claims it later), then
-   * the advanced raw-text row.
+   * the advanced raw-text row. Checked derives from the same resolver the
+   * PanelBar uses, so `*` (the default) shows every registered panel — plugin
+   * panels included — as checked.
    */
   const panelPickerRows = (ns: string, field: TuiSettingsField): { id: string; checked: boolean }[] => {
-    const ids = panelIdsFromText(forms.get(ns)?.field(field).text ?? '')
-    const claimed = new Set(panelEntries.map(entry => entry.definition.id))
-    const rows = panelEntries.map(entry => ({ id: entry.definition.id, checked: ids.includes(entry.definition.id) }))
-    for (const id of ids) {
-      if (!claimed.has(id)) rows.push({ id, checked: true })
+    const text = forms.get(ns)?.field(field).text ?? ''
+    const enabled = new Set(panelEnabledIds(text, registeredPanelIds))
+    const claimed = new Set(registeredPanelIds)
+    const rows = panelEntries.map(entry => ({ id: entry.definition.id, checked: enabled.has(entry.definition.id) }))
+    // Placeholders only exist in explicit mode: `*` has no stored id list.
+    const parsed = parseSidePanelPanels(text)
+    if (parsed.mode === 'list') {
+      for (const id of parsed.ids) {
+        if (!claimed.has(id)) rows.push({ id, checked: true })
+      }
     }
     return rows
   }
@@ -893,17 +922,19 @@ export function Settings({
   }
 
   /**
-   * Tick/untick one panel id. The stored string keeps its exact semantics:
-   * ids already present keep their relative order (PanelBar order is user
-   * data), a new tick appends at the end, unticking removes. An empty
-   * selection is refused — the persisted string cannot represent it (the
-   * store would fall back to the default and silently re-enable panels) — so
-   * the toggle says so instead of writing a lie.
+   * Tick/untick one panel id. Under `*` (the default) the effective list is
+   * materialized first — default order plus every registered panel, plugin
+   * panels included — so one toggle writes the whole explicit list instead of
+   * silently dropping the ids the stored text never mentioned. On an explicit
+   * list, ids keep their relative order (PanelBar order is user data), a new
+   * tick appends at the end, unticking removes. An empty selection is refused:
+   * `''` means "use the default `*`", so writing it would silently re-enable
+   * every panel.
    */
   const togglePanel = (ns: string, field: TuiSettingsField, panelId: string): void => {
     const form = forms.get(ns)
     if (form === undefined || !form.available) return
-    const current = panelIdsFromText(form.field(field).text)
+    const current = panelEnabledIds(form.field(field).text, registeredPanelIds)
     const next = current.includes(panelId)
       ? current.filter(id => id !== panelId)
       : [...current, panelId]
@@ -963,7 +994,9 @@ export function Settings({
       setEditing({
         ns: entry.ns,
         field: entry.field,
-        draft: isFieldListField(entry.ns, entry.field) ? pluginFieldDraft(text, statusFields) : text,
+        draft: isPanelListField(entry.ns, entry.field)
+          ? panelDraft(text, registeredPanelIds)
+          : isFieldListField(entry.ns, entry.field) ? pluginFieldDraft(text, statusFields) : text,
       })
       setMode('edit')
     }
@@ -988,9 +1021,11 @@ export function Settings({
         if (form !== undefined) {
           form.edit(
             editing.field,
-            isFieldListField(editing.ns, editing.field)
-              ? pluginFieldCommit(form.field(editing.field).text, editing.draft, statusFields)
-              : editing.draft,
+            isPanelListField(editing.ns, editing.field)
+              ? panelCommit(form.field(editing.field).text, editing.draft, registeredPanelIds)
+              : isFieldListField(editing.ns, editing.field)
+                ? pluginFieldCommit(form.field(editing.field).text, editing.draft, statusFields)
+                : editing.draft,
           )
           if (form.field(editing.field).invalid) {
             setNotice({ text: t('settings-field-invalid'), tone: 'error' })

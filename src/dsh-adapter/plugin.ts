@@ -67,7 +67,7 @@ import { shouldOfferOnboarding } from '../onboardingPrefs.js'
 import { resolveSessionCwd } from '../utils/workspaceRoot.js'
 import { LAUNCH_PROMPT_SENT_ENV, beginRestartAttempt, checkForTuiUpdate, installedTuiVersion, isBootDeadlockTarget, isStandaloneRuntime, isVersionNewer, logRestartEvent, resolveDshProfileName, resolveTuiUpdateTarget, restartTui, updateTuiAndRestart, writeHandoffNotice, writeLastRunRecord, type TuiRestartOptions } from '../update.js'
 import { getLang, isLang, resolveStartupLang, setLang, t, writeLangPref } from '../i18n.js'
-import { applyBtwContextBudget, applyBtwContextTurns, applyCodeFrameStyle, applyCompanionSkin, applyImageBacking, applyMathImageBacking, applyMathImageScale, applyMathRendering, applyMermaidDiagrams, applyPageMargin, applySidePanelOpen, applySidePanelRatio, applySidePanelSplitEnabled, BTW_CONTEXT_BUDGET_MAX, BTW_CONTEXT_BUDGET_MIN, BTW_CONTEXT_TURNS_MAX, BTW_CONTEXT_TURNS_MIN, DEFAULT_PAGE_MARGIN, DEFAULT_SIDE_PANEL_IDS, DEFAULT_STATUS_BAR, isPageMarginMode, normalizeJobGroupFold, normalizePageMargin, normalizeScrollGutter, normalizeSidePanelPanels, normalizeSidePanelRatio, normalizePluginFieldsOrder, normalizeStatusBar, normalizeToolBackground, parsePageMarginSpec, parsePluginFieldsOrder, resolveMathRendering, SIDE_PANEL_ID_PATTERN, type CodeFrameStyle, type ImageBacking, type MathImageBacking, type MathImageScale, type MathRendering, type PageMarginSetting, type ScrollGutterMode, type StatusBarConfig, type ToolBackground } from '../tuiDisplayPrefs.js'
+import { applyBtwContextBudget, applyBtwContextTurns, applyCodeFrameStyle, applyCompanionSkin, applyImageBacking, applyMathImageBacking, applyMathImageScale, applyMathRendering, applyMermaidDiagrams, applyPageMargin, applySidePanelOpen, applySidePanelPanels, applySidePanelRatio, applySidePanelSplitEnabled, ALL_SIDE_PANELS, BTW_CONTEXT_BUDGET_MAX, BTW_CONTEXT_BUDGET_MIN, BTW_CONTEXT_TURNS_MAX, BTW_CONTEXT_TURNS_MIN, DEFAULT_PAGE_MARGIN, DEFAULT_STATUS_BAR, isPageMarginMode, normalizeJobGroupFold, normalizePageMargin, normalizeScrollGutter, normalizeSidePanelRatio, normalizePluginFieldsOrder, normalizeStatusBar, normalizeToolBackground, parsePageMarginSpec, parsePluginFieldsOrder, parseSidePanelPanels, resolveMathRendering, type CodeFrameStyle, type ImageBacking, type MathImageBacking, type MathImageScale, type MathRendering, type PageMarginSetting, type ScrollGutterMode, type StatusBarConfig, type ToolBackground } from '../tuiDisplayPrefs.js'
 import {
   draftComboConflicts,
   effectiveComboString,
@@ -99,7 +99,6 @@ import { trackHostSettingsSection, type TuiSettingsField, type TuiSettingsFieldW
 import { compositionRoot, withHostRootCapability } from './host-access.js'
 import { armAdmissionLoader } from './admission-loader.js'
 import { assembleBackendsFromProfile } from './backend-assembly.js'
-import { applyConfiguredSidePanelPanels, applySidePanelPanelsFromSettings } from './panels.js'
 import { disposeRootSettled } from './root-dispose.js'
 import { render, ThemeProvider, AlternateScreen } from '../ui.js'
 import { PageMargin } from '../components/PageMargin.js'
@@ -1287,9 +1286,9 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
   applySidePanelSplitEnabled(config.sidePanel?.splitEnabled)
   applySidePanelOpen(config.sidePanel?.open)
   applySidePanelRatio(config.sidePanel?.ratio)
-  // Registered ids survive: on the profile path a third-party row may have
-  // registered its panel before this row applied (./panels.ts).
-  applyConfiguredSidePanelPanels(config.sidePanel?.panels)
+  // The stored value only: `*` (the default) lets the registry supply the
+  // plugin panels, so no registration-time merge is needed (issue #1662).
+  applySidePanelPanels(config.sidePanel?.panels)
   applyCompanionSkin(config.companion?.skin)
   applyBtwContextTurns(config.btw?.contextTurns)
   applyBtwContextBudget(config.btw?.contextBudget)
@@ -1596,10 +1595,6 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
       }
       bootedTerminalImages = lastBootedTerminalImages ?? value.terminalImages ?? config.terminalImages ?? true
     }
-    /** False only during the boot application below: a registered panel absent
-     *  from its CSV is not a user removal (./panels.ts). */
-    let settingsEditsLive = true
-    let lastPanelsCsv: string | undefined
     // The /settings language field writes `lang` through the settings
     // service (user layer): apply it live and mirror it to lang.json so
     // the /lang command and next-boot resolution agree. DSH_TUI_LANG
@@ -1645,12 +1640,9 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
       applySidePanelSplitEnabled(value.sidePanel?.splitEnabled ?? config.sidePanel?.splitEnabled)
       applySidePanelOpen(value.sidePanel?.open ?? config.sidePanel?.open)
       applySidePanelRatio(value.sidePanel?.ratio ?? config.sidePanel?.ratio)
-      // A watch snapshot can change unrelated fields. Only a changed panels
-      // field can express removal; replaying the boot CSV must not hide plugins.
-      const panelsCsv = value.sidePanel?.panels ?? config.sidePanel?.panels
-      if (!settingsEditsLive) applyConfiguredSidePanelPanels(panelsCsv)
-      else if (panelsCsv !== lastPanelsCsv) applySidePanelPanelsFromSettings(panelsCsv)
-      lastPanelsCsv = panelsCsv
+      // The stored value only: registration never rewrites it, so every apply
+      // (boot or live, same CSV or a new one) is idempotent (issue #1662).
+      applySidePanelPanels(value.sidePanel?.panels ?? config.sidePanel?.panels)
       applyCompanionSkin(value.companion?.skin ?? config.companion?.skin)
       applyBtwContextTurns(value.btw?.contextTurns ?? config.btw?.contextTurns)
       applyBtwContextBudget(value.btw?.contextBudget ?? config.btw?.contextBudget)
@@ -1722,9 +1714,7 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
       notifyChannel(t('settings-fullscreen-migrated'), { color: 'warning' })
     }
     const { fullscreen: staleFullscreen, ...migratedSettings } = bootSettings
-    settingsEditsLive = false
     apply(fullscreenMigration === 'unset' ? migratedSettings : bootSettings)
-    settingsEditsLive = true
     let lastTerminalImages = bootSettings.terminalImages ?? config.terminalImages ?? true
     let lastLaunchpad = bootSettings.launchpad ?? config.launchpad ?? true
     settingsCtx.effect(() => scope.watch(next => {
@@ -2049,22 +2039,22 @@ export async function apply(ctx: Context, runtimeConfig: RuntimeConfig<Config>, 
         },
         {
           ...settingField('sidePanel.panels'),
-          placeholder: DEFAULT_SIDE_PANEL_IDS,
+          placeholder: ALL_SIDE_PANELS,
           format(value: unknown): string {
-            // Unset in the user layer: show the effective list.
+            // Unset in the user layer: show the raw effective value (`*` by
+            // default), so the picker reads it as "everything checked".
             return typeof value === 'string' && value.trim() !== ''
               ? value
-              : config.sidePanel?.panels ?? DEFAULT_SIDE_PANEL_IDS
+              : config.sidePanel?.panels ?? ALL_SIDE_PANELS
           },
           parse(text: string) {
-            const draft = text.trim()
-            if (draft === '') return { kind: 'clear' }
-            // Strict gate: every token must be a well-formed panel id. The
-            // store would drop a typo silently, so a draft that does not
-            // round-trip is refused instead of saved as something else.
-            const tokens = draft.split(',').map(token => token.trim().toLowerCase()).filter(token => token !== '')
-            if (tokens.length === 0 || tokens.some(token => !SIDE_PANEL_ID_PATTERN.test(token))) return undefined
-            return { kind: 'set', value: normalizeSidePanelPanels(draft) }
+            const parsed = parseSidePanelPanels(text)
+            if (parsed.mode === 'empty') return { kind: 'clear' }
+            if (parsed.mode === 'all') return { kind: 'set', value: ALL_SIDE_PANELS }
+            // Strict gate: a malformed token (or a list embedding `*`) is
+            // refused instead of saved as something else.
+            if (parsed.mode === 'invalid') return undefined
+            return { kind: 'set', value: parsed.ids.join(',') }
           },
         },
         {

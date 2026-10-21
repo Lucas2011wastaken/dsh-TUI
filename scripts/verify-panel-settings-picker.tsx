@@ -1,24 +1,31 @@
 /**
  * sidePanel.panels 勾选式面板多选回归（用户实测反馈：kind:'text' + 教学文案
- * 不可用）。设置屏对该字段渲染 checkbox 行列表，值仍是逗号分隔字符串
+ * 不可用）。设置屏对该字段渲染 checkbox 行列表，值仍是 `*` 或逗号分隔字符串
  * （schema/契约零变化）。
  *
  * Locked behavior:
- *  p. 勾选↔字符串映射：内置面板行从 panelStore 注册表现场枚举（图标+名称+
- *     一句话描述），勾选态由存储字符串派生；Enter 与真 SGR 鼠标点击都走
- *     同一 toggle（点击即勾选/取消）。
+ *  r. 纯解析器：`*` = 全部已注册面板（内置按默认顺序、其余按注册表顺序）；
+ *     显式列表原样返回（含未注册占位 id）；空/非法归一为 `*`；`*` 是整值
+ *     形式（`*,todo` 非法）。
+ *  p. 勾选↔值映射：内置面板行从 panelStore 注册表现场枚举（图标+名称+
+ *     一句话描述），勾选态由 `*`/显式列表经同一解析器派生；Enter 与真 SGR
+ *     鼠标点击都走同一 toggle（点击即勾选/取消）。
  *  o. 顺序保真：已有 id 保持现有相对顺序（PanelBar 顺序是用户数据），
- *     新勾选追加到尾、取消即移除——写入的字符串逐字断言。
- *  u. 「格式合法但尚无面板认领」的 id 在列表尾部显示为已勾选的占位行，
+ *     新勾选追加到尾、取消即移除——写入的字符串逐字断言；`*` 下取消一行
+ *     会先物化完整列表，绝不丢插件 id（issue #1662）。
+ *  u. 「格式合法但尚无面板认领」的 id 在显式列表里显示为已勾选的占位行，
  *     不被静默丢弃；取消即移除。
  *  l. 活注册表：设置屏打开期间插件面板（plugin:panel 命名空间）注册即
  *     出现行、撤下即退场——撤下后已写入的 id 退化为占位行（扩展故事的
  *     两半：先占位、插件到位自动认领）。
+ *  s. issue #1662 原场景：`*` 下插件面板显示为已勾选；取消任一内置行写回的
+ *     显式列表仍含插件 id；高级行显示 `*`，编辑时展开成真实列表，未改动
+ *     确认仍写回 `*`（不把展开结果钉进设置）。
  *  g. 至少一个面板：取消最后一个勾选被拒绝（空串在持久化契约里不可
  *     表示，会静默回落默认值），给出错误通知且零写入。
  *  a. 高级逃生：列表尾部的原始文本行进既有草稿编辑器（可改顺序/手填
  *     未来 id）；非法草稿按既有 invalid 语义拒绝。
- *  h. hint 收缩为勾选即所得，并点明插件面板自动出现；kind 保持 'text'
+ *  h. hint 点明插件面板默认出现、取消后才写成显式列表；kind 保持 'text'
  *     （持久化格式与发布 schema 不变）。
  *
  * Run: node --import tsx/esm scripts/verify-panel-settings-picker.tsx
@@ -39,7 +46,7 @@ const [
   { panelStore },
   { registerBuiltinPanels },
   { SETTING_DEFINITIONS },
-  { SIDE_PANEL_ID_PATTERN },
+  { ALL_SIDE_PANELS, normalizeSidePanelPanels, parseSidePanelPanels, resolveSidePanelIds, SIDE_PANEL_ID_PATTERN },
   { t },
   { settled, viewportLines },
 ] = await Promise.all([
@@ -124,6 +131,9 @@ function makeChannel(): unknown {
         parse(text: string) {
           const draft = text.trim()
           if (draft === '') return { kind: 'clear' as const }
+          // `*` is the "every registered panel" sentinel (default); it is a
+          // whole-value form, so `*,todo` is a malformed draft.
+          if (draft === '*') return { kind: 'set' as const, value: '*' }
           const tokens = draft.split(',').map(token => token.trim().toLowerCase()).filter(token => token !== '')
           if (tokens.length === 0 || tokens.some(token => !SIDE_PANEL_ID_PATTERN.test(token))) return undefined
           return { kind: 'set' as const, value: tokens.join(',') }
@@ -209,6 +219,33 @@ async function openPicker(stored: string) {
 // Builtin rows render in registry order (order: todo 10, info 15, jobs 20,
 // btw 22, trajectory 25, agents 30, workspace 35, companion 40).
 const ROW_TODO = 0, ROW_JOBS = 2, ROW_COMPANION = 7
+
+// ── r. the pure resolver: the one source both the picker and PanelBar read ──
+{
+  // `*` follows the built-in DEFAULT order (builtins by their documented
+  // order, not registry order), then appends everything else in registry
+  // order — exactly the tail the old registration-time append produced.
+  check('r *: built-ins keep the documented default order',
+    resolveSidePanelIds(ALL_SIDE_PANELS, ['todo', 'info', 'jobs']).join(',') === 'todo,jobs,info')
+  check('r *: plugin panels append after the built-ins',
+    resolveSidePanelIds(ALL_SIDE_PANELS, ['demo:md', 'todo']).join(',') === 'todo,demo:md')
+  check('r *: unregistered built-ins are dropped',
+    !resolveSidePanelIds(ALL_SIDE_PANELS, ['todo']).includes('jobs'))
+  check('r explicit: ids survive verbatim, unknown placeholders included',
+    resolveSidePanelIds('todo,demo:future', ['todo']).join(',') === 'todo,demo:future')
+  check('r empty/undefined normalizes to the * default',
+    normalizeSidePanelPanels(undefined) === ALL_SIDE_PANELS
+    && normalizeSidePanelPanels('') === ALL_SIDE_PANELS
+    && normalizeSidePanelPanels('BAD!') === ALL_SIDE_PANELS)
+  check('r malformed tokens are dropped, usable ones kept',
+    normalizeSidePanelPanels(' todo, BAD!, , jobs ') === 'todo,jobs')
+  check('r strict parse: the sentinel is a whole-value form',
+    parseSidePanelPanels('*,todo').mode === 'invalid'
+    && parseSidePanelPanels('*').mode === 'all'
+    && parseSidePanelPanels('').mode === 'empty'
+    && parseSidePanelPanels(',').mode === 'invalid'
+    && parseSidePanelPanels('todo,,jobs').mode === 'list')
+}
 
 // ── p. checkbox rows + mapping + o. toggle semantics (append/remove) ────────
 {
@@ -297,6 +334,79 @@ const ROW_TODO = 0, ROW_JOBS = 2, ROW_COMPANION = 7
   check('l unloaded plugin row leaves, its id degrades to a placeholder',
     await settled(() => !screen.has('Notes') && /[✓][^\n]*· demo:notes/.test(screen.view()), { timeoutMs: 4000 }))
   await screen.close()
+}
+
+// ── s. issue #1662: `*` (the default) covers every registered panel ────────
+// A plugin panel registered at runtime is actually enabled; the picker must
+// agree. Toggling a row materializes the explicit list from the resolver, so
+// it cannot silently drop the plugin ids that were never in the stored text.
+{
+  const disposeDemo = panelStore.register({
+    id: 'demo:md',
+    title: 'Markdown demo',
+    icon: 'M',
+    order: 50,
+    source: 'plugin',
+    component: () => null,
+  }, { pluginId: 'demo' })
+  const ROW_PLUGIN = 8   // builtins occupy 0-7 in registry order
+  const ROW_ADVANCED = 9 // then the plugin row, then the advanced raw row
+
+  // s1. checked state under `*`: every registered panel, plugin included.
+  {
+    const screen = await openPicker('*')
+    if (screen === null) { check('s issue scenario opens', false); process.exit(1) }
+    check('s plugin panel is checked under *',
+      /\[✓ \][^\n]*Markdown demo/.test(screen.view()))
+    check('s advanced row shows the * sentinel',
+      screen.view().split('\n').some(line => line.includes(t('settings-panels-advanced')) && line.includes('*')))
+
+    // s2. untick a builtin: the materialized list keeps the plugin id.
+    cursor = await arrow(screen.stdin, 'down', ROW_COMPANION, cursor)
+    screen.stdin.write('\r')
+    check('s unticking a builtin keeps plugin ids',
+      await settled(() => panelSetWrites().includes('todo,jobs,agents,info,trajectory,workspace,btw,demo:md'), { timeoutMs: 4000 }),
+      panelSetWrites().join(' | '))
+
+    cursor = await arrow(screen.stdin, 'down', ROW_PLUGIN - ROW_COMPANION, cursor)
+    screen.stdin.write('\r')
+    check('s unticking the plugin row removes it from the explicit list',
+      await settled(() => panelSetWrites().includes('todo,jobs,agents,info,trajectory,workspace,btw'), { timeoutMs: 4000 }),
+      panelSetWrites().join(' | '))
+    await screen.close()
+  }
+
+  // s3. an explicit list that predates the plugin leaves it unchecked but
+  // visible (the extension story; one tick brings it back).
+  {
+    const screen = await openPicker('todo,jobs,agents,info,trajectory,workspace,btw')
+    if (screen === null) { check('s explicit-list scenario opens', false); process.exit(1) }
+    check('s plugin panel renders unchecked under an explicit list',
+      /\[  \][^\n]*Markdown demo/.test(screen.view()))
+    await screen.close()
+  }
+
+  // s4. the advanced row expands `*` into the real list, and an untouched
+  // confirm must NOT pin that expansion into settings.
+  {
+    const screen = await openPicker('*')
+    if (screen === null) { check('s advanced sentinel scenario opens', false); process.exit(1) }
+    cursor = await arrow(screen.stdin, 'down', ROW_ADVANCED, cursor)
+    screen.stdin.write('\r')
+    check('s advanced draft expands * to the effective list',
+      await settled(() => screen.has('demo:md▌'), { timeoutMs: 4000 }))
+    await sleep(150) // 固定窗:pacing 确认键须与开编辑的 Enter 分属两个 stdin chunk，否则被并进草稿
+    screen.stdin.write('\r')
+    // The confirm stages the sentinel, not the expansion: the write is `*`
+    // (a no-op value that still pins "all"), never the materialized CSV.
+    check('s untouched advanced confirm keeps * (not the expansion)',
+      await settled(() => !screen.view().includes('▌'), { timeoutMs: 4000 })
+      && panelSetWrites().length === 1 && panelSetWrites()[0] === '*',
+      panelSetWrites().join(' | '))
+    await screen.close()
+  }
+
+  disposeDemo()
 }
 
 // ── g. the last checked panel cannot be removed (empty is not storable) ─────

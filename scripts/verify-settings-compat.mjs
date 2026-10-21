@@ -19,7 +19,7 @@ import { configValues, createSettingsScope, editableConfig, resolveSettingsNames
 import { createSettingsHosts } from '../src/dsh-adapter/channel/settings-host.ts'
 import { SettingsForm } from '../src/dsh-adapter/settingsEditor.ts'
 import TuiSettingsSectionsRuntime, { getHostSettingsSections, getLocalSettingsSectionsHost, trackHostSettingsSection } from '../src/dsh-adapter/settings-sections.ts'
-import { DEFAULT_PAGE_MARGIN, DEFAULT_SIDE_PANEL_IDS, DEFAULT_STATUS_BAR, SIDE_PANEL_ID_PATTERN, isPageMarginMode, normalizePageMargin, normalizePluginFieldsOrder, normalizeSidePanelPanels, parsePageMarginSpec, parsePluginFieldsOrder } from '../src/tuiDisplayPrefs.ts'
+import { ALL_SIDE_PANELS, DEFAULT_PAGE_MARGIN, DEFAULT_STATUS_BAR, SIDE_PANEL_ID_PATTERN, isPageMarginMode, normalizePageMargin, normalizePluginFieldsOrder, normalizeSidePanelPanels, parsePageMarginSpec, parsePluginFieldsOrder, parseSidePanelPanels } from '../src/tuiDisplayPrefs.ts'
 import { SPLASH_FONTS, SPLASH_FONT_OPTIONS, normalizeSplashFont } from '../src/components/splashFonts.ts'
 import { normalizeBrandSetting } from '../src/branding.ts'
 import { getLang, isLang } from '../src/i18n.ts'
@@ -271,9 +271,10 @@ if (modernSchema) for (const registry of ['service', 'local']) for (const entryI
       configOwner: owner, Config, resolveSettingsNamespace,
       config: configValues(runtime), SHORTCUT_ACTIONS, SHORTCUT_FIELD_META, SETTING_GROUPS, settingField, effectiveComboString, parseComboDraft, draftComboConflicts,
       getLang, DEFAULT_PAGE_MARGIN, isPageMarginMode, parsePageMarginSpec, SPLASH_FONT_OPTIONS, normalizeSplashFont, normalizeBrandSetting,
-      // Side-panel fields (sidePanel.panels) validate their draft against the
-      // production id grammar, so the eval scope mirrors those helpers too.
-      DEFAULT_SIDE_PANEL_IDS, SIDE_PANEL_ID_PATTERN, normalizeSidePanelPanels,
+      // Side-panel fields (sidePanel.panels) format/parse through the
+      // production sentinel + grammar, so the eval scope mirrors those
+      // helpers too (issue #1662).
+      ALL_SIDE_PANELS, SIDE_PANEL_ID_PATTERN, normalizeSidePanelPanels, parseSidePanelPanels,
       // Plugin footer field list (statusBar.pluginFieldsOrder): its parse and
       // format callbacks validate/canonicalize through these two helpers.
       parsePluginFieldsOrder, normalizePluginFieldsOrder,
@@ -348,6 +349,17 @@ if (modernSchema) for (const registry of ['service', 'local']) for (const entryI
     const costField = section.fields.find(field => field.path.length === 2 && field.path[0] === 'statusBar' && field.path[1] === 'cost')
     assert.ok(costField, `${registry}: the production section exposes statusBar.cost`)
     assert.equal(form.field(costField).text, 'true', 'unset statusBar.cost shows the effective on')
+    // sidePanel.panels（issue #1662）：Config 默认值就是 `*`，未设置时生产 format
+    // 也给出 `*`（勾选器据此显示「全部已注册面板」）；`*` 可保存、`*,todo` 被拒绝、
+    // 空串仍是 clear。
+    assert.equal(configValues(runtime).sidePanel.panels, ALL_SIDE_PANELS, 'the Config default is the * sentinel')
+    const panelsField = section.fields.find(field => field.path.length === 2 && field.path[0] === 'sidePanel' && field.path[1] === 'panels')
+    assert.ok(panelsField, `${registry}: the production section exposes sidePanel.panels`)
+    assert.equal(form.field(panelsField).text, ALL_SIDE_PANELS, 'unset sidePanel.panels shows the * sentinel')
+    assert.deepEqual(panelsField.parse?.('*'), { kind: 'set', value: ALL_SIDE_PANELS })
+    assert.deepEqual(panelsField.parse?.(''), { kind: 'clear' })
+    assert.equal(panelsField.parse?.('*,todo'), undefined)
+    assert.deepEqual(panelsField.parse?.('todo,demo:future'), { kind: 'set', value: 'todo,demo:future' })
     observed.length = 0
     form.edit(diffField, 'unified')
     form.edit(splashField, 'classic')

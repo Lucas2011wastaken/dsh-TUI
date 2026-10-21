@@ -25,7 +25,7 @@
 process.env.FORCE_COLOR = '3'
 process.env.DSH_TUI_LANG = 'en'
 
-const [{ PassThrough, Writable }, React, { Terminal: XTerm }, ui, { useSidePanel }, prefs, termTest] = await Promise.all([
+const [{ PassThrough, Writable }, React, { Terminal: XTerm }, ui, { useSidePanel }, prefs, termTest, { registerBuiltinPanels }] = await Promise.all([
   import('node:stream'),
   import('react'),
   import('@xterm/headless'),
@@ -33,10 +33,16 @@ const [{ PassThrough, Writable }, React, { Terminal: XTerm }, ui, { useSidePanel
   import('../src/components/sidePanel/useSidePanel.js'),
   import('../src/tuiDisplayPrefs.js'),
   import('./lib/term-test.mjs'),
+  import('../src/components/sidePanel/builtinPanels.js'),
 ])
 const { render, AlternateScreen, Box, Text, useInput } = ui
 const { applySidePanelOpen, applySidePanelRatio } = prefs
 const { settled, viewportLines } = termTest
+
+// `sidePanel.panels` defaults to `*`, which derives the tab list from the
+// registry: register the built-ins the way the app does before any mount
+// (otherwise the controller legitimately has no enabled panel).
+registerBuiltinPanels()
 
 const COLS = 84
 const ROWS = 6

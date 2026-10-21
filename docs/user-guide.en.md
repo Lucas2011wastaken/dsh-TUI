@@ -281,7 +281,7 @@ one-column seam between the two surfaces.
   at least 64 columns and the panel at least 28. Dragging exits zoom, preserves keyboard focus,
   and keeps the width for the current session. Text drags starting in chat select only chat;
   drags starting inside the panel can select panel text.
-- **Panels**: all eight built-in panels are enabled by default and can be changed in `sidePanel.panels`. `todo` (Goals/Todos — with a split it moves here from above the input), `jobs`
+- **Panels**: by default (`sidePanel.panels: '*'`) every panel is enabled — the eight built-ins plus plugin panels registered later; change it in `sidePanel.panels` or the `/settings` checkboxes. `todo` (Goals/Todos — with a split it moves here from above the input), `jobs`
   (background jobs; clicking a job card in the transcript focuses that job here), `agents`
   (subagent dashboard and detail: Enter opens the detail, Esc steps back), `companion`
   (the pet — its mood follows

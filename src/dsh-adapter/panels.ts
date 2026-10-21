@@ -34,7 +34,6 @@ import { panelStore, type PanelStoreEvent } from '../components/sidePanel/PanelS
 import type { PanelDefinition, PanelOwner } from '../components/sidePanel/types.js'
 import { makePluginPanelComponent } from '../components/sidePanel/pluginPanelAdapter.js'
 import { panelBridgeRequests } from '../components/sidePanel/panelBridge.js'
-import { applySidePanelPanels, getSidePanelPanels, parseSidePanelIds } from '../tuiDisplayPrefs.js'
 import { stringWidth } from '../ink/stringWidth.js'
 import type { TuiPluginStorage } from './plugin-storage.js'
 import {
@@ -543,8 +542,8 @@ export class TuiPanelRuntime extends Service {
     const ownerTag: PanelOwner = { pluginId, activation: owner }
     const unregister = panelStore.register(definition, ownerTag)
     setPanelOwnerRecord(finalId, { caller, owner, pluginId, lastOpenAt: 0 })
-    // 注册即入侧栏启用列表（PanelBar 可见；/panel 与 /settings 仍可移除）。
-    enablePanelIdInStore(finalId)
+    // 注册只动注册表：启用集合由 `sidePanel.panels` 的值派生
+    // （`*` = 全部已注册面板），注册路径绝不改写设置或 live store。
 
     let disposed = false
     let ownerCleanup: (() => unknown) | undefined
@@ -552,10 +551,9 @@ export class TuiPanelRuntime extends Service {
       if (disposed) return
       disposed = true
       // 先撤 store（unregistered 事件还需 owner record 做订阅过滤），再清
-      // owner 数据与启用列表。
+      // owner 数据。
       unregister()
       deletePanelOwnerRecord(finalId)
-      disablePanelIdInStore(finalId)
       caller.get('tuiEffectLedger')?.record(
         { operation: 'release', resource: { kind: 'panel', id: finalId }, result: 'applied' },
         identity,
@@ -683,57 +681,6 @@ export class TuiPanelRuntime extends Service {
     bindCallerEffect(caller, dispose)
     return dispose
   }
-}
-
-// ── 启用列表接线（tuiDisplayPrefs 的 panels CSV；无环的 module store）──
-
-/** 本进程内由插件注册、尚未撤下的面板 id：配置应用时并回启用 CSV，免得
- * 先于 dsh-tui 行注册的面板被配置覆盖挤掉。 */
-const registeredPanelIds = new Set<string>()
-
-/** 用户在 /settings 显式移除的已注册面板 id（Session 级）：配置 CSV 分辨不出
- * 「用户移除了它」与「文档还不知道它」，没有这份记录并集会把它一次次并回。 */
-const removedPanelIds = new Set<string>()
-
-/** 注册成功后把最终 id 追加进侧栏启用 CSV（已存在则不动）——注册即
- * 可见：PanelBar 出胶囊、open()/1-9/z 生效；/panel 与 /settings 仍可移除。
- * 重新注册是一次新的贡献：上一轮的显式移除不再对它生效。 */
-function enablePanelIdInStore(id: string): void {
-  registeredPanelIds.add(id)
-  removedPanelIds.delete(id)
-  const ids = [...parseSidePanelIds(getSidePanelPanels())]
-  if (!ids.includes(id)) ids.push(id)
-  applySidePanelPanels(ids.join(','))
-}
-
-/** 撤下时把最终 id 从启用 CSV 摘掉（PanelHost 对缺失的 active 自动回
- * 退到第一个已启用 Panel），并从注册集合里移除，后续配置应用不再并回。 */
-function disablePanelIdInStore(id: string): void {
-  registeredPanelIds.delete(id)
-  const ids = parseSidePanelIds(getSidePanelPanels()).filter(candidate => candidate !== id)
-  applySidePanelPanels(ids.join(','))
-}
-
-/** 应用 `sidePanel.panels` 配置，已注册的面板 id 并回尾部（除非被显式移除）。 */
-export function applyConfiguredSidePanelPanels(configured: string | undefined): void {
-  const ids = [...parseSidePanelIds(configured ?? getSidePanelPanels())]
-  for (const id of registeredPanelIds) {
-    if (removedPanelIds.has(id) || ids.includes(id)) continue
-    ids.push(id)
-  }
-  applySidePanelPanels(ids.join(','))
-}
-
-/**
- * /settings 编辑那一跳：先记下用户删掉的已注册 id，再走并集。boot settings **不得**走这里——
- * 那时 CSV 缺席的已注册 id 只说明它注册得晚，不是用户移除。
- */
-export function applySidePanelPanelsFromSettings(configured: string | undefined): void {
-  if (configured !== undefined) {
-    const ids = new Set(parseSidePanelIds(configured))
-    for (const id of registeredPanelIds) if (!ids.has(id)) removedPanelIds.add(id)
-  }
-  applyConfiguredSidePanelPanels(configured)
 }
 
 export function getHostPanelRuntime(runtime: TuiPanelRuntime | undefined): TuiPanelHost | undefined {
