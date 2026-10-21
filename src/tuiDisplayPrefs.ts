@@ -519,9 +519,11 @@ export function normalizeSidePanelRatio(value: unknown): number {
 
 /** Parsed `sidePanel.panels`. `*` is "every registered panel"; `''` is the
  *  settings screen's clear (use the default); otherwise the exact ids, in
- *  PanelBar order. `invalid` is what the settings screen refuses to save; the
- *  renderer treats it as `all`, so a hand-edited typo can only ever show MORE
- *  than asked, never hide a panel silently. */
+ *  PanelBar order. `invalid` is what every write path refuses: the settings
+ *  gate rejects the draft, and `normalizeSidePanelPanels` (the store, and the
+ *  settings field's `format`) drops the unusable tokens. `resolveSidePanelIds`
+ *  still folds a raw invalid value to `all` for a caller handing it
+ *  un-normalized text — the PanelBar and the settings screen never do. */
 export type ParsedSidePanelPanels =
   | { readonly mode: 'all' }
   | { readonly mode: 'empty' }
@@ -576,8 +578,8 @@ export function normalizeSidePanelPanels(value: unknown): string {
 /** The one derivation of "which panels are enabled", given the stored value
  *  and the live registry (ids in registry order).
  *
- *  - `*` (and an invalid hand-edited value): the built-ins in their default
- *    order, then every other registered panel in registry order — the same
+ *  - `*` (and a raw invalid value): the built-ins in their default order,
+ *    then every other registered panel in registry order — the same
  *    tail order the old registration-time append produced, so an upgrade
  *    changes no visible tab order.
  *  - an explicit list: returned verbatim, including ids nothing claims yet

@@ -30,6 +30,9 @@ interface EditingState {
   ns: string
   field: TuiSettingsField
   draft: string
+  /** The draft this editor opened with — the panel picker's confirm compares
+   *  against it instead of re-deriving (the registry may change mid-edit). */
+  initialDraft: string
 }
 
 interface ActiveGroup {
@@ -196,19 +199,22 @@ function panelEnabledIds(text: string, registered: readonly string[]): readonly 
 
 /** The draft the advanced row opens with: `*` expands to the effective list
  *  (the registry order becomes the structure the user edits), while an
- *  explicit list or the user's typo opens verbatim. */
+ *  explicit list opens verbatim. */
 function panelDraft(text: string, registered: readonly string[]): string {
   return parseSidePanelPanels(text).mode === 'all' ? panelEnabledIds(text, registered).join(',') : text
 }
 
 /** Saving the untouched expansion must not pin the automatic mode: only a
- *  draft that STARTED from `*` and was not changed collapses back to it. An
- *  explicit list (even one identical to the current expansion) is never
+ *  draft that STARTED from `*` and was not changed collapses back to it. The
+ *  comparison is against the snapshot captured when the editor opened, not a
+ *  fresh expansion — a panel registering mid-edit must not turn an untouched
+ *  save into an explicit list, which would hide the panel that just arrived.
+ *  An explicit list (even one identical to the current expansion) is never
  *  rewritten to `*`, or an unedited save would silently re-enable "panels
  *  registered later". */
-function panelCommit(stored: string, text: string, registered: readonly string[]): string {
+function panelCommit(stored: string, text: string, initialDraft: string): string {
   if (parseSidePanelPanels(stored).mode !== 'all') return text
-  return text.trim() === panelDraft(stored, registered) ? ALL_SIDE_PANELS : text
+  return text.trim() === initialDraft.trim() ? ALL_SIDE_PANELS : text
 }
 
 /** Insert a newly ticked id where its row sits — after the last enabled id
@@ -1022,13 +1028,10 @@ export function Settings({
       cycleField(entry.ns, entry.field)
     } else {
       const text = form.field(entry.field).text
-      setEditing({
-        ns: entry.ns,
-        field: entry.field,
-        draft: isPanelListField(entry.ns, entry.field)
-          ? panelDraft(text, registeredPanelIds)
-          : isFieldListField(entry.ns, entry.field) ? pluginFieldDraft(text, statusFields) : text,
-      })
+      const draft = isPanelListField(entry.ns, entry.field)
+        ? panelDraft(text, registeredPanelIds)
+        : isFieldListField(entry.ns, entry.field) ? pluginFieldDraft(text, statusFields) : text
+      setEditing({ ns: entry.ns, field: entry.field, draft, initialDraft: draft })
       setMode('edit')
     }
   }
@@ -1053,7 +1056,7 @@ export function Settings({
           form.edit(
             editing.field,
             isPanelListField(editing.ns, editing.field)
-              ? panelCommit(form.field(editing.field).text, editing.draft, registeredPanelIds)
+              ? panelCommit(form.field(editing.field).text, editing.draft, editing.initialDraft)
               : isFieldListField(editing.ns, editing.field)
                 ? pluginFieldCommit(form.field(editing.field).text, editing.draft, statusFields)
                 : editing.draft,

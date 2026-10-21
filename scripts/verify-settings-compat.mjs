@@ -356,6 +356,12 @@ if (modernSchema) for (const registry of ['service', 'local']) for (const entryI
     assert.deepEqual(panelsField.parse?.(''), { kind: 'clear' })
     assert.equal(panelsField.parse?.('*,todo'), undefined)
     assert.deepEqual(panelsField.parse?.('todo,demo:future'), { kind: 'set', value: 'todo,demo:future' })
+    // 生产 format 投影与存储同源：手工写进设置文档的非法混合值，在勾选器里读到的
+    // 必须就是 store/PanelBar 实际使用的那一份，否则勾选态与标签栏会各说各话。
+    assert.equal(panelsField.format?.('todo,bad!'), 'todo', 'a stored value with an unusable token projects as the store normalizes it')
+    assert.equal(panelsField.format?.('*,todo'), 'todo', 'a sentinel mixed with ids projects as the store folds it')
+    assert.equal(panelsField.format?.('todo,jobs'), 'todo,jobs', 'a well-formed stored list projects verbatim')
+    assert.equal(panelsField.format?.(''), ALL_SIDE_PANELS, 'an empty stored value projects as the * default')
     observed.length = 0
     form.edit(diffField, 'unified')
     form.edit(splashField, 'classic')

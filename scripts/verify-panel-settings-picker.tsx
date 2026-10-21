@@ -21,6 +21,8 @@
  *  s. issue #1662 原场景：`*` 下插件面板显示为已勾选；取消任一内置行写回的
  *     显式列表仍含插件 id；高级行显示 `*`，编辑时展开成真实列表，未改动
  *     确认仍写回 `*`（不把展开结果钉进设置）。
+ *  t. 高级行确认对照「打开编辑器时的快照」而非重算：编辑期间注册的新面板
+ *     不会让未改动的确认退化成显式列表（否则刚到的面板会被关掉）。
  *  g. 至少一个面板：取消最后一个勾选被拒绝（空串在持久化契约里不可
  *     表示，会静默回落默认值），给出错误通知且零写入。
  *  a. 高级逃生：列表尾部的原始文本行进既有草稿编辑器（可改顺序/手填
@@ -389,9 +391,9 @@ const ROW_JOBS = 1, ROW_COMPANION = 7
     check('s advanced row shows the * sentinel',
       screen.view().split('\n').some(line => line.includes(t('settings-panels-advanced')) && line.includes('*')))
 
-    // s2. untick a builtin: the materialized list keeps the plugin id. The
-    // rows re-order to the new explicit list, so locate the plugin row again
-    // before the second tick instead of assuming its old index.
+    // s2. untick a builtin: the materialized list keeps the plugin id. Rows keep
+    // the default order (only their checkbox flips), so the plugin row stays at
+    // its display index; locate it by name anyway rather than by a hardcoded one.
     const moveTo = async (row: number): Promise<void> => {
       const delta = row - cursor
       if (delta === 0) return
@@ -439,6 +441,38 @@ const ROW_JOBS = 1, ROW_COMPANION = 7
       && panelSetWrites().length === 1 && panelSetWrites()[0] === '*',
       panelSetWrites().join(' | '))
     await screen.close()
+  }
+
+  // ── t. a mid-edit registration must not pin the expansion ─────────────────
+  {
+    const screen = await openPicker('*')
+    if (screen === null) { check('t advanced-snapshot scenario opens', false); process.exit(1) }
+    cursor = await arrow(screen.stdin, 'down', ROW_ADVANCED, cursor)
+    screen.stdin.write('\r')
+    check('t advanced draft expands * to the effective list (before the registration)',
+      await settled(() => screen.has('demo:md▌'), { timeoutMs: 4000 }))
+    // A panel lands while the editor is open: the registry half of the expansion
+    // grows under the draft. The confirm must compare against the snapshot the
+    // editor opened with, or the untouched save becomes an explicit list without
+    // the new id — silently switching off the panel that just arrived.
+    const disposeLate = panelStore.register({
+      id: 'demo:late',
+      title: 'Late demo',
+      icon: 'L',
+      order: 60,
+      source: 'plugin',
+      component: () => null,
+    }, { pluginId: 'demo' })
+    await sleep(150) // 固定窗:pacing 确认键须与开编辑的 Enter 分属两个 stdin chunk
+    screen.stdin.write('\r')
+    // The row list gains one entry, so the focused index now lands on the
+    // newcomer and the `▌` marker goes with it; wait for the write, not the marker.
+    check('t unchanged confirm survives a mid-edit registration (still *)',
+      await settled(() => panelSetWrites().length === 1, { timeoutMs: 4000 })
+      && panelSetWrites()[0] === '*',
+      panelSetWrites().join(' | '))
+    await screen.close()
+    disposeLate()
   }
 
   disposeDemo()
