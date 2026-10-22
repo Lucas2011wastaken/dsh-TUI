@@ -21,7 +21,7 @@
  *      being dropped (long command + long reason on that 24-row terminal);
  *   6. a short question plus a six-row detail on the same terminal: the
  *      question's unused rows reach the detail, so nothing folds.
- *   7. multiline option descriptions remain windowed after detail clipping;
+ *   7. multiline and CJK-wrapped descriptions remain windowed after detail clipping;
  *   8. failed OAuth copying retains keyboard access to the whole URL in
  *      inline/fullscreen and narrow terminals, including remapped keys.
  *
@@ -292,8 +292,8 @@ await settle(() => visible('hello'), { timeoutMs: 5000 })
 }
 
 // 7) Shrinking a detail must not turn a bounded option list back into an
-//    unbounded one. The option descriptions each have eight source rows.
-{
+//    unbounded one. Cover both explicit newlines and a wide unbroken line.
+for (const multiline of [true, false]) {
   stdout.rows = ROWS
   term.resize(COLS, ROWS)
   stdout.emit('resize')
@@ -304,7 +304,9 @@ await settle(() => visible('hello'), { timeoutMs: 5000 })
     detail: Array.from({ length: 20 }, (_, index) => `Detail row ${index + 1}`).join('\n'),
     options: labels.map(label => ({
       label,
-      description: Array.from({ length: 8 }, (_, index) => `${label} description ${index + 1}`).join('\n'),
+      description: multiline
+        ? Array.from({ length: 8 }, (_, index) => `${label} description ${index + 1}`).join('\n')
+        : '界'.repeat(400),
     })),
     hideCustomInput: true,
   }] }).catch(() => undefined)
@@ -316,7 +318,7 @@ await settle(() => visible('hello'), { timeoutMs: 5000 })
     return rows().some(line => line.includes('●') && line.includes(labels[3]!))
       && visible('↑/↓ 选择')
   })
-  check('wrapped options: last focus and hint stay visible', tailVisible, text)
+  check(`wrapped options (${multiline ? 'newlines' : 'CJK'}): last focus and hint stay visible`, tailVisible, text)
   stdin.write('\x1b')
   await asked
   await settle(() => !visible(labels[0]!) && !visible(labels[3]!))
