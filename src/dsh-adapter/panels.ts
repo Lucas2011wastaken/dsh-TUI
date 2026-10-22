@@ -329,8 +329,7 @@ function panelStateFor(runtime: TuiPanelRuntime): PanelState {
   return state
 }
 
-/** 无 Component identity 的裸挂载（测试夹具）需要一个稳定命名空间：
- * 按 activation fiber 发号。 */
+/** Anonymous activation ids are session-only, never persistent identities. */
 const fallbackPluginIds = new WeakMap<object, string>()
 let fallbackSeq = 0
 
@@ -342,7 +341,7 @@ function pluginIdFor(caller: Context, owner: object): string {
   let fallback = fallbackPluginIds.get(owner)
   if (fallback === undefined) {
     fallbackSeq += 1
-    fallback = 'act' + String(fallbackSeq)
+    fallback = 'session:act' + String(fallbackSeq)
     fallbackPluginIds.set(owner, fallback)
   }
   return fallback

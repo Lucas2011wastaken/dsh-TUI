@@ -10,13 +10,13 @@ import { POINTER, TICK, MULTIPLICATION_X } from '../terminal-utils/figures.js'
 import type { Theme } from '../theme.js'
 import { getLang, t, type I18nKey } from '../i18n.js'
 import { SettingsForm } from '../dsh-adapter/settingsEditor.js'
-import type { TuiSettingsField, TuiSettingsFieldKind, TuiSettingsGroup, TuiSettingsPage, TuiSettingsSection } from '../dsh-adapter/settings-sections.js'
+import type { TuiSettingsField, TuiSettingsFieldOption, TuiSettingsFieldKind, TuiSettingsGroup, TuiSettingsPage, TuiSettingsSection } from '../dsh-adapter/settings-sections.js'
 import type { LocalizedDescriptions } from '../commands.js'
 import type { ChannelUi as Channel } from '../adapter/channel/ui-policy.js'
 import { panelStore } from '../components/sidePanel/PanelStore.js'
 import { registerBuiltinPanels } from '../components/sidePanel/builtinPanels.js'
 import type { TuiStatusFieldEntry } from '../dsh-adapter/status.js'
-import { ALL_PLUGIN_FIELDS, ALL_SIDE_PANELS, formatPluginFieldsOrder, parsePluginFieldsOrder, parseSidePanelPanels, resolveSidePanelIds, STATUS_FIELD_SLOTS, type StatusFieldSlot } from '../tuiDisplayPrefs.js'
+import { ALL_PLUGIN_FIELDS, ALL_SIDE_PANELS, formatPluginFieldsOrder, getHiddenTemporarySidePanels, isLegacyAnonymousSidePanelId, isTemporarySidePanelId, parsePluginFieldsOrder, parseSidePanelPanels, persistentSidePanelId, resolveSidePanelIds, setTemporarySidePanelHidden, STATUS_FIELD_SLOTS, subscribeHiddenTemporarySidePanels, type StatusFieldSlot } from '../tuiDisplayPrefs.js'
 
 // The panel picker enumerates the live registry: builtin panels register on
 // import (same idempotent call SidePanelColumn makes), plugins come and go
@@ -191,17 +191,37 @@ function pluginFieldCommit(stored: string, text: string, fields: readonly TuiSta
  * uses. An explicit list is user data and stays literally editable.
  */
 
-/** The effective enabled ids for one stored draft (`*`/invalid → every
- *  registered panel, in default order; an explicit list → its ids). */
-function panelEnabledIds(text: string, registered: readonly string[]): readonly string[] {
-  return resolveSidePanelIds(text, registered)
+/** The ids a toggle writes back for one stored draft, in **persisted form**:
+ *  `*` (or a value the store folds to it) materializes every registered
+ *  panel, an explicit list opens verbatim — its own tokens stay exactly as
+ *  stored, so a bare actN placeholder is never rewritten into the verified
+ *  `component:` encoding by an unrelated tick. Temporary panels are left out
+ *  of every write: their on/off is session state, not a preference (#1695). */
+function panelMaterializedIds(text: string, registered: readonly string[]): string[] {
+  const parsed = parseSidePanelPanels(text)
+  if (parsed.mode === 'list') return [...parsed.ids]
+  return resolveSidePanelIds(ALL_SIDE_PANELS, registered)
+    .filter(id => !isTemporarySidePanelId(id))
+    .map(id => persistentSidePanelId(id))
+}
+
+/** Every registered panel in the documented default order, as picker rows see
+ *  it: the persistent id each row addresses, plus the runtime id the row's
+ *  own checkbox is about. A temporary row keeps its slot even while this run
+ *  hides it, or the tick that hides it could never be undone. */
+function panelRowIds(registered: readonly string[]): { id: string; runtimeId: string }[] {
+  return resolveSidePanelIds(ALL_SIDE_PANELS, registered)
+    .map(runtimeId => ({ id: persistentSidePanelId(runtimeId), runtimeId }))
 }
 
 /** The draft the advanced row opens with: `*` expands to the effective list
  *  (the registry order becomes the structure the user edits), while an
- *  explicit list opens verbatim. */
+ *  explicit list opens verbatim. Temporary ids never appear — the field edits
+ *  persisted ids only. */
 function panelDraft(text: string, registered: readonly string[]): string {
-  return parseSidePanelPanels(text).mode === 'all' ? panelEnabledIds(text, registered).join(',') : text
+  return parseSidePanelPanels(text).mode === 'all'
+    ? panelMaterializedIds(text, registered).join(',')
+    : text
 }
 
 /** Saving the untouched expansion must not pin the automatic mode: only a
@@ -230,7 +250,7 @@ function insertAtDefaultPosition(
   registered: readonly string[],
 ): string[] {
   const rank = new Map(
-    resolveSidePanelIds(ALL_SIDE_PANELS, registered).map((id, index) => [id, index] as const),
+    panelRowIds(registered).map((row, index) => [row.id, index] as const),
   )
   const target = rank.get(panelId)
   if (target === undefined) return [...current, panelId]
@@ -719,7 +739,38 @@ export function Settings({
   // host-keyed effects below on every render (an endless render loop).
   const host = channel.settingsHost()
   const [namespaces, setNamespaces] = React.useState(() => host?.listNamespaces() ?? [])
-  const [sections, setSections] = React.useState(() => channel.settingsSections())
+  const [registeredSections, setSections] = React.useState(() => channel.settingsSections())
+  const routeKey = React.useMemo(() => Symbol('effort catalog'), [
+    channel.sessionRef?.backendId, channel.sessionRef?.sessionId, channel.agentBindingGeneration,
+    channel.agentId, channel.provider, channel.model, JSON.stringify(channel.effortLevels),
+    channel.backendCapabilities?.backendId, channel.backendCapabilities?.effort, getLang(),
+  ])
+  const [effortCatalog, setEffortCatalog] = React.useState<{ key: symbol; options: readonly TuiSettingsFieldOption[] }>()
+  // A stable getter lets already-staged forms validate against the latest
+  // route without dropping their unrelated drafts or retaining old tiers.
+  const effortOptions = React.useRef<readonly TuiSettingsFieldOption[]>([])
+  effortOptions.current = effortCatalog?.key === routeKey ? effortCatalog.options : []
+  const sections = React.useMemo(() => registeredSections.map(section => ({
+    ...section,
+    fields: section.fields.map(field => field.optionsSource !== 'effort' ? field : {
+      ...field,
+      get options() { return [...(field.options ?? []).filter(option => option.value === 'auto'), ...effortOptions.current] },
+    }),
+  })), [registeredSections])
+  const needsEfforts = registeredSections.some(section => section.fields.some(field => field.optionsSource === 'effort'))
+  React.useEffect(() => {
+    if (!needsEfforts || typeof channel.listEfforts !== 'function') return
+    let current = true
+    const provider = channel.provider
+    const model = channel.model
+    void channel.listEfforts({ provider, model }).then(result => {
+      if (!current) return
+      setEffortCatalog({ key: routeKey, options: result.efforts.filter(effort => effort.id !== 'auto').map(effort => ({ value: effort.id, label: effort.name })) })
+    }).catch(() => {
+      if (current) setEffortCatalog({ key: routeKey, options: [] })
+    })
+    return () => { current = false }
+  }, [channel, routeKey, needsEfforts])
   const [mode, setMode] = React.useState<SettingsMode>('list')
   const [editing, setEditing] = React.useState<EditingState | null>(null)
   const [activeGroup, setActiveGroup] = React.useState<ActiveGroup | null>(null)
@@ -736,6 +787,7 @@ export function Settings({
   /** Repaint after a form mutation — staged drafts live in the (React-free)
    *  SettingsForm, so editing one changes no React state by itself. */
   const [, bump] = React.useReducer((count: number) => count + 1, 0)
+  React.useEffect(() => typeof channel.subscribe === 'function' ? channel.subscribe(bump) : undefined, [channel])
   /** Async save completions must not touch state after the screen closes. */
   const mountedRef = React.useRef(true)
   React.useEffect(() => () => {
@@ -818,6 +870,12 @@ export function Settings({
     () => panelEntries.map(entry => entry.definition.id),
     [panelEntries],
   )
+  /** Temporary panels this run is hiding (#1695): session state the stored
+   *  value cannot name, so the picker reads it from its own store. */
+  const hiddenTemporaryPanelIds = React.useSyncExternalStore(
+    subscribeHiddenTemporarySidePanels,
+    getHiddenTemporarySidePanels,
+  )
 
   /**
    * Checkbox rows of one picker field, always in the **documented default
@@ -832,14 +890,21 @@ export function Settings({
    * plugin claims it later).
    */
   const panelPickerRows = (ns: string, field: TuiSettingsField): { id: string; checked: boolean }[] => {
-    const text = forms.get(ns)?.field(field).text ?? ''
-    const enabled = new Set(panelEnabledIds(text, registeredPanelIds))
-    const claimed = new Set(registeredPanelIds)
-    const rows = panelEnabledIds(ALL_SIDE_PANELS, registeredPanelIds)
-      .map(id => ({ id, checked: enabled.has(id) }))
-    const parsed = parseSidePanelPanels(text)
-    if (parsed.mode === 'list') {
-      for (const id of parsed.ids) {
+    const parsed = parseSidePanelPanels(forms.get(ns)?.field(field).text ?? '')
+    // `*` (and a hand-edited value the store folds to it) checks every
+    // registered panel; an explicit list checks exactly its own ids. The
+    // comparison is in persisted form, so a verified `component:` selection
+    // and a stale bare actN stay two separate rows.
+    const storedIds = parsed.mode === 'list' ? parsed.ids : undefined
+    const rows = panelRowIds(registeredPanelIds).map(({ id, runtimeId }) => ({
+      id,
+      checked: isTemporarySidePanelId(runtimeId)
+        ? !hiddenTemporaryPanelIds.includes(runtimeId)
+        : storedIds === undefined || storedIds.includes(id),
+    }))
+    if (storedIds !== undefined) {
+      const claimed = new Set(rows.map(row => row.id))
+      for (const id of storedIds) {
         if (!claimed.has(id)) rows.push({ id, checked: true })
       }
     }
@@ -966,12 +1031,26 @@ export function Settings({
    * new tick goes back to the position its row occupies in the fixed default
    * order instead of being appended to the tail; unticking removes. An empty
    * selection is refused: `''` means "use the default `*`", so writing it
-   * would silently re-enable every panel.
+   * would silently re-enable every panel. A temporary row never reaches the
+   * stored value at all — it toggles this run's visibility (see above).
    */
   const togglePanel = (ns: string, field: TuiSettingsField, panelId: string): void => {
     const form = forms.get(ns)
     if (form === undefined || !form.available) return
-    const current = panelEnabledIds(form.field(field).text, registeredPanelIds)
+    // A temporary panel has no durable identity: its row moves this run's
+    // visibility only, never the stored value (#1695).
+    if (isTemporarySidePanelId(panelId) && panelStore.get(panelId) !== undefined) {
+      const hide = !hiddenTemporaryPanelIds.includes(panelId)
+      const text = form.field(field).text
+      if (hide && resolveSidePanelIds(text, registeredPanelIds, [...hiddenTemporaryPanelIds, panelId]).length === 0) {
+        setNotice({ text: t('settings-panels-min-one'), tone: 'error' })
+        return
+      }
+      setTemporarySidePanelHidden(panelId, hide)
+      bump()
+      return
+    }
+    const current = panelMaterializedIds(form.field(field).text, registeredPanelIds)
     const next = current.includes(panelId)
       ? current.filter(id => id !== panelId)
       : insertAtDefaultPosition(current, panelId, registeredPanelIds)
@@ -1229,7 +1308,7 @@ export function Settings({
     const ns = section.ns
     const form = forms.get(ns)
     const state = form?.field(field) ?? { text: '', overridden: false, invalid: false }
-    const registered = new Map(panelEntries.map(entry => [entry.definition.id, entry]))
+    const registered = new Map(panelEntries.map(entry => [persistentSidePanelId(entry.definition.id), entry]))
     entries.push({
       key: `panel-header:${ns}:${field.path.join('.')}`,
       lines: 1,
@@ -1258,10 +1337,12 @@ export function Settings({
           : definition.title ?? row.id
       const descriptionKey = PANEL_DESCRIPTION_KEYS[row.id]
       const description = definition === undefined
-        ? t('settings-panels-unclaimed')
-        : definition.source === 'plugin'
-          ? t('settings-panels-plugin', { plugin: definition.pluginId ?? definition.id })
-          : descriptionKey !== undefined ? t(descriptionKey) : ''
+        ? t(isLegacyAnonymousSidePanelId(row.id) ? 'settings-panels-legacy-anonymous' : 'settings-panels-unclaimed')
+        : isTemporarySidePanelId(row.id)
+          ? t('settings-panels-temporary', { n: String(registered.get(row.id)?.registrationId ?? '') })
+          : definition.source === 'plugin'
+            ? t('settings-panels-plugin', { plugin: definition.pluginId ?? definition.id })
+            : descriptionKey !== undefined ? t(descriptionKey) : ''
       entries.push({
         key: `panel-toggle:${ns}:${row.id}`,
         lines: 1,

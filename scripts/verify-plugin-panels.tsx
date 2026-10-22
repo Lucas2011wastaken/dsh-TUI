@@ -62,7 +62,7 @@ const { Context } = cordis
 const { Terminal: XTerm } = XTermMod
 const { render, ThemeProvider, AlternateScreen, Box, Text } = ui
 const { settled, sleep } = termTest
-const { applySidePanelPanels, applyCodeFrameStyle, getSidePanelPanels, resolveSidePanelIds } = prefs
+const { applyCodeFrameStyle, applySidePanelPanels, getHiddenTemporarySidePanels, getSidePanelPanels, resolveSidePanelIds, setTemporarySidePanelHidden } = prefs
 const { setLang } = i18nMod
 const { TuiPanelRuntime, getHostPanelRuntime } = adapterMod
 const { panelStore } = storeMod
@@ -107,6 +107,13 @@ root.inject(['tuiPanels'], ctx => { pluginA = ctx })
 root.inject(['tuiPanels'], ctx => { pluginB = ctx })
 await new Promise(resolve => setImmediate(resolve))
 if (pluginA === undefined || pluginB === undefined) throw new Error('could not create plugin activations')
+// Keep the persistent-selection cases on a verified Component. Anonymous
+// activations below exercise the separate session-only selection path.
+const { bindComponentIdentity } = await import('../src/dsh-adapter/component-identity.js')
+const { parseManifest, projectManifest } = await import('../src/adapter/standard/protocols.js')
+const { testManifest } = await import('./lib/plugin-test-utils.js')
+const manifestA = parseManifest(testManifest({ id: 'verify-panel-a' }), { source: 'test:panels' })
+bindComponentIdentity(pluginA, manifestA, projectManifest(manifestA), 'verify-panel-a-activation')
 const panelsA = pluginA.get('tuiPanels') as PanelsService
 const panelsB = pluginB.get('tuiPanels') as PanelsService
 
@@ -230,6 +237,23 @@ const disposeSub = panelsA.subscribe(event => {
 })
 const disposeB = panelsB.register({ apiVersion: 1, id: 'bpanel', title: 'B', component: () => null })
 const idB = panelsB.list().find(e => e.id.endsWith(':bpanel'))?.id ?? 'b:none'
+check('anonymous id has a disjoint session namespace', /^session:act[0-9]+:bpanel$/u.test(idB))
+// A stored value cannot name a temporary panel, so its membership follows the
+// registry (a saved selection leaves it alone) and closing it is session
+// state that no replay revives.
+applySidePanelPanels('todo')
+check('a saved selection keeps the anonymous panel enabled',
+  resolveSidePanelIds(getSidePanelPanels(), [idB]).includes(idB))
+check('the stored value itself never carries the temporary id', !getSidePanelPanels().includes('session:'))
+setTemporarySidePanelHidden(idB, true)
+applySidePanelPanels('todo,jobs')
+check('a saved selection cannot revive a session-only panel closed this run',
+  !resolveSidePanelIds(getSidePanelPanels(), [idB], getHiddenTemporarySidePanels()).includes(idB))
+setTemporarySidePanelHidden(idB, false)
+applySidePanelPanels('todo,component:' + idB)
+check('no stored spelling can name the temporary panel', !resolveSidePanelIds(getSidePanelPanels(), []).includes(idB))
+check('session-only panel comes back without a saved id',
+  resolveSidePanelIds(getSidePanelPanels(), [idB]).includes(idB))
 panelsA.badge(idA, { level: 'info', unread: 1 })
 panelsB.badge(idB, { level: 'info', unread: 1 })
 check('own badge event delivered + listener crash swallowed', eventsA.some(e => e === 'badge:' + idA))

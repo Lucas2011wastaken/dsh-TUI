@@ -48,7 +48,7 @@ const [
   { panelStore },
   { registerBuiltinPanels },
   { SETTING_DEFINITIONS },
-  { ALL_SIDE_PANELS, normalizeSidePanelPanels, parseSidePanelPanels, resolveSidePanelIds, SIDE_PANEL_ID_PATTERN },
+  { ALL_SIDE_PANELS, getHiddenTemporarySidePanels, getSidePanelPanels, isTemporarySidePanelId, normalizeSidePanelPanels, parseSidePanelPanels, resolveSidePanelIds, setTemporarySidePanelHidden },
   { t },
   { settled, viewportLines },
 ] = await Promise.all([
@@ -128,17 +128,14 @@ function makeChannel(): unknown {
         kind: 'text' as const,
         group: 'side-panel',
         // The real field's strict gate lives in plugin.ts's parse (mirrored
-        // here): a draft that does not round-trip the id grammar is refused
-        // instead of saved as something else.
+        // here): the same `parseSidePanelPanels`, so a draft that does not
+        // round-trip is refused instead of saved as something else.
         parse(text: string) {
-          const draft = text.trim()
-          if (draft === '') return { kind: 'clear' as const }
-          // `*` is the "every registered panel" sentinel (default); it is a
-          // whole-value form, so `*,todo` is a malformed draft.
-          if (draft === '*') return { kind: 'set' as const, value: '*' }
-          const tokens = draft.split(',').map(token => token.trim().toLowerCase()).filter(token => token !== '')
-          if (tokens.length === 0 || tokens.some(token => !SIDE_PANEL_ID_PATTERN.test(token))) return undefined
-          return { kind: 'set' as const, value: tokens.join(',') }
+          const parsed = parseSidePanelPanels(text)
+          if (parsed.mode === 'empty') return { kind: 'clear' as const }
+          if (parsed.mode === 'all') return { kind: 'set' as const, value: ALL_SIDE_PANELS }
+          if (parsed.mode === 'invalid') return undefined
+          return { kind: 'set' as const, value: parsed.ids.join(',') }
         },
       }],
     }],
@@ -476,6 +473,63 @@ const ROW_JOBS = 1, ROW_COMPANION = 7
   }
 
   disposeDemo()
+}
+
+// Temporary selections never enter the settings write path, even when
+// another durable checkbox is saved while the same picker stays open. Under
+// `*` the registry supplies them; hiding one is session state, so no stored
+// value can name it and no replay can revive it.
+{
+  const id = 'session:act900:notes'
+  const dispose = panelStore.register({ id, title: 'Scratch notes', icon: '◉', source: 'plugin', component: () => null }, { pluginId: 'session:act900' })
+  const otherId = 'session:act901:notes'
+  const disposeOther = panelStore.register({ id: otherId, title: 'Scratch notes', icon: '◉', source: 'plugin', component: () => null }, { pluginId: 'session:act901' })
+  const screen = await openPicker('todo,act900:notes')
+  if (screen === null) { check('temporary picker opens', false); process.exit(1) }
+  check('temporary row is readable and explicitly not saved', screen.has('Scratch notes') && screen.has('this run only'))
+  console.log('SCREEN temporary panels\n' + screen.view().split('\n').filter(line => line.trim()).join('\n'))
+  check('legacy anonymous placeholder asks for reselection', screen.has('Old anonymous address'))
+  const numbers = [...screen.view().matchAll(/Temporary panel #(\d+)/g)].map(match => match[1])
+  check('duplicate readable titles have distinct run-local numbers', numbers.length === 2 && new Set(numbers).size === 2)
+  cursor = await arrow(screen.stdin, 'down', 8, cursor)
+  screen.stdin.write('\r')
+  check('temporary Enter hides it for this run only',
+    await settled(() => getHiddenTemporarySidePanels().includes(id)) && panelSetWrites().length === 0)
+  check('same-title neighbor stays visible', !getHiddenTemporarySidePanels().includes(otherId))
+  screen.stdin.write('\r')
+  check('temporary Enter restores it without a write',
+    await settled(() => !getHiddenTemporarySidePanels().includes(id)) && panelSetWrites().length === 0)
+  const cell = screen.find('Scratch notes')
+  if (cell !== null) screen.click(cell.col, cell.row)
+  check('temporary mouse toggle also avoids persistence',
+    await settled(() => getHiddenTemporarySidePanels().includes(id)) && panelSetWrites().length === 0)
+  cursor = await arrow(screen.stdin, 'up', 6, 8)
+  screen.stdin.write('\r')
+  check('durable edit never serializes temporary id', await settled(() => panelSetWrites().length > 0) && panelSetWrites().every(csv => !csv.includes('session:')))
+  await screen.close()
+  setTemporarySidePanelHidden(id, false)
+  dispose()
+  disposeOther()
+}
+
+// Reserved-looking Component names keep runtime addresses while preferences
+// distinguish an explicit current selection from an ambiguous legacy entry.
+{
+  const dispose = panelStore.register({ id: 'act1:notes', title: 'Verified notes', icon: '◉', source: 'plugin', component: () => null }, { pluginId: 'act1' })
+  const screen = await openPicker('todo,act1:notes')
+  if (screen === null) { check('reserved Component picker opens', false); process.exit(1) }
+  check('legacy entry remains a separate unclaimed row', screen.has('Verified notes') && screen.has('Old anonymous address'))
+  const cell = screen.find('Verified notes')
+  if (cell !== null) screen.click(cell.col, cell.row)
+  // The encoded preference names the panel the user actually ticked; the
+  // bare actN entry survives untouched as its own placeholder, and the new
+  // id lands at its default-order position rather than at the tail.
+  check('explicit Component choice writes encoded preference',
+    await settled(() => panelSetWrites().includes('todo,component:act1:notes,act1:notes')))
+  check('public registry address is unchanged',
+    panelStore.get('act1:notes') !== undefined && panelStore.get('component:act1:notes') === undefined)
+  await screen.close()
+  dispose()
 }
 
 // ── g. the last checked panel cannot be removed (empty is not storable) ─────

@@ -24,12 +24,14 @@ import { actionMatches } from '../../utils/keymap.js'
 import {
   applySidePanelOpen,
   applySidePanelRatio,
+  getHiddenTemporarySidePanels,
   getSidePanelOpen,
   getSidePanelPanels,
   getSidePanelRatio,
   getSidePanelSplitEnabled,
   resolveSidePanelIds,
   SIDE_PANEL_ID_PATTERN,
+  subscribeHiddenTemporarySidePanels,
   subscribeSidePanelOpen,
   subscribeSidePanelPanels,
   subscribeSidePanelRatio,
@@ -114,6 +116,13 @@ export function useSidePanel(options: UseSidePanelOptions): SidePanelController 
     panelStore.subscribe,
     () => panelStore.list().map(entry => entry.definition.id).join(','),
   )
+  // The temporary panels this run is hiding (`/settings` toggles them there,
+  // not in the stored value): a frozen array whose identity only moves when
+  // the set does, so it is a valid snapshot.
+  const hiddenTemporaryIds = React.useSyncExternalStore(
+    subscribeHiddenTemporarySidePanels,
+    getHiddenTemporarySidePanels,
+  )
   const [focus, setFocus] = React.useState<SidePanelFocus>('chat')
   const [zoom, setZoom] = React.useState(false)
   const [activeIdState, setActiveIdState] = React.useState<string | undefined>(undefined)
@@ -141,8 +150,12 @@ export function useSidePanel(options: UseSidePanelOptions): SidePanelController 
   // digit keys, the bridge admission and /settings: the stored value plus the
   // live registry (issue #1662).
   const enabledPanelIds = React.useMemo(
-    () => resolveSidePanelIds(panelsCsv, registeredCsv === '' ? [] : registeredCsv.split(',')),
-    [panelsCsv, registeredCsv],
+    () => resolveSidePanelIds(
+      panelsCsv,
+      registeredCsv === '' ? [] : registeredCsv.split(','),
+      hiddenTemporaryIds,
+    ),
+    [panelsCsv, registeredCsv, hiddenTemporaryIds],
   )
   // Stable callbacks (the bridge subscription is mounted once) read the
   // latest enabled set through this ref instead of capturing it.

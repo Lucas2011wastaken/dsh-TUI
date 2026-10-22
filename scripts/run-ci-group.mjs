@@ -54,6 +54,7 @@ const GROUPS = {
   'render-scroll': [
     ['verify-image-inspection', ['node', '--import', 'tsx/esm', 'scripts/verify-image-inspection.tsx']],
     ['verify-terminal-images-sixel', ['node', '--import', 'tsx/esm', 'scripts/verify-terminal-images-sixel.tsx']],
+    ['verify-sixel-cursor-heal', ['node', '--import', 'tsx/esm', 'scripts/verify-sixel-cursor-heal.tsx']],
     ['verify-sixel-transcript', ['node', '--import', 'tsx/esm', 'scripts/verify-sixel-transcript.tsx']],
 // 启动落地页回归：头部（块体大字/鲸鱼/模型/目录）与快捷入口的版面、
 // 高度阶梯（full → no-chips → no-hint → input-only）、受控输入的闭环、
@@ -100,6 +101,9 @@ const GROUPS = {
 // 代码块 tab 缩进背景回归（issue #606）：tab 展开须继承单元格样式，否则
 // 无背景的空格被 diff 跳过，在 tmux/Windows Terminal 深色底下显示为黑块。
     ["verify-code-block-tab-background", ['node', '--import', 'tsx/esm', 'scripts/verify-code-block-tab-background.tsx']],
+// chalk 色深探测：VS Code / Windows Terminal（WT_SESSION）从 256 色提到真彩，
+// tmux 仍钳回 256——否则暗色 diff/卡片底色全部塌缩成同一灰阶。
+    ["verify-chalk-truecolor-boost", ['node', '--import', 'tsx/esm', 'scripts/verify-chalk-truecolor-boost.ts']],
 // 思考块流式视图回归：preview 固定三行且点击切全文/再点收回，full
 // 默认值反向但仍不进入 0 行正文；增量 Markdown 与整段渲染的块间距
 // 一致（真实段落空行保留，代码块后不凭空多一行）。
@@ -420,6 +424,7 @@ const GROUPS = {
     ["verify-drag-protocol", ['node', '--import', 'tsx/esm', 'scripts/verify-drag-protocol.tsx']],
 // 全屏拖选自动复制后保留选区，重复 release 不重复复制；选区高亮跳过
 // 行尾填充/空白行，并保留代码缩进、软换行分隔空格和 Unicode 字符。
+    ['verify-selection-stale-guard', ['node', '--import', 'tsx/esm', 'scripts/verify-selection-stale-guard.tsx']],
     ['verify-copy-on-select', ['node', 'scripts/verify-copy-on-select.mjs']],
 // hover 事件性能与健壮性回归：同批 motion 保留兴趣边界（tooltip dwell
 // 不提前）、无兴趣矩形快路径跳过全树 hit-test，且渲染提交/帧边界/
@@ -433,6 +438,11 @@ const GROUPS = {
 // （Linux EEXIST 必现竞态、Windows 瞬时 ENOENT、真实 404），真实子进程
 // 走编译产物——验证陈旧安装清理后重跑成功、瞬时重试升级、真实失败不
 // 触发任何恢复且不破坏 profile，重启尾部向替代进程传递 env 契约。
+    ["verify-update-notice", ['node', 'scripts/verify-update-notice.mjs']],
+    ["verify-update-process", ['node', 'scripts/verify-update-process.mjs']],
+    ["verify-update-process-spawn-failure", ['node', 'scripts/verify-update-process-spawn-failure.mjs']],
+    ["verify-update-cleanup", ['node', 'scripts/verify-update-cleanup.mjs']],
+    ["verify-update-timeout", ['node', 'scripts/verify-update-timeout.mjs']],
     ["verify-update-recovery", ['node', 'scripts/verify-update-recovery.mjs']],
 // /reload 与 /restart 纯函数回归：planReload 五类偏好的应用/跳过/
 // 无变化分支、env 与 cordis.yml 显式配置的优先级守卫、模型路由原子
@@ -440,6 +450,8 @@ const GROUPS = {
     ["verify-reload", ['node', '--import', 'tsx/esm', 'scripts/verify-reload.ts']],
 // 直达启动器回归（issue #108）：参数透传、残骸 profile 重装、
 // 版本不一致提示、双语消息、shellQuote 转义规则。
+    ['verify-dev-install-cache', ['node', 'scripts/verify-dev-install-cache.mjs']],
+    ['verify-node-runtime', ['node', 'scripts/verify-node-runtime.mjs']],
     ["verify-launcher", ['node', 'scripts/verify-launcher.mjs']],
 // 包入口与启动器不继承工作区的 React 开发模式；专用调试开关仍可启用。
     ['verify-production-react', ['node', 'scripts/verify-production-react.mjs']],
@@ -465,6 +477,7 @@ const GROUPS = {
 // 图片导出权限（目录 0700/文件 0600）、空 vs unavailable、
 // 死 Wayland 会话回退 xclip。
     ["verify-clipboard", ['node', 'scripts/verify-clipboard.mjs']],
+    ['verify-windows-copy', ['node', 'scripts/verify-windows-copy.mjs']],
 // Ctrl+V UI 端到端回归（stub wl-paste）：帮助面板在读取前关闭、
 // 剪贴板文本落入输入框、busy 闩锁释放后第二次粘贴仍生效。
     ["repro-clipboard", ['node', '--import', 'tsx/esm', 'scripts/repro-clipboard.tsx']],
@@ -905,6 +918,7 @@ const GROUPS = {
 // 顺序排列（不随存储值/勾选移动）、新勾选插回默认位置而非追加尾部、取消即移除、未注册 id 保留为
 // 尾部占位行、至少保留一个、高级原始编辑（改序/手填 id、非法草稿拒绝）。
     ["verify-panel-settings-picker", ['node', '--import', 'tsx/esm', 'scripts/verify-panel-settings-picker.tsx']],
+    ["verify-settings-effort-catalog", ['node', '--import', 'tsx/esm', 'scripts/verify-settings-effort-catalog.tsx']],
     ["verify-compact", ['node', '--import', 'tsx/esm', 'scripts/verify-compact.mjs']],
     ["verify-compaction-progress", ['node', '--import', 'tsx/esm', 'scripts/verify-compaction-progress.tsx']],
 // #1030：隔离 locale、持久化 /lang 与环境变量，不能靠 CI 的 zh 默认掩盖脚本依赖。
@@ -945,6 +959,7 @@ const GROUPS = {
 // 浮层（键盘留在输入框）、裸 `/goal`（DSH 注册表行）打印成 /plugins 式转录块——
 // inline 无指针事件，块是那里读全文的唯一路径，旧的单行 toast 会折叠并截断它。
     ['verify-goal-display', ['node', '--import', 'tsx/esm', 'scripts/verify-goal-display.mjs']],
+    ['verify-plugin-command-output', ['node', '--import', 'tsx/esm', 'scripts/verify-plugin-command-output.mjs']],
     ["verify-channel-goal-todo", ['node', '--import', 'tsx/esm', 'scripts/verify-channel-goal-todo.mjs']],
 // 目标预算与后端中立的 /goal（goals 能力）：语法（--budget 50k、控制词、无效预算）、
 // 「已用 12.3k / 50k tokens · 4m」中英文读数、能力快照（有能力才提供 /goal，无能力即
@@ -1248,6 +1263,7 @@ const GROUPS = {
     ["verify-side-panel-scroll-paint", ['node', '--import', 'tsx/esm', 'scripts/verify-side-panel-scroll-paint.tsx']],
 // 侧栏选择围栏（方向感知）：面板内起拖可选可复制面板文字（逐行列钳制不跨
 // 聊天列）；聊天起拖维持 §4.6 不捕面板字符。真 SGR press/motion/release 驱动。
+    ["verify-pane-selection", ['node', '--import', 'tsx/esm', 'scripts/verify-pane-selection.tsx']],
     ["verify-side-panel-selection", ['node', '--import', 'tsx/esm', 'scripts/verify-side-panel-selection.tsx']],
 // 连续任务卡成组（JobGroupRow/JobGroupHeader）：组头汇总、组内取消空行与
 // 链式连接线、落定整组折叠、点击/悬停/Ctrl+O 展开、失败数留在折叠行、
@@ -1276,6 +1292,9 @@ const GROUPS = {
     ["verify-model-lifecycle-fences", ['node', '--import', 'tsx/esm', 'scripts/verify-model-lifecycle-fences.ts']],
     ['verify-model-completion-invalidate', ['node', 'scripts/verify-model-completion-invalidate.mjs']],
     ["verify-session-v3", ['node', '--import', 'tsx/esm', 'scripts/verify-session-v3.ts']],
+    ["verify-packed-row-budget", ['node', 'scripts/verify-packed-row-budget.mjs']],
+    ["verify-release-age-cohort", ['node', 'scripts/verify-release-age-cohort.mjs']],
+    ["verify-sqlite-snapshot", ['node', 'scripts/verify-sqlite-snapshot.mjs']],
     ["verify-session-tree-generations", ['node', '--import', 'tsx/esm', 'scripts/verify-session-tree-generations.ts']],
 // 裸 ● 空行回归：纯思考/纯工具步骤（无文本块）的 assistant/message
 // 不得创建空 assistant 行，否则思考块折叠后转录里多出一个只有
