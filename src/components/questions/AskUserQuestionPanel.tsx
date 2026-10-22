@@ -45,7 +45,7 @@ import { flattenPasteInline } from '../../dsh-adapter/sanitize.js'
 import { readClipboard, type ClipboardRead } from '../../utils/clipboard.js'
 import { createHyperlink } from '../../terminal-utils/hyperlink.js'
 import { listWindow } from '../listWindow.js'
-import { clipPreviewRows } from '../previewRows.js'
+import { clipPreviewRows, pagePreview } from '../previewRows.js'
 
 /** Unmodified arrows switch questions; Ctrl/Alt/Super/Shift stay caret motion. */
 function isPlainArrow(key: { ctrl?: boolean; meta?: boolean; super?: boolean; shift?: boolean }): boolean {
@@ -70,8 +70,8 @@ const SECRET_MASK = '•'
 const ANSWER_PASTE_MAX_POINTS = 8000
 
 /**
- * Preview caps (#1664): the question text and its detail fold to at most
- * these rows so the option list and the key hint always stay on screen. A
+ * Preview caps (#1664): each field contributes at most these rows to the
+ * shared body viewport, keeping the option list and key hint on screen. A
  * short terminal shrinks them further through QUESTION_CHROME_ROWS — the
  * rows the chrome and the panel scaffolding need before any preview text.
  */
@@ -271,7 +271,7 @@ export function AskUserQuestionPanel({
   }
   const onInputRow = (): boolean => !hideCustomInput && focusRef.current === options.length
   const [error, setError] = React.useState<string | null>(null)
-  const detailScrollRef = React.useRef<ScrollBoxHandle | null>(null)
+  const bodyScrollRef = React.useRef<ScrollBoxHandle | null>(null)
 
   const inputFocused = !hideCustomInput && focusIndex === options.length
   // Chat chrome + panel scaffolding consume twelve rows before the option
@@ -309,16 +309,25 @@ export function AskUserQuestionPanel({
   const detailView = question.detail === undefined
     ? undefined
     : clipPreviewRows(question.detail, contentCells, detailMaxRows)
-  const detailScrollRows = detailView !== undefined && detailView.omitted > 0 ? detailView.rows.length : 0
   const detailRows = detailView === undefined
     ? (linkText === '' ? 0 : 2)
     : detailView.rows.length + (detailView.omitted > 0 ? 1 : 0) + 1 + (linkText === '' ? 0 : 1)
+  // One viewport keeps the question and its detail independently reachable:
+  // a question without a detail must still be readable beyond its preview.
+  const bodyRows = questionView.rows.length + questionView.omitted
+    + (detailView === undefined ? 0 : detailView.rows.length + detailView.omitted)
+    + (question.detail !== undefined || linkText !== '' ? 1 : 0)
+    + (linkText === '' ? 0 : wrapText(linkText, contentCells, 'wrap').split('\n').length)
+  const previewRows = questionBlockRows + detailRows
+  const bodyScrollRows = bodyRows > previewRows ? Math.max(1, previewRows - 1) : 0
+  const submitRows = multiSelect && fullscreen && (checked.size > 0 || textRef.current !== '') ? 2 : 0
   const reservedRows = 12
     + (question.header === undefined ? 0 : 1)
     + (questionBlockRows - 1)
     + detailRows
     + (hideCustomInput ? 0 : 1)
     + (error === null ? 0 : 2)
+    + submitRows
   const optionBudget = Math.max(terminalRows - reservedRows, 2)
   const optionHeights = options.map(option => option.description === undefined ? 1 : 2)
   const optionLabels = options.map(option =>
@@ -537,11 +546,11 @@ export function AskUserQuestionPanel({
       }
       return
     }
-    if (detailScrollRows > 0) {
+    if (bodyScrollRows > 0) {
       const up = actionMatches('questionDetailUp', input, key)
       const down = actionMatches('questionDetailDown', input, key)
       if (up || down) {
-        detailScrollRef.current?.scrollBy((up ? -1 : 1) * Math.max(1, detailScrollRows - 1))
+        pagePreview(bodyScrollRef.current, up ? -1 : 1)
         event.stopImmediatePropagation()
         return
       }
@@ -859,7 +868,7 @@ export function AskUserQuestionPanel({
         )
       })}
       {hideCustomInput ? null : renderInputRow()}
-      {multiSelect && fullscreen && (checked.size > 0 || textRef.current !== '') && (
+      {submitRows > 0 && (
         <Box
           flexDirection="row"
           height={1}
@@ -922,6 +931,18 @@ export function AskUserQuestionPanel({
     />
   }
 
+  const body = (
+    <>
+      <Text bold wrap="wrap">{question.question}</Text>
+      {(question.detail !== undefined || linkText !== '') && (
+        <Box flexDirection="column" marginTop={1}>
+          {question.detail !== undefined && <Text dimColor italic wrap="wrap">{question.detail}</Text>}
+          {linkText !== '' && <Text wrap="wrap">{linkText}</Text>}
+        </Box>
+      )}
+    </>
+  )
+
   return (
     <Box flexDirection="column" marginTop={1} paddingLeft={2} paddingRight={2} width="100%">
       <Box
@@ -939,41 +960,20 @@ export function AskUserQuestionPanel({
             ◈ {question.header}
           </Text>
         )}
-        {questionView.rows.length > 0 && (
-          <Text bold wrap="wrap">
-            {questionView.rows.join('\n')}
-          </Text>
-        )}
-        {questionView.omitted > 0 && (
-          <Text dimColor wrap="truncate-end">
-            {t('panel-preview-omitted', { count: questionView.omitted })}
-          </Text>
-        )}
-        {(question.detail !== undefined || linkText !== '') && (
-          <Box flexDirection="column" marginTop={1}>
-            {detailView !== undefined && detailView.rows.length > 0 && (
-              detailScrollRows > 0 ? (
-                <ScrollBox ref={detailScrollRef} flexDirection="column" height={detailScrollRows} flexShrink={0}>
-                  <Text dimColor italic wrap="wrap">{question.detail}</Text>
-                </ScrollBox>
-              ) : (
-                <Text dimColor italic wrap="wrap">
-                  {detailView.rows.join('\n')}
-                </Text>
-              )
-            )}
-            {detailView !== undefined && detailView.omitted > 0 && (
-              <Text dimColor wrap="truncate-end">
-                {t('question-detail-scroll', {
-                  count: detailView.omitted,
-                  up: effectiveComboDisplay('questionDetailUp'),
-                  down: effectiveComboDisplay('questionDetailDown'),
-                })}
-              </Text>
-            )}
-            {linkText !== '' && <Text wrap="wrap">{linkText}</Text>}
-          </Box>
-        )}
+        {bodyScrollRows > 0 ? (
+          <>
+            <ScrollBox ref={bodyScrollRef} flexDirection="column" height={bodyScrollRows} flexShrink={0}>
+              {body}
+            </ScrollBox>
+            <Text dimColor wrap="truncate-end">
+              {t('question-detail-scroll', {
+                count: bodyRows - bodyScrollRows,
+                up: effectiveComboDisplay('questionDetailUp'),
+                down: effectiveComboDisplay('questionDetailDown'),
+              })}
+            </Text>
+          </>
+        ) : body}
       </Box>
       {renderOptions()}
       {error !== null && (

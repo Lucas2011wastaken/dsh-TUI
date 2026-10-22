@@ -715,7 +715,7 @@ dsh-tui 不修改 `~/.claude/settings.json`；会话启动时若其中的 `ANTHR
 | `Esc`（第 1 题） | 取消整批提问，模型收到 `ASK_CANCELLED` |
 | `Ctrl+C` | 从任意题取消整批提问，模型收到 `ASK_CANCELLED`（harness 侧中止仍报 `ASK_ABORTED`） |
 | `Ctrl+K` | 折叠/展开 ask_user_question 问卷面板 |
-| `Alt+Up` / `Alt+Down` | 在固定高度区域内翻阅长说明，保留回答焦点；可在 `/settings` → `Shortcuts` 改键。全屏可在说明区域使用滚轮 |
+| `Alt+Up` / `Alt+Down` | 在固定高度区域内翻阅问题正文和说明，保留回答焦点；可在 `/settings` → `Shortcuts` 改键。全屏可在正文区域使用滚轮 |
 
 **最后一行是自由输入行**：
 
@@ -755,7 +755,7 @@ dsh-tui 不修改 `~/.claude/settings.json`；会话启动时若其中的 `ANTHR
 
 权限层发起 `approval/request` 时，审批面板暂时拥有键盘（同时挂起问卷时审批优先）。
 
-- 显示工具名、从配对 tool call 提取的完整命令与原因。
+- 显示工具名、从配对 tool call 提取的命令与原因预览；极矮终端自动压缩间距，并在固定高度区域保留完整预览。
 
 | 按键 | 行为 |
 | --- | --- |
@@ -763,6 +763,7 @@ dsh-tui 不修改 `~/.claude/settings.json`；会话启动时若其中的 `ANTHR
 | `1` / `2` | 允许（仅本次）/ 拒绝 |
 | `Enter` | 提交当前焦点项 |
 | `Esc` / `Ctrl+C` | 拒绝（fail closed） |
+| `Alt+Up` / `Alt+Down` | 在极矮终端的紧凑审批面板中翻阅完整预览，不移动选项焦点；全屏可在预览区域使用滚轮 |
 
 协议只有「允许一次 / 拒绝」两种结果，**没有「总是允许」**。
 

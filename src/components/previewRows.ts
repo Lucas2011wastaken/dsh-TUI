@@ -15,6 +15,16 @@
  * `maxRows`, so a caller can subtract that from its budget.
  */
 import wrapText from '../ink/wrap-text.js'
+import type { ScrollBoxHandle } from '../ui.js'
+
+/** Page immediately: keyboard navigation must not leave queued wheel motion. */
+export function pagePreview(scroll: ScrollBoxHandle | null, direction: -1 | 1): void {
+  if (scroll === null) return
+  const rows = scroll.getViewportHeight()
+  const maxTop = Math.max(0, scroll.getFreshScrollHeight() - rows)
+  const next = scroll.getScrollTop() + direction * Math.max(1, rows - 1)
+  scroll.scrollTo(Math.max(0, Math.min(maxTop, next)))
+}
 
 export interface PreviewRowView {
   /** Display rows to paint, each at most `cells` wide, in order. */

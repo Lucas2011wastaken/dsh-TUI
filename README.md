@@ -373,7 +373,7 @@ team lives in one process, and a task owner is never released automatically.
 
 In both the launchpad and chat, `Alt/Option+←/→` moves by whitespace-delimited words and `Alt/Option+Backspace` deletes the previous word, like `Ctrl+W`. On macOS, configure your terminal to send Option as Meta.
 
-In a questionnaire, `Alt+Up` / `Alt+Down` pages through long detail text without moving the answer focus; these keys are remappable in `/settings` → `Shortcuts`. Fullscreen also supports the wheel over the detail. Complete OAuth links remain readable when browser and clipboard helpers are unavailable.
+Use `Alt+Up` / `Alt+Down` to page through question text and details, or approval previews on very short terminals, without moving the choice focus; these keys are remappable in `/settings` → `Shortcuts`. Fullscreen also supports the wheel over the preview. Complete OAuth links remain readable when browser and clipboard helpers are unavailable.
 
 Text, cursor position and staged image attachments on the launchpad or in chat while the backend starts are preserved when the session becomes ready. Press `Enter` after it is ready to send; an earlier `Enter` preserves the draft without queuing it. Opening a new session while startup is pending clears the previous draft and its images.
 

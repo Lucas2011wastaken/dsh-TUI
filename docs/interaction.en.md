@@ -721,7 +721,7 @@ When the model invokes the questionnaire tool, its panel temporarily owns the ke
 | `Esc` (from question 1) | Cancel the whole batch; the model receives `ASK_CANCELLED` |
 | `Ctrl+C` | Cancel the whole batch from any question; the model receives `ASK_CANCELLED` (a harness-side abort still reports `ASK_ABORTED`) |
 | `Ctrl+K` | Fold/unfold the ask_user_question questionnaire panel (the ask keeps waiting; while folded, `Esc`/`Ctrl+C` expand first) |
-| `Alt+Up` / `Alt+Down` | Page through long detail text inside its fixed-height area without moving the answer focus; remappable in `/settings` → `Shortcuts`. Fullscreen also supports the wheel over the detail |
+| `Alt+Up` / `Alt+Down` | Page through question text and details inside their fixed-height area without moving the answer focus; remappable in `/settings` → `Shortcuts`. Fullscreen also supports the wheel over the body |
 
 The last row is a free-form input line:
 
@@ -755,8 +755,9 @@ in the review panel (the dedicated decision layout for `intent: plan-review`):
 ## Tool approval
 
 When the permission layer issues an `approval/request`, the approval panel shows the tool
-name, the full command extracted from the paired tool call, and the reason. It temporarily
-owns the keyboard (when a questionnaire is also pending, approval takes priority):
+name and previews the paired tool call's command and reason. Very short terminals use a
+compact layout with the full preview in a fixed-height area. The panel temporarily owns
+the keyboard (when a questionnaire is also pending, approval takes priority):
 
 | Key | Behavior |
 | --- | --- |
@@ -764,6 +765,7 @@ owns the keyboard (when a questionnaire is also pending, approval takes priority
 | `1` / `2` | Allow (this time only) / deny |
 | `Enter` | Submit the focused item |
 | `Esc` / `Ctrl+C` | Deny (fail closed) |
+| `Alt+Up` / `Alt+Down` | Page through the full preview in a compact approval panel on very short terminals without moving the choice focus; fullscreen also supports the wheel over the preview |
 
 The protocol offers only "allow once / deny" — there is **no "always allow"**.
 

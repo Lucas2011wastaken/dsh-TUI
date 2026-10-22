@@ -24,11 +24,15 @@
  *   7. multiline and CJK-wrapped descriptions remain windowed after detail clipping;
  *   8. failed OAuth copying retains keyboard access to the whole URL in
  *      inline/fullscreen and narrow terminals, including remapped keys.
+ *   9. question text can be paged with and without a detail;
+ *  10. fullscreen multi-select reserves its submit row above the full footer;
+ *  11. a 10-row approval keeps its controls and full preview accessible.
  *
  * Run: node --import tsx/esm scripts/verify-panel-overflow.tsx
  * Add --capture to print the rendered OAuth viewport for PR documentation.
  */
 import './lib/default-lang-zh.mjs'
+import type { PermissionPanelSource } from '../src/channel/permissions.js'
 process.env.FORCE_COLOR = '3'
 
 const [
@@ -39,6 +43,7 @@ const [
   { Chat },
   { QuestionStore },
   { ApprovalStore },
+  { PermissionStore },
   { QuestionBridge },
   { setKeymapOverrides, resetKeymapOverrides },
   { default: instances },
@@ -51,6 +56,7 @@ const [
   import('../src/screens/Chat.js'),
   import('../src/dsh-adapter/questions.js'),
   import('../src/dsh-adapter/approvals.js'),
+  import('../src/channel/permissions.js'),
   import('../src/dsh-adapter/oauth/interaction.js'),
   import('../src/utils/keymap.js'),
   import('../src/ink/instances.js'),
@@ -183,13 +189,14 @@ const omittedCount = (text: string): number | undefined => {
 let wideOmitted: number | undefined
 
 const approvals = new ApprovalStore()
+let approvalSource: PermissionPanelSource = approvals
 const questions = new QuestionStore()
 // A real fullscreen session wraps Chat in <AlternateScreen>: its boxes are
 // viewport-height, so the renderer clips instead of growing the frame into
 // scrollback — exactly the layout the issue was reported in.
 let fullscreen = true
 const tree = (): React.ReactElement => {
-  const chat = React.createElement(Chat, { channel, questionStore: questions, approvalStore: approvals, fullscreen })
+  const chat = React.createElement(Chat, { channel, questionStore: questions, approvalStore: approvalSource, fullscreen })
   return fullscreen ? React.createElement(AlternateScreen, null, chat) : chat
 }
 const app = await render(tree(), { stdout, stdin, stderr: new FakeStderr(), exitOnCtrlC: false, patchConsole: false })
@@ -236,8 +243,14 @@ await settle(() => visible('hello'), { timeoutMs: 5000 })
   await settle(() => visible('Option Alpha'), { timeoutMs: 3000 })
   const text = screenText()
   check('long question: panel tail visible', questionPanelVisible(), text)
-  check('long question: folded with a marker', /… 另有 \d+ 行未显示/.test(text), text)
+  check('long question: folded with a marker', /… (?:另有 )?\d+ 行未显示/.test(text), text)
   check('long question: the tail is not painted', !text.includes('问题第 40 行'), text)
+  stdin.write('\x1b[1;3B'.repeat(20))
+  check('long question: paging reaches the tail without changing answer focus',
+    await settled(() => visible('问题第 40 行') && rows().some(line => line.includes('●') && line.includes('Option Alpha'))), screenText())
+  stdin.write('\x1b[1;3A'.repeat(20))
+  check('long question: paging returns to the head',
+    await settled(() => visible('问题第 1 行')), screenText())
   stdin.write('\x1b')
   await asked
   await settle(() => !visible('Option Alpha'))
@@ -323,6 +336,101 @@ for (const multiline of [true, false]) {
   await asked
   await settle(() => !visible(labels[0]!) && !visible(labels[3]!))
 }
+
+// A long question with a short detail must page both parts of its body.
+{
+  const asked = questions.ask(questionReq(longQuestion, 'QUESTION_DETAIL_TAIL')).catch(() => undefined)
+  await settle(() => visible('Option Alpha'))
+  stdin.write('\x1b[1;3B'.repeat(40))
+  check('question and detail: both tails remain reachable',
+    await settled(() => visible('问题第 40 行') && visible('QUESTION_DETAIL_TAIL') && visible('↑/↓ 选择')), screenText())
+  stdin.write('\x1b')
+  await asked
+  await settle(() => !visible('Option Alpha'))
+}
+
+// Multi-select mounts two more rows for submit. Keep the real three-row
+// footer visible for both a checked choice and a typed answer.
+Object.assign(channel, {
+  contextBarEnabled: true,
+  contextOccupancy: { usedTokens: 120, contextWindow: 1000, source: 'backend' },
+  contextSegments: { system: 0, prompt: 0, assistant: 0, thinking: 0, tools: 0 },
+})
+const fullFooterVisible = (): boolean => {
+  const statusRow = rows().findIndex(line => line.includes('deepseek-v4') && line.includes('ctx'))
+  return statusRow >= 0 && statusRow < stdout.rows - 1 && visible('12.0%')
+}
+stdout.rows = 24
+term.resize(COLS, 24)
+stdout.emit('resize')
+for (const typed of [false, true]) {
+  const asked = questions.ask({ questions: [{
+    id: 'multi-footer', question: longQuestion, detail: longQuestion,
+    options: [{ label: 'Multi Alpha' }, { label: 'Multi Beta' }, { label: 'Multi Gamma' }],
+    multiSelect: true,
+  }] })
+  await settle(() => visible('Multi Alpha'))
+  stdin.write(typed ? '\tDRAFT_ANSWER' : ' ')
+  check(`multi-select ${typed ? 'typed' : 'checked'}: submit, hints and full footer remain visible`,
+    await settled(() => visible('提交选择') && visible(typed ? '输入回答' : '↑/↓ 选择') && fullFooterVisible()), screenText())
+  stdin.write('\r')
+  const answer = await asked
+  check(`multi-select ${typed ? 'typed' : 'checked'}: answer is unchanged`,
+    typed ? answer.answers[0]?.custom === 'DRAFT_ANSWER' : answer.answers[0]?.selected[0] === 'Multi Alpha')
+  await settle(() => !visible('Multi Alpha'))
+}
+
+// Tiny approvals keep every preview in a scroll area instead of dropping
+// its reason/title. The rejection reason still submits in full.
+const permissionStore = new PermissionStore()
+approvalSource = permissionStore
+for (const mode of [true, false]) for (const columns of [100, 40]) for (const choiceCount of [2, 3]) {
+  fullscreen = mode
+  stdout.columns = columns
+  stdout.rows = 10
+  term.resize(columns, 10)
+  stdout.emit('resize')
+  app.rerender(tree())
+  ink.setAltScreenActive(fullscreen, fullscreen)
+  let rejectedReason: string | undefined
+  const feedback = `${'r'.repeat(200)}FEEDBACK_TAIL`
+  permissionStore.park({
+    sessionId: 'probe',
+    request: {
+      requestId: `tiny-${mode}-${columns}-${choiceCount}`, toolName: 'Bash', callId: 'tiny', input: {}, feedback: true,
+      title: 'APPROVAL_TITLE',
+      command: Array.from({ length: 20 }, (_, index) => index === 19 ? 'APPROVAL_COMMAND_TAIL' : `command ${index + 1}`).join('\n'),
+      reason: 'APPROVAL_REASON_TAIL',
+      options: [
+        { id: 'once', kind: 'allow-once' },
+        ...(choiceCount === 3 ? [{ id: 'always', kind: 'allow-always' as const }] : []),
+        { id: 'reject', kind: 'reject' },
+      ],
+    },
+    settle(_outcome, decision) { if (decision?.kind === 'reject') rejectedReason = decision.message },
+  })
+  const label = `approval ${fullscreen ? 'fullscreen' : 'inline'} ${columns}x10 ${choiceCount} choices`
+  const choicesVisible = (): boolean => visible('1. 允许') && visible(`${choiceCount}. 拒绝`) && visible('↑/↓ 选择')
+  check(`${label}: decision rows, hints and footer fit`,
+    await settled(() => choicesVisible() && fullFooterVisible()), screenText())
+  stdin.write('\x1b[1;3B'.repeat(40))
+  check(`${label}: reason remains readable`,
+    await settled(() => visible('APPROVAL_REASON_TAIL') && choicesVisible()), screenText())
+  stdin.write('\x1b[1;3A')
+  check(`${label}: command tail remains readable`,
+    await settled(() => visible('APPROVAL_COMMAND_TAIL') && choicesVisible()), screenText())
+  stdin.write('\x1b[1;3A'.repeat(40))
+  check(`${label}: title remains readable`,
+    await settled(() => visible('APPROVAL_TITLE')), screenText())
+  stdin.write('\x1b[B'.repeat(choiceCount - 1) + feedback)
+  check(`${label}: feedback tail and controls fit`,
+    await settled(() => visible('FEEDBACK_TAIL') && choicesVisible() && fullFooterVisible()), screenText())
+  stdin.write('\r')
+  await settle(() => permissionStore.getSnapshot() === null)
+  check(`${label}: rejection sends the full reason`, rejectedReason === feedback)
+}
+approvalSource = approvals
+Object.assign(channel, { contextBarEnabled: false, contextOccupancy: undefined })
 
 // 8) The OAuth bridge's copy failure falls back to manual selection. Every
 //    part of its URL must remain reachable inside the bounded detail area.
