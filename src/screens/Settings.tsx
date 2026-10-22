@@ -33,6 +33,7 @@ interface EditingState {
   /** The draft this editor opened with — the panel picker's confirm compares
    *  against it instead of re-deriving (the registry may change mid-edit). */
   initialDraft: string
+  invalid?: boolean
 }
 
 interface ActiveGroup {
@@ -1132,6 +1133,14 @@ export function Settings({
         // error badge and a toast; a valid one saves immediately (auto-save).
         const form = forms.get(editing.ns)
         if (form !== undefined) {
+          // Keep rejected panel drafts out of the form: its checkbox helpers
+          // interpret an invalid value as `*`, so Esc must leave the last
+          // valid selection intact for the next toggle.
+          if (isPanelListField(editing.ns, editing.field) && parseSidePanelPanels(editing.draft).mode === 'invalid') {
+            setEditing({ ...editing, invalid: true })
+            setNotice({ text: t('settings-field-invalid'), tone: 'error' })
+            return
+          }
           form.edit(
             editing.field,
             isPanelListField(editing.ns, editing.field)
@@ -1394,7 +1403,7 @@ export function Settings({
             selectLabel={undefined}
             focused={advFocused}
             editing={advEditing}
-            invalid={state.invalid}
+            invalid={state.invalid || (advEditing && editing?.invalid === true)}
             staged={form?.isStaged(field) === true}
             onClick={advEvents?.onClick}
             onMouseEnter={advEvents?.onMouseEnter}

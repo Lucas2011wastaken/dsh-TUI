@@ -568,6 +568,15 @@ const ROW_JOBS = 1, ROW_COMPANION = 7
   screen.stdin.write('\x1b') // Esc leaves without saving
   await settled(() => !screen.has('▌'), { timeoutMs: 4000 })
   check('a Esc on the editor writes nothing', panelSetWrites().length === before)
+  check('a rejected draft leaves the previous checkbox selection intact',
+    screen.has('[✓ ] ≡') && screen.has('[✓ ] ▸') && screen.has('[✓ ] ?')
+    && screen.has('[  ] ◆') && screen.has('[  ] ♥'))
+  cursor = await arrow(screen.stdin, 'up', 8 - ROW_JOBS, cursor)
+  screen.stdin.write('\r')
+  check('a toggle after cancelling an invalid draft only changes the selected panel',
+    await settled(() => panelSetWrites().length > before, { timeoutMs: 4000 })
+    && panelSetWrites().at(-1) === 'todo,btw',
+    panelSetWrites().join(' | '))
   await screen.close()
 }
 
