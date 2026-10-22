@@ -715,6 +715,7 @@ dsh-tui 不修改 `~/.claude/settings.json`；会话启动时若其中的 `ANTHR
 | `Esc`（第 1 题） | 取消整批提问，模型收到 `ASK_CANCELLED` |
 | `Ctrl+C` | 从任意题取消整批提问，模型收到 `ASK_CANCELLED`（harness 侧中止仍报 `ASK_ABORTED`） |
 | `Ctrl+K` | 折叠/展开 ask_user_question 问卷面板 |
+| `Alt+Up` / `Alt+Down` | 在固定高度区域内翻阅长说明，保留回答焦点；可在 `/settings` → `Shortcuts` 改键。全屏可在说明区域使用滚轮 |
 
 **最后一行是自由输入行**：
 

@@ -721,6 +721,7 @@ When the model invokes the questionnaire tool, its panel temporarily owns the ke
 | `Esc` (from question 1) | Cancel the whole batch; the model receives `ASK_CANCELLED` |
 | `Ctrl+C` | Cancel the whole batch from any question; the model receives `ASK_CANCELLED` (a harness-side abort still reports `ASK_ABORTED`) |
 | `Ctrl+K` | Fold/unfold the ask_user_question questionnaire panel (the ask keeps waiting; while folded, `Esc`/`Ctrl+C` expand first) |
+| `Alt+Up` / `Alt+Down` | Page through long detail text inside its fixed-height area without moving the answer focus; remappable in `/settings` → `Shortcuts`. Fullscreen also supports the wheel over the detail |
 
 The last row is a free-form input line:
 

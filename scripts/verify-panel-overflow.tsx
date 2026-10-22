@@ -21,8 +21,12 @@
  *      being dropped (long command + long reason on that 24-row terminal);
  *   6. a short question plus a six-row detail on the same terminal: the
  *      question's unused rows reach the detail, so nothing folds.
+ *   7. multiline option descriptions remain windowed after detail clipping;
+ *   8. failed OAuth copying retains keyboard access to the whole URL in
+ *      inline/fullscreen and narrow terminals, including remapped keys.
  *
  * Run: node --import tsx/esm scripts/verify-panel-overflow.tsx
+ * Add --capture to print the rendered OAuth viewport for PR documentation.
  */
 import './lib/default-lang-zh.mjs'
 process.env.FORCE_COLOR = '3'
@@ -35,6 +39,8 @@ const [
   { Chat },
   { QuestionStore },
   { ApprovalStore },
+  { QuestionBridge },
+  { setKeymapOverrides, resetKeymapOverrides },
   { default: instances },
   { settle, settled, viewportLines },
 ] = await Promise.all([
@@ -45,6 +51,8 @@ const [
   import('../src/screens/Chat.js'),
   import('../src/dsh-adapter/questions.js'),
   import('../src/dsh-adapter/approvals.js'),
+  import('../src/dsh-adapter/oauth/interaction.js'),
+  import('../src/utils/keymap.js'),
   import('../src/ink/instances.js'),
   import('./lib/term-test.mjs'),
 ])
@@ -179,11 +187,11 @@ const questions = new QuestionStore()
 // A real fullscreen session wraps Chat in <AlternateScreen>: its boxes are
 // viewport-height, so the renderer clips instead of growing the frame into
 // scrollback — exactly the layout the issue was reported in.
-const tree = (): React.ReactElement => React.createElement(
-  AlternateScreen,
-  null,
-  React.createElement(Chat, { channel, questionStore: questions, approvalStore: approvals }),
-)
+let fullscreen = true
+const tree = (): React.ReactElement => {
+  const chat = React.createElement(Chat, { channel, questionStore: questions, approvalStore: approvals, fullscreen })
+  return fullscreen ? React.createElement(AlternateScreen, null, chat) : chat
+}
 const app = await render(tree(), { stdout, stdin, stderr: new FakeStderr(), exitOnCtrlC: false, patchConsole: false })
 // AlternateScreen resolves the instance via instances.get(process.stdout);
 // the fake stream registers under its own key, so alias it and repaint.
@@ -281,6 +289,90 @@ await settle(() => visible('hello'), { timeoutMs: 5000 })
   check('24 rows: question panel tail visible', questionPanelVisible(), text)
   stdin.write('\x1b')
   await asked
+}
+
+// 7) Shrinking a detail must not turn a bounded option list back into an
+//    unbounded one. The option descriptions each have eight source rows.
+{
+  stdout.rows = ROWS
+  term.resize(COLS, ROWS)
+  stdout.emit('resize')
+  const labels = ['Choice Alpha', 'Choice Beta', 'Choice Gamma', 'Choice Delta']
+  const asked = questions.ask({ questions: [{
+    id: 'wrapped-options',
+    question: 'Pick a choice',
+    detail: Array.from({ length: 20 }, (_, index) => `Detail row ${index + 1}`).join('\n'),
+    options: labels.map(label => ({
+      label,
+      description: Array.from({ length: 8 }, (_, index) => `${label} description ${index + 1}`).join('\n'),
+    })),
+    hideCustomInput: true,
+  }] }).catch(() => undefined)
+  await settle(() => visible(labels[0]!))
+  stdin.write('\x1b[B\x1b[B\x1b[B')
+  let text = ''
+  const tailVisible = await settled(() => {
+    text = screenText()
+    return rows().some(line => line.includes('●') && line.includes(labels[3]!))
+      && visible('↑/↓ 选择')
+  })
+  check('wrapped options: last focus and hint stay visible', tailVisible, text)
+  stdin.write('\x1b')
+  await asked
+  await settle(() => !visible(labels[0]!) && !visible(labels[3]!))
+}
+
+// 8) The OAuth bridge's copy failure falls back to manual selection. Every
+//    part of its URL must remain reachable inside the bounded detail area.
+for (const mode of [true, false]) for (const [columns, height] of [[100, 40], [80, 24], [40, 24]]) {
+  fullscreen = mode
+  stdout.columns = columns!
+  stdout.rows = height!
+  term.resize(stdout.columns, stdout.rows)
+  stdout.emit('resize')
+  app.rerender(tree())
+  ink.setAltScreenActive(fullscreen, fullscreen)
+  const label = `${fullscreen ? 'fullscreen' : 'inline'} ${columns}x${height}`
+  const controller = new AbortController()
+  const bridge = new QuestionBridge(request => questions.ask(request), controller, {
+    openUrl: () => false,
+    copyText: async () => false,
+  })
+  bridge.notify({
+    type: 'auth_url',
+    url: `https://auth.example/authorize?state=${'a'.repeat(500)}&end=AUTH_URL_TAIL`,
+  })
+  await settle(() => visible('复制授权链接'))
+  stdin.write('\r')
+  check(`OAuth ${label}: failed copy exposes the manual fallback`,
+    await settled(() => visible('复制失败')), screenText())
+  stdin.write('\x1b[1;3B'.repeat(20))
+  check(`OAuth ${label}: keyboard scroll reaches the complete URL tail and keeps answer focus`,
+    await settled(() => visible('AUTH_URL_TAIL') && rows().some(line => line.includes('●') && line.includes('复制授权链接')) && visible('↑/↓ 选择')), screenText())
+  if (process.argv.includes('--capture') && fullscreen && columns === 100) console.log(`\n${screenText()}\n`)
+  stdin.write('\x1b[1;3A'.repeat(20))
+  check(`OAuth ${label}: keyboard scroll returns to the manual guidance`,
+    await settled(() => visible('复制失败')), screenText())
+  if (fullscreen && columns === 100) {
+    const bodyRow = rows().findIndex(line => line.includes('https://auth.example'))
+    stdin.write(`\x1b[<65;10;${bodyRow + 1}M`.repeat(20))
+    check('OAuth: wheel over the detail reaches the URL tail',
+      await settled(() => visible('AUTH_URL_TAIL') && visible('↑/↓ 选择')), screenText())
+    setKeymapOverrides({ questionDetailUp: ['alt+p'], questionDetailDown: ['alt+n'] })
+    app.rerender(tree())
+    check('OAuth: hint shows remapped detail keys',
+      await settled(() => visible('Alt+P/Alt+N')), screenText())
+    stdin.write('\x1bp'.repeat(20))
+    check('OAuth: remapped key scrolls to the guidance',
+      await settled(() => visible('复制失败')), screenText())
+    stdin.write('\x1bn'.repeat(20))
+    check('OAuth: remapped key scrolls to the URL tail',
+      await settled(() => visible('AUTH_URL_TAIL')), screenText())
+    resetKeymapOverrides()
+  }
+  controller.abort()
+  await bridge.settle()
+  await settle(() => !visible('复制授权链接'))
 }
 
 if (failures > 0) {

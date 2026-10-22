@@ -29,7 +29,8 @@
 
 import React from 'react'
 import { t } from '../../i18n.js'
-import { Box, Text, useInput, useTerminalSize } from '../../ui.js'
+import { Box, Text, ScrollBox, useInput, useTerminalSize, type ScrollBoxHandle } from '../../ui.js'
+import wrapText from '../../ink/wrap-text.js'
 import { useDeclaredCursor, useNativeCursor } from '../../ink/hooks/use-declared-cursor.js'
 import { Divider } from '../design-system/Divider.js'
 import { POINTER } from '../../terminal-utils/figures.js'
@@ -270,6 +271,7 @@ export function AskUserQuestionPanel({
   }
   const onInputRow = (): boolean => !hideCustomInput && focusRef.current === options.length
   const [error, setError] = React.useState<string | null>(null)
+  const detailScrollRef = React.useRef<ScrollBoxHandle | null>(null)
 
   const inputFocused = !hideCustomInput && focusIndex === options.length
   // Chat chrome + panel scaffolding consume twelve rows before the option
@@ -307,6 +309,7 @@ export function AskUserQuestionPanel({
   const detailView = question.detail === undefined
     ? undefined
     : clipPreviewRows(question.detail, contentCells, detailMaxRows)
+  const detailScrollRows = detailView !== undefined && detailView.omitted > 0 ? detailView.rows.length : 0
   const detailRows = detailView === undefined
     ? (linkText === '' ? 0 : 2)
     : detailView.rows.length + (detailView.omitted > 0 ? 1 : 0) + 1 + (linkText === '' ? 0 : 1)
@@ -318,7 +321,16 @@ export function AskUserQuestionPanel({
     + (error === null ? 0 : 2)
   const optionBudget = Math.max(terminalRows - reservedRows, 2)
   const optionHeights = options.map(option => option.description === undefined ? 1 : 2)
-  const windowedOptions = optionHeights.reduce((sum, height) => sum + height, 0) > optionBudget
+  const optionLabels = options.map(option =>
+    option.label + (modelEditor?.edited(option.label) ? ` ${t('provider-model-edited')}` : ''))
+  // Non-windowed rows wrap at their actual text width. Reducing the preview
+  // must not disable windowing just because a multiline description was
+  // counted as one line. Windowed rows below still have fixed 1/2-row heights.
+  const optionCells = Math.max(1, contentCells - 3)
+  const wrappedOptionRows = options.reduce((sum, option, index) =>
+    sum + wrapText(optionLabels[index]!, optionCells, 'wrap').split('\n').length
+      + (option.description === undefined ? 0 : wrapText(option.description, optionCells, 'wrap').split('\n').length), 0)
+  const windowedOptions = wrappedOptionRows > optionBudget
   const optionFocus = Math.min(focusIndex, Math.max(options.length - 1, 0))
   const optionWindow = windowedOptions
     ? listWindow(optionHeights, optionFocus, optionBudget)
@@ -524,6 +536,15 @@ export function AskUserQuestionPanel({
         event.stopImmediatePropagation()
       }
       return
+    }
+    if (detailScrollRows > 0) {
+      const up = actionMatches('questionDetailUp', input, key)
+      const down = actionMatches('questionDetailDown', input, key)
+      if (up || down) {
+        detailScrollRef.current?.scrollBy((up ? -1 : 1) * Math.max(1, detailScrollRows - 1))
+        event.stopImmediatePropagation()
+        return
+      }
     }
     if (key.ctrl && input === 'c') {
       onCancel()
@@ -795,7 +816,8 @@ export function AskUserQuestionPanel({
             : absoluteIndex === optionWindow.end - 1 && optionWindow.end < options.length
               ? '↓'
               : ' '
-        const label = windowedOptions ? option.label.replace(/\s+/gu, ' ').trim() : option.label
+        const optionLabel = optionLabels[absoluteIndex]!
+        const label = windowedOptions ? optionLabel.replace(/\s+/gu, ' ').trim() : optionLabel
         const description = windowedOptions
           ? option.description?.replace(/\s+/gu, ' ').trim()
           : option.description
@@ -825,7 +847,7 @@ export function AskUserQuestionPanel({
                 color={focused ? 'accent' : undefined}
                 wrap={windowedOptions ? 'truncate' : 'wrap'}
               >
-                {label}{modelEditor?.edited(option.label) ? ` ${t('provider-model-edited')}` : ''}
+                {label}
               </Text>
               {description !== undefined && (
                 <Text dimColor wrap={windowedOptions ? 'truncate' : 'wrap'}>
@@ -930,13 +952,23 @@ export function AskUserQuestionPanel({
         {(question.detail !== undefined || linkText !== '') && (
           <Box flexDirection="column" marginTop={1}>
             {detailView !== undefined && detailView.rows.length > 0 && (
-              <Text dimColor italic wrap="wrap">
-                {detailView.rows.join('\n')}
-              </Text>
+              detailScrollRows > 0 ? (
+                <ScrollBox ref={detailScrollRef} flexDirection="column" height={detailScrollRows} flexShrink={0}>
+                  <Text dimColor italic wrap="wrap">{question.detail}</Text>
+                </ScrollBox>
+              ) : (
+                <Text dimColor italic wrap="wrap">
+                  {detailView.rows.join('\n')}
+                </Text>
+              )
             )}
             {detailView !== undefined && detailView.omitted > 0 && (
               <Text dimColor wrap="truncate-end">
-                {t('panel-preview-omitted', { count: detailView.omitted })}
+                {t('question-detail-scroll', {
+                  count: detailView.omitted,
+                  up: effectiveComboDisplay('questionDetailUp'),
+                  down: effectiveComboDisplay('questionDetailDown'),
+                })}
               </Text>
             )}
             {linkText !== '' && <Text wrap="wrap">{linkText}</Text>}

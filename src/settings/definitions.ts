@@ -680,6 +680,18 @@ export const SHORTCUT_FIELD_META: Record<ShortcutActionId, { label: string; zh: 
     hintEn: d => `Fold/unfold the pending question panel. Default: ${d}.`,
     hintZh: d => `折叠/展开等待回答的提问面板。默认 ${d}。`,
   },
+  questionDetailUp: {
+    label: 'Question detail previous page shortcut',
+    zh: '提问说明向上翻页快捷键',
+    hintEn: d => `Page up through a long question detail without moving the answer focus. Default: ${d}.`,
+    hintZh: d => `向上翻阅提问的长说明，不移动回答焦点。默认 ${d}。`,
+  },
+  questionDetailDown: {
+    label: 'Question detail next page shortcut',
+    zh: '提问说明向下翻页快捷键',
+    hintEn: d => `Page down through a long question detail without moving the answer focus. Default: ${d}.`,
+    hintZh: d => `向下翻阅提问的长说明，不移动回答焦点。默认 ${d}。`,
+  },
   expandEditor: {
     label: 'Fullscreen editor shortcut',
     zh: '全屏草稿编辑快捷键',

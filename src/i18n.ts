@@ -1759,6 +1759,7 @@ const dict = {
   'question-fold-waiting': { zh: '正在等你回答', en: 'Waiting for your answer' },
   'question-fold-expand': { zh: '{{combo}} 展开', en: '{{combo}} to expand' },
   'question-fold-hint': { zh: '{{combo}} 折叠 / 点标题行收起', en: '{{combo}} to fold / click the header' },
+  'question-detail-scroll': { zh: '… {{count}} 行未显示 · {{up}}/{{down}} 翻阅', en: { one: '… {{count}} line outside view · {{up}}/{{down}} to scroll', other: '… {{count}} lines outside view · {{up}}/{{down}} to scroll' } },
   'question-submit-selection': { zh: '提交选择（Enter）', en: 'Submit selection (Enter)' },
   'question-custom-tab': { zh: '自定义回答', en: 'Custom answer' },
   'question-attached-label': { zh: '（附加：{{label}}）', en: '(attached: {{label}})' },
