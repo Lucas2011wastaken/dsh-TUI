@@ -34,6 +34,7 @@ import { panelStore, type PanelStoreEvent } from '../components/sidePanel/PanelS
 import type { PanelDefinition, PanelOwner } from '../components/sidePanel/types.js'
 import { makePluginPanelComponent } from '../components/sidePanel/pluginPanelAdapter.js'
 import { panelBridgeRequests } from '../components/sidePanel/panelBridge.js'
+import { isTemporarySidePanelId, setTemporarySidePanelHidden } from '../tuiDisplayPrefs.js'
 import { stringWidth } from '../ink/stringWidth.js'
 import type { TuiPluginStorage } from './plugin-storage.js'
 import {
@@ -553,6 +554,10 @@ export class TuiPanelRuntime extends Service {
       // owner 数据。
       unregister()
       deletePanelOwnerRecord(finalId)
+      // 临时面板的「本次运行隐藏」随这一次注册一起结束：同一个 activation
+      // 再次注册拿到的是同一个 session:actN:x，重新注册是一次新的贡献
+      // （与旧机制在注册时清掉显式移除同义），不能让它一出生就被藏住。
+      if (isTemporarySidePanelId(finalId)) setTemporarySidePanelHidden(finalId, false)
       caller.get('tuiEffectLedger')?.record(
         { operation: 'release', resource: { kind: 'panel', id: finalId }, result: 'applied' },
         identity,

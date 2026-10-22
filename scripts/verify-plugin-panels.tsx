@@ -262,10 +262,24 @@ disposeCompact?.()
 await new Promise(resolve => setImmediate(resolve))
 check('own unregistered event delivered', eventsA.some(e => e.startsWith('unregistered:') && e.endsWith(':compact-only')))
 const beforeForeign = eventsA.length
+setTemporarySidePanelHidden(idB, true)
+check('a hidden temporary panel leaves the effective set',
+  !resolveSidePanelIds(getSidePanelPanels(), [idB], getHiddenTemporarySidePanels()).includes(idB))
 disposeB()
 await new Promise(resolve => setImmediate(resolve))
 check('foreign unregistered event filtered', eventsA.slice(beforeForeign).every(e => !e.endsWith(':bpanel')))
 disposeSub()
+// Hiding belongs to ONE registration: the same activation re-registering the
+// same panel reuses its session-only id, and a fresh contribution must not be
+// born hidden by the previous one (main's "re-registration is a new
+// contribution", carried over to the run-local set).
+const disposeB2 = panelsB.register({ apiVersion: 1, id: 'bpanel', title: 'B', component: () => null })
+const idB2 = panelsB.list().find(e => e.id.endsWith(':bpanel'))?.id ?? ''
+check('re-registration is a new contribution, not the hidden one',
+  idB2 === idB && resolveSidePanelIds(getSidePanelPanels(), [idB2], getHiddenTemporarySidePanels()).includes(idB2),
+  idB2 + ' hidden=' + JSON.stringify(getHiddenTemporarySidePanels()))
+disposeB2()
+await new Promise(resolve => setImmediate(resolve))
 
 // ── crash disable (store level) ──────────────────────────────────────────
 panelStore.reportError(idA, new Error('crash-1'))

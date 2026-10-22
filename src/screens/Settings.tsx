@@ -1299,10 +1299,11 @@ export function Settings({
   }
 
   /**
-   * The picker field's block: a dim title row, one checkbox row per panel
-   * (registry order), the unclaimed placeholders, and the advanced raw-text
-   * row. Rows stay one line each, so the focus-follow windowing below needs
-   * no special casing.
+   * The picker field's block: a dim title row, one checkbox row per registered
+   * panel in the documented default order (built-ins by the order the value
+   * ships with, then plugin panels in registry order), the unclaimed
+   * placeholders, and the advanced raw-text row. Rows stay one line each, so
+   * the focus-follow windowing below needs no special casing.
    */
   const addPanelPicker = (section: TuiSettingsSection, field: TuiSettingsField): void => {
     const ns = section.ns
