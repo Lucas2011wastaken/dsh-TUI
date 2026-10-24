@@ -668,7 +668,10 @@ try {
   setGoal({ ...currentGoal, id: 'copy-drag', objective: copyObjective })
   setTodos([])
   await settled(() => lines().some(l => l.includes('xxxxxxxx')) && lines().some(l => l.includes('保留原文')))
-  const ink = instances.get(stdout as unknown as NodeJS.WriteStream)!
+  const ink = instances.get(stdout as unknown as NodeJS.WriteStream) as unknown as {
+    selection: import('../src/ink/selection.js').SelectionState
+    frontFrame: { screen: import('../src/ink/screen.js').Screen }
+  }
   const firstCopyRow = lines().findIndex(l => l.includes('xxxxxxxx'))
   const lastCopyRow = lines().findIndex(l => l.includes('保留原文'))
   const firstCopyCol = exposedChatColumns + 1 + 1 + 3 // divider, padding, glyph
