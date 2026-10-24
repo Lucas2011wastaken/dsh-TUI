@@ -6,6 +6,7 @@ import type { PluginInstallStep, VersionExemptions } from '../dsh-adapter/plugin
 import { HintLine } from './design-system/HintLine.js'
 import { LoadingState } from './design-system/LoadingState.js'
 import { Pane } from './design-system/Pane.js'
+import { PluginGrantList } from './PluginGrantList.js'
 
 /** One package the running host refuses: the shape the step carries, named
  *  through the step so this file needs no upstream types of its own. */
@@ -52,7 +53,7 @@ export function PluginInstallPane({ step, busy }: { step: PluginInstallStep; bus
     )
   }
   if (step.kind === 'confirm') {
-    const { artifact, trust, notice } = step
+    const { artifact, trust, notice, grants } = step
     const spec = artifact.name === undefined
       ? t('plugins-install-unidentified')
       : cleanRenderText(
@@ -77,8 +78,27 @@ export function PluginInstallPane({ step, busy }: { step: PluginInstallStep; bus
             {notice.kind === 'invalid' && <Text>{t('plugins-install-notice-invalid', { err: notice.error })}</Text>}
             {notice.kind === 'unjudged' && <Text>{t('plugins-install-notice-unjudged')}</Text>}
           </Box>
+          {grants !== undefined && <PluginGrantList plan={grants} mode="grant" />}
         </Box>
-        <Text dimColor italic><HintLine text={t('plugins-install-key-confirm')} /></Text>
+        <Text dimColor italic>
+          <HintLine text={t(grants !== undefined && grants.entries.length > 0
+            ? 'plugins-install-key-confirm-grant'
+            : 'plugins-install-key-confirm')} />
+        </Text>
+      </Pane>
+    )
+  }
+  if (step.kind === 'grant') {
+    return (
+      <Pane color="permission">
+        <Box flexDirection="column">
+          <Box marginBottom={1}>
+            <Text color="remember" bold>{t('plugins-install-pane-title')}</Text>
+          </Box>
+          <Text>{t('plugins-install-grant-ask', { id: clean(step.plan.id) })}</Text>
+          <PluginGrantList plan={step.plan} mode="grant" />
+        </Box>
+        <Text dimColor italic><HintLine text={t('plugins-install-key-grant')} /></Text>
       </Pane>
     )
   }

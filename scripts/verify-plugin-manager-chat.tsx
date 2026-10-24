@@ -20,10 +20,10 @@ process.env.DSH_TUI_LANG = 'en'
 import type { PluginManagerView } from '../src/dsh-adapter/plugin-manager.js'
 import type { PluginInstallFlow } from '../src/dsh-adapter/plugin-install.js'
 import type {
+  PluginBundleDeclaration,
   PluginManageFlow,
   PluginManageSink,
   PluginManageStep,
-  PluginResidueWatch,
 } from '../src/dsh-adapter/plugin-manage.js'
 import type { PluginInstallNotice } from '../src/dsh-adapter/plugin-declaration.js'
 import type { FirstPartyEntry, FirstPartyFeedLoad } from '../src/dsh-adapter/plugin-feed.js'
@@ -41,7 +41,7 @@ import type {
   PluginSpecInspection,
 } from '@deepseek-ai/dsh-plugin-manager/types'
 
-const [{ Writable, PassThrough }, { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync }, { tmpdir }, { join }, React, { Terminal: XTerm }, ui, { Chat }, { QuestionStore }, { ApprovalStore }, { createChannel }, { setLang, t }, { pluginReport, parsePluginArgs }, { kernelEntriesOf }, { listBackends }, { findText, settle, settled, sleep, viewportLines }, { Context }, { createPluginInstallFlow, createPluginInstallEntry }, { COMPOSITION_PACKAGE }, { pathToFileURL }, { createDshSession }, { PluginInstallPane },
+const [{ Writable, PassThrough }, { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync }, { tmpdir }, { join }, React, { Terminal: XTerm }, ui, { Chat }, { QuestionStore }, { ApprovalStore }, { createChannel }, { setLang, t }, { pluginReport, parsePluginArgs }, { kernelEntriesOf }, { listBackends }, { findText, settle, settled, sleep, viewportLines }, { Context }, { createPluginInstallFlow, createPluginInstallEntry }, { COMPOSITION_PACKAGE }, { pathToFileURL }, { createDshSession }, { PluginInstallPane },
   { createPluginManageFlow, createPluginManageEntry, residueWatchOf },
   { CORE_BUNDLES, HOST_BUNDLE }, { loadFirstPartyFeed }, { PluginManagePane }, { backendDataDir },
   { createTeamCommandEntry }] = await Promise.all([
@@ -1610,8 +1610,8 @@ for (const [fullscreen, columns, service] of [
     readonly change?: () => Promise<ChangeResult>
     /** A resolution that throws before it returns a promise. */
     readonly reads?: () => Promise<never>
-    /** The removal's leftover watch: a fixture, since the real one reads a package. */
-    readonly residue?: (name: string) => PluginResidueWatch | undefined
+    /** The bundle's declaration (residue watch and grants): a fixture, since the real one reads a package. */
+    readonly declaration?: (name: string) => PluginBundleDeclaration | undefined
   }): ManageRig {
     const lines: string[] = []
     const calls: string[] = []
@@ -1632,7 +1632,7 @@ for (const [fullscreen, columns, service] of [
       busy: options.busy ?? (() => false),
       onLines: batch => { lines.push(...batch) },
       profileName: 'probe-profile',
-      residueOf: options.residue,
+      declarationOf: options.declaration,
     })
     return { flow, lines, calls, setChange: next => { change = next } }
   }
@@ -1977,26 +1977,38 @@ for (const [fullscreen, columns, service] of [
   // the person. Nothing is said when the check judged it and found nothing, and
   // "could not judge" is its own answer rather than a clean bill of health.
   {
-    const withResidue = await manage('remove', THIRD, { residue: () => () => [LEFTOVER] }, true)
+    const withResidue = await manage('remove', THIRD, {
+      declaration: () => ({ kind: 'declared', grants: undefined, residue: () => [LEFTOVER] }),
+    }, true)
     check(`${tag}: a removal that left data behind says where it is`,
       has(withResidue, t('plugins-manage-residue', { paths: LEFTOVER })), withResidue.lines.join(' | '))
-    const clean = await manage('remove', THIRD, { residue: () => () => [] }, true)
+    const clean = await manage('remove', THIRD, {
+      declaration: () => ({ kind: 'declared', grants: undefined, residue: () => [] }),
+    }, true)
     check(`${tag}: a removal that left nothing says nothing about residue`,
       !has(clean, LEFTOVER) && !has(clean, t('plugins-manage-residue-unjudged', { target: THIRD })) &&
       has(clean, t('plugins-manage-removed', { target: THIRD, state: t('plugins-install-state-applied') })),
       clean.lines.join(' | '))
-    const unjudged = await manage('remove', THIRD, { residue: () => undefined }, true)
+    const unjudged = await manage('remove', THIRD, {
+      declaration: () => ({ kind: 'declared', grants: undefined, residue: undefined }),
+    }, true)
     check(`${tag}: a declaration that could not be read is reported as not judged`,
       has(unjudged, t('plugins-manage-residue-unjudged', { target: THIRD })), unjudged.lines.join(' | '))
-    const brokenWatch = await manage('remove', THIRD, { residue: () => () => { throw new Error('EACCES') } }, true)
+    const brokenWatch = await manage('remove', THIRD, {
+      declaration: () => ({ kind: 'declared', grants: undefined, residue: () => { throw new Error('EACCES') } }),
+    }, true)
     check(`${tag}: a footprint check that throws is "not judged", never "nothing left"`,
       has(brokenWatch, t('plugins-manage-residue-unjudged', { target: THIRD })), brokenWatch.lines.join(' | '))
-    const unreadable = await manage('remove', THIRD, { residue: () => { throw new Error('EACCES') } }, true)
+    const unreadable = await manage('remove', THIRD, {
+      declaration: () => { throw new Error('EACCES') },
+    }, true)
     check(`${tag}: a declaration read failure still removes the bundle and reports unjudged residue`,
       unreadable.calls.join(',') === `removeBundle:${THIRD}` &&
       has(unreadable, t('plugins-manage-removed', { target: THIRD, state: t('plugins-install-state-applied') })) &&
       has(unreadable, t('plugins-manage-residue-unjudged', { target: THIRD })), unreadable.lines.join(' | '))
-    const notARemoval = await manage('disable', THIRD, { residue: () => () => [LEFTOVER] })
+    const notARemoval = await manage('disable', THIRD, {
+      declaration: () => ({ kind: 'declared', grants: undefined, residue: () => [LEFTOVER] }),
+    })
     check(`${tag}: only a removal looks for residue`,
       !has(notARemoval, LEFTOVER), notARemoval.lines.join(' | '))
   }
@@ -2008,6 +2020,7 @@ for (const [fullscreen, columns, service] of [
 // service, the feed and the clock's answers are fixtures.
 {
   const tag = 'install pane'
+  const { readGrantStore, EXTENSION_GRANTS_FILE } = await import('../src/adapter/standard/grants.js')
   const PLUGIN = '@probe/verify-fresh-plugin'
   const VERSION = '9.9.9'
   const accepted = { status: 'accepted', kind: 'registry', name: PLUGIN, version: VERSION, bundle: true, registry: null } as const
@@ -2017,6 +2030,17 @@ for (const [fullscreen, columns, service] of [
   }
   const noFeed: FirstPartyFeedLoad = { kind: 'unavailable', reason: 'feed file is missing (probe)' }
   const CHANGE = { changed: true, application: 'restart-required', stage: 'install', target: PLUGIN } as const
+
+  /** One production read path per grants directory, matching one writer's file. */
+  const grantStores = new Map<string, ReturnType<typeof readGrantStore>>()
+  const grantStoreOf = (dir: string) => {
+    let store = grantStores.get(dir)
+    if (store === undefined) {
+      store = readGrantStore(dir)
+      grantStores.set(dir, store)
+    }
+    return store
+  }
 
   /**
    * One Chat with the install prop wired to a flow over `service`/`feed`.
@@ -2038,6 +2062,10 @@ for (const [fullscreen, columns, service] of [
     /** 窄终端与全屏是终端可见改动的必测面（AGENTS.md）：默认 inline 100 列。 */
     readonly columns?: number
     readonly fullscreen?: boolean
+    /** Where the flow's grant writes land; absent means the flow has no store. */
+    readonly grantsDataDir?: string
+    /** What the landed package declares, read by the flow's grant step. */
+    readonly installedGrantsOf?: (name: string) => { readonly id: string; readonly permissions: readonly { name: string; scope: string }[] } | undefined
   }) {
     const installs: InstallBundleOptions[] = []
     const installSpecs: string[] = []
@@ -2103,6 +2131,11 @@ for (const [fullscreen, columns, service] of [
           busy: sink.busy,
           onLines: sink.onLines,
           requestId: options.requestId?.(index) ?? ('probe-pane' as PluginInstallRequestId),
+          ...options.grantsDataDir === undefined ? {} : {
+            grants: grantStoreOf(options.grantsDataDir),
+            grantsDataDir: options.grantsDataDir,
+            installedGrantsOf: options.installedGrantsOf,
+          },
         })
       },
     }
@@ -2170,6 +2203,61 @@ for (const [fullscreen, columns, service] of [
         !rig.hasText(t('plugins-install-cancelled')), `${rig.cancels.length} · ${rig.screen()}`)
     } finally {
       await rig.done()
+    }
+  }
+
+  // A registry package's declaration arrives with the install, so the grant step
+  // is the Chat key path for it. Enter writes and closes; Esc skips and keeps the
+  // install. Both are driven through the real Chat, not the flow alone.
+  {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-chat-grant-'))
+    const file = join(dir, EXTENSION_GRANTS_FILE)
+    const grant = {
+      id: 'com.probe.granted',
+      permissions: [{ name: 'storage.local.read', scope: 'com.probe.granted' }],
+    }
+    const rig = await mountInstallChat({
+      feed: firstParty,
+      notice: { kind: 'unjudged' },
+      install: () => Promise.resolve(CHANGE),
+      grantsDataDir: dir,
+      installedGrantsOf: name => name === PLUGIN ? grant : undefined,
+    })
+    try {
+      await rig.run(`/plugin install ${PLUGIN}@${VERSION}`)
+      await settled(() => rig.hasText('Install plugin'))
+      await rig.enter()
+      // The pane keeps the grant step open after the install line scrolled into
+      // the transcript, so the step itself is the evidence the install landed.
+      check(`${tag}: the install lands, then the declaration is read`,
+        await settled(() => rig.hasText('Permissions to grant') && rig.installs.length === 1),
+        `${rig.installs.length} · ${rig.screen()}`)
+      check(`${tag}: the grant step lists the declared permission`,
+        rig.hasText('storage.local.read') && rig.hasText('com.probe.granted'), rig.screen())
+      check(`${tag}: the grant step names both keys`, rig.hasText('grant · esc skip'), rig.screen())
+      check(`${tag}: nothing is written until the answer`, !existsSync(file), rig.screen())
+      await rig.enter()
+      check(`${tag}: Enter on the grant step writes the rule and closes the pane`,
+        await settled(() => existsSync(file) && !rig.hasText('Install plugin')), rig.screen())
+      const written = JSON.parse(readFileSync(file, 'utf8')) as { grants: Record<string, { name: string; scope: string }[]> }
+      check(`${tag}: the written rule is keyed by the component id`,
+        JSON.stringify(written.grants['com.probe.granted'])
+          === '[{"name":"storage.local.read","scope":"com.probe.granted"}]', JSON.stringify(written))
+      // Esc skips instead of cancelling: the install happened, no rule is written.
+      rmSync(file, { force: true })
+      await rig.run(`/plugin install ${PLUGIN}@${VERSION}`)
+      await settled(() => rig.hasText('Install plugin'))
+      await rig.enter()
+      check(`${tag}: the second install asks to grant again`,
+        await settled(() => rig.hasText('Permissions to grant')), rig.screen())
+      await rig.escape()
+      check(`${tag}: Esc on the grant step closes the pane and writes nothing`,
+        await settled(() => !rig.hasText('Install plugin')) && !existsSync(file), rig.screen())
+      check(`${tag}: skipping a grant does not cancel the finished install`,
+        rig.cancels.length === 0, String(rig.cancels.length))
+    } finally {
+      await rig.done()
+      rmSync(dir, { recursive: true, force: true })
     }
   }
 
@@ -2605,11 +2693,12 @@ for (const [fullscreen, columns, service] of [
     /** What the Nth write answers; the fixture's appliable change by default. */
     readonly change?: (index: number) => Promise<ChangeResult>
     /**
-     * The removal's leftover watch. Judged-and-clean by default, so a case that is
-     * not about residue sees only the outcome it asked for; the real entry reads a
-     * package here, which the production section below drives for real.
+     * The bundle declaration (residue watch, grants). Judged-and-clean by
+     * default, so a case that is not about residue sees only the outcome it
+     * asked for; the real entry reads a package here, which the production
+     * section below drives for real.
      */
-    readonly residue?: (name: string) => PluginResidueWatch | undefined
+    readonly declaration?: (name: string) => PluginBundleDeclaration | undefined
     readonly columns?: number
     readonly fullscreen?: boolean
   } = {}) {
@@ -2649,7 +2738,8 @@ for (const [fullscreen, columns, service] of [
           busy: sink.busy,
           onLines: sink.onLines,
           profileName: 'probe-profile',
-          residueOf: options.residue ?? (() => () => []),
+          declarationOf: options.declaration
+            ?? (() => ({ kind: 'declared', grants: undefined, residue: () => [] })),
         })
       },
     }
@@ -2825,7 +2915,9 @@ for (const [fullscreen, columns, service] of [
   // Decision D at the screen: what a removal leaves behind is reported in the
   // transcript once, and nothing is deleted for the person.
   {
-    const rig = await mountManageChat({ residue: () => () => [LEFTOVER] })
+    const rig = await mountManageChat({
+      declaration: () => ({ kind: 'declared', grants: undefined, residue: () => [LEFTOVER] }),
+    })
     try {
       await rig.run(`/plugin remove ${THIRD}`)
       await rig.enter()

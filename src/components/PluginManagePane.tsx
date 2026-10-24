@@ -6,6 +6,7 @@ import type { PluginManageStep, PluginManageTarget } from '../dsh-adapter/plugin
 import { HintLine } from './design-system/HintLine.js'
 import { LoadingState } from './design-system/LoadingState.js'
 import { Pane } from './design-system/Pane.js'
+import { PluginGrantList } from './PluginGrantList.js'
 
 /** Foreign text on its way to the screen: control sequences stripped, bounded. */
 const clean = (value: string): string => cleanRenderText(value, NOTICE_CELLS)
@@ -78,14 +79,39 @@ export function PluginManagePane({ step, busy }: { step: PluginManageStep; busy:
               </>
             )}
           </Box>
+          {step.target.kind === 'bundle' && step.target.action === 'enable'
+            && step.grants !== undefined
+            && <PluginGrantList plan={step.grants} mode="grant" />}
+          {step.target.kind === 'bundle' && step.target.action === 'disable'
+            && step.grants !== undefined
+            && <PluginGrantList plan={step.grants} mode="revoke" />}
+          {step.target.action === 'remove' && step.grants !== undefined
+            && <Box marginTop={1}><Text>{t('plugins-manage-remove-grant-facts')}</Text></Box>}
         </Box>
-        <Text dimColor italic><HintLine text={t('plugins-manage-key-confirm')} /></Text>
+        <Text dimColor italic><HintLine text={hintTextOf(step)} /></Text>
       </Pane>
     )
   }
   // `done` never renders: its lines are already in the transcript, so Chat
   // closes the pane instead of leaving an empty box behind.
   return null
+}
+
+/**
+ * The key hint for this question. Enabling grants the declared permissions and
+ * disabling revokes them, so the hint names both halves of the action when
+ * there is something to grant or revoke; a removal keeps the plain hint (its
+ * grant fact is a line of its own).
+ */
+function hintTextOf(step: Extract<PluginManageStep, { kind: 'confirm' }>): string {
+  const grants = step.grants
+  if (step.target.kind === 'bundle' && grants !== undefined && grants.entries.length > 0) {
+    if (step.target.action === 'enable') return t('plugins-manage-key-enable-grant')
+    if (step.target.action === 'disable') {
+      return t('plugins-manage-key-disable-revoke', { count: String(grants.entries.length) })
+    }
+  }
+  return t('plugins-manage-key-confirm')
 }
 
 /** Which verb the title asks about. */
