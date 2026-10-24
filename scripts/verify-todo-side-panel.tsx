@@ -11,6 +11,8 @@
  *    the panel is active;
  *  - control: the chat-page default variant still renders its list + fold
  *    hint line untouched (panel-variant-only change).
+ *  - wrapped objectives and blocked reasons copy their source through the
+ *    pane fence, including a real SGR drag over the mounted side panel.
  * Run: node --import tsx/esm scripts/verify-todo-side-panel.tsx
  */
 process.env.FORCE_COLOR = '3'
@@ -35,6 +37,14 @@ const {
   GoalTodoPanel, buildGoalPanelRows, goalPanelContentWidth, goalObjectiveWidth,
   goalBlockedWidth, goalPanelViewportRows, wrapTodoLines,
 } = GoalTodoPanelModule as typeof import('../src/components/GoalTodoPanel.js')
+const [{ renderToScreen }, { cellAt }, { TerminalSizeContext }, { SidePanelLayout }, selection, { default: instances }] = await Promise.all([
+  import('../src/ink/render-to-screen.js'),
+  import('../src/ink/screen.js'),
+  import('../src/ink/components/TerminalSizeContext.js'),
+  import('../src/components/sidePanel/SidePanelLayout.js'),
+  import('../src/ink/selection.js'),
+  import('../src/ink/instances.js'),
+])
 
 const COLS = 110
 const ROWS = 22
@@ -146,6 +156,59 @@ const rowsOf = (
     overlong.length === 2 && overlong[1]!.endsWith('\u2026'))
 }
 
+// Copy the actual painted panel through the same pane fence as Chat. Expected
+// text is the source, independent of the row model and its wrap calculations.
+for (const width of [28, 62]) {
+  for (const blocked of [false, true]) {
+    const wrapWidth = width - (blocked ? 5 : 6)
+    for (const [name, text] of [
+      ['hard wrap', 'a'.repeat(130)],
+      ['word wrap', 'read the entire goal and preserve the source words. '.repeat(3).trim()],
+      ['exact fill', 'x'.repeat(wrapWidth) + ' next word'],
+      ['double space', 'x'.repeat(wrapWidth) + '  next word'],
+      ['hard newlines', 'first\n\n  indented ' + 'word '.repeat(20).trim() + '\nlast'],
+      ['Unicode', '目标🧑‍💻e\u0301'.repeat(20)],
+    ]) {
+      const chatColumns = 64
+      const columns = chatColumns + 1 + width
+      const goal = {
+        id: 'copy-goal', revision: 1, phase: blocked ? 'blocked' : 'complete',
+        objective: blocked ? 'short objective' : text, roundsStarted: 0, maxGoalRounds: 4,
+        ...(blocked ? { blockedReason: { code: 'test', message: text } } : {}),
+      }
+      const { screen, height } = renderToScreen(
+        <TerminalSizeContext.Provider value={{ columns, rows: 80 }}>
+          <SidePanelLayout geometry={{ chat: chatColumns, panel: width }} focus="panel"
+            side={<GoalTodoPanel channel={{ goal, todos: [] } as never} variant="panel" width={width} />}>
+            <Box flexDirection="column">
+              {Array.from({ length: 80 }, (_, i) => <Text key={i}>CHAT COPY ANCHOR</Text>)}
+            </Box>
+          </SidePanelLayout>
+        </TerminalSizeContext.Provider>, columns,
+      )
+      // Objective starts on row 0; blocked reason follows objective, status,
+      // and the explicit gap. The final objective row precedes status.
+      const panelLines = Array.from({ length: height }, (_, row) =>
+        Array.from({ length: width }, (_, col) => cellAt(screen, chatColumns + 1 + col, row)?.char ?? '').join(''))
+      const statusRow = panelLines.findIndex(line => line.includes(' · 0/4'))
+      const firstRow = blocked ? statusRow + 2 : 0
+      const lastRow = blocked ? panelLines.findLastIndex(line => line.trim() !== '') : statusRow - 1
+      const picked = selection.createSelectionState()
+      selection.startSelection(picked, chatColumns + 2 + (blocked ? 2 : 3), firstRow, screen)
+      selection.updateSelection(picked, columns - 1, lastRow)
+      const copied = selection.getSelectedText(picked, screen)
+      check(`copy: ${width}-col ${blocked ? 'blocked reason' : 'objective'} preserves ${name}`,
+        copied === text.normalize('NFC'), JSON.stringify(copied))
+      // Prefix exclusions in the sidebar must not erase the sibling pane.
+      const chatPick = selection.createSelectionState()
+      selection.startSelection(chatPick, 0, firstRow, screen)
+      selection.updateSelection(chatPick, 15, firstRow)
+      check(`copy: ${width}-col sidebar prefix leaves chat selectable (${blocked}/${name})`,
+        selection.getSelectedText(chatPick, screen) === 'CHAT COPY ANCHOR')
+    }
+  }
+}
+
 // --- fake channel -----------------------------------------------------------
 const NOW = Date.now()
 let todos: Array<{ id: string; content: string; status: string }> = [
@@ -232,8 +295,11 @@ function Harness({ columns = COLS, rows = ROWS }: { columns?: number; rows?: num
   })
   return (
     <Box flexDirection="row" width={columns} height={rows}>
-      <Box width={sp.split ? sp.chatColumns : columns}><Text>{'chat-anchor SP split=' + (sp.split ? 1 : 0) + ' focus=' + sp.focus + ' active=' + (sp.activePanelId ?? 'none')}</Text></Box>
-      {sp.split ? <SidePanelColumn width={sp.panelColumns} controller={sp} channel={channel as never} /> : null}
+      <SidePanelLayout geometry={sp.geometry} focus={sp.focus}
+        onActivateChat={sp.focusChat} onActivatePanel={sp.focusPanel}
+        side={<SidePanelColumn width={sp.panelColumns} controller={sp} channel={channel as never} />}>
+        <Text>{'chat-anchor SP split=' + (sp.split ? 1 : 0) + ' focus=' + sp.focus + ' active=' + (sp.activePanelId ?? 'none')}</Text>
+      </SidePanelLayout>
     </Box>
   )
 }
@@ -596,6 +662,24 @@ try {
   check('goal-keys: chat focus keeps Down out of the panel',
     lines().some(l => l.includes(GOAL_HEAD)) === headVisibleBeforeChatScroll)
 
+  // Real SGR drag: selection ownership, decoration exclusions and wrap joins
+  // must work together in the mounted split, not only renderToScreen.
+  const copyObjective = 'x'.repeat(29) + ' next word\n目标🧑‍💻e\u0301保留原文'
+  setGoal({ ...currentGoal, id: 'copy-drag', objective: copyObjective })
+  setTodos([])
+  await settled(() => lines().some(l => l.includes('xxxxxxxx')) && lines().some(l => l.includes('保留原文')))
+  const ink = instances.get(stdout as unknown as NodeJS.WriteStream)!
+  const firstCopyRow = lines().findIndex(l => l.includes('xxxxxxxx'))
+  const lastCopyRow = lines().findIndex(l => l.includes('保留原文'))
+  const firstCopyCol = exposedChatColumns + 1 + 1 + 3 // divider, padding, glyph
+  stdin.write(`\x1b[<0;${firstCopyCol + 1};${firstCopyRow + 1}M`)
+  stdin.write(`\x1b[<32;${COLS};${lastCopyRow + 1}M`)
+  stdin.write(`\x1b[<0;${COLS};${lastCopyRow + 1}m`)
+  check('copy: a real panel drag preserves the goal source without chat or decoration',
+    await settled(() => selection.getSelectedText(ink.selection, ink.frontFrame.screen) === copyObjective.normalize('NFC')),
+    JSON.stringify(selection.getSelectedText(ink.selection, ink.frontFrame.screen)))
+  selection.clearSelection(ink.selection)
+
   setGoal({ ...currentGoal, objective: GOAL_HEAD + 'long default objective ' + 'd'.repeat(240) + GOAL_TAIL })
   // control 段的夹具：短列表 + 超长行（default 形态不折行的对照物）。
   setTodos([
@@ -697,15 +781,16 @@ try {
     try {
       const ls = session.lines()
       const panelCols = 93 - exposedChatColumns - 1
+      const panelStart = exposedChatColumns + 1
       const statusLine = ls.find(l => l.includes('\u25cf active \u00b7')) ?? ''
       check('status: 28-col panel geometry holds', panelCols === STATUS_PANEL && exposedChatColumns === STATUS_CHAT,
         exposedChatColumns + '/' + panelCols)
       check('status: long badge truncates with an ellipsis at the content edge',
-        statusLine[exposedChatColumns + panelCols - 2] === '\u2026',
-        JSON.stringify(statusLine.slice(exposedChatColumns, exposedChatColumns + panelCols)))
+        statusLine[panelStart + panelCols - 2] === '\u2026',
+        JSON.stringify(statusLine.slice(panelStart, panelStart + panelCols)))
       check('status: the right padding column stays blank',
-        statusLine[exposedChatColumns + panelCols - 1] === ' ',
-        JSON.stringify(statusLine.slice(exposedChatColumns + panelCols - 3, exposedChatColumns + panelCols)))
+        statusLine[panelStart + panelCols - 1] === ' ',
+        JSON.stringify(statusLine.slice(panelStart + panelCols - 3, panelStart + panelCols)))
     } finally {
       await session.close()
     }

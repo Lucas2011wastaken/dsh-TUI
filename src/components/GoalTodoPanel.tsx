@@ -147,11 +147,11 @@ export function wrapTodoLines(content: string, width: number): string[] {
  * 纯函数、无 React：回归直接断言同一份行模型，避免「渲染一套、断言另一套」。
  */
 export type GoalPanelRow =
-  | { readonly kind: 'objective'; readonly text: string; readonly first: boolean }
+  | { readonly kind: 'objective'; readonly text: string; readonly first: boolean; readonly softWrapContinuation?: number }
   | { readonly kind: 'status' }
   /** blocked 前的空行（与 default 形态的 marginTop 对应）。 */
   | { readonly kind: 'gap' }
-  | { readonly kind: 'blocked'; readonly text: string }
+  | { readonly kind: 'blocked'; readonly text: string; readonly softWrapContinuation?: number }
   /** ✓ done/total 折叠头（折叠时同一行带预览）。 */
   | { readonly kind: 'header' }
   | {
@@ -179,15 +179,29 @@ export function buildGoalPanelRows(input: {
   const rows: GoalPanelRow[] = []
   if (goal !== undefined) {
     const objectiveWidth = goalObjectiveWidth(contentWidth)
-    wrapTextLines(goal.objective, objectiveWidth).forEach((line, index) => {
-      rows.push({ kind: 'objective', text: line.text, first: index === 0 })
+    const objectiveLines = wrapTextLines(goal.objective, objectiveWidth)
+    objectiveLines.forEach((line, index) => {
+      rows.push({
+        kind: 'objective', text: line.text, first: index === 0,
+        // Signed content-end column is the renderer's copy contract: a
+        // negative value restores the separator omitted at an exact fill.
+        softWrapContinuation: line.continuation
+          ? (line.gap ? -1 : 1) * (stringWidth(GOAL_GLYPH) + stringWidth(objectiveLines[index - 1]!.text))
+          : undefined,
+      })
     })
     rows.push({ kind: 'status' })
     if (goal.phase === 'blocked' && goal.blockedReason !== undefined) {
       rows.push({ kind: 'gap' })
-      for (const line of wrapTextLines(goal.blockedReason.message, goalBlockedWidth(contentWidth))) {
-        rows.push({ kind: 'blocked', text: line.text })
-      }
+      const blockedLines = wrapTextLines(goal.blockedReason.message, goalBlockedWidth(contentWidth))
+      blockedLines.forEach((line, index) => {
+        rows.push({
+          kind: 'blocked', text: line.text,
+          softWrapContinuation: line.continuation
+            ? (line.gap ? -1 : 1) * (stringWidth(BLOCKED_BAR) + stringWidth(blockedLines[index - 1]!.text))
+            : undefined,
+        })
+      })
     }
   }
   if (showTodoSection) rows.push({ kind: 'header' })
@@ -429,8 +443,12 @@ export function GoalTodoPanel({
               // 宽度取法一致：终端把它记成 1 格时，首行正文会比续行左移一格
               // （宽度表差异，面板侧无法同时对齐两种终端）。
               return (
-                <Box key={index} flexDirection="row" height={1}>
-                  <Text color="suggestion">{row.first ? GOAL_GLYPH : objectiveIndent}</Text>
+                <Box key={index} flexDirection="row" height={1} softWrapContinuation={row.softWrapContinuation}>
+                  {/* Include the panel's left padding in the exclusion without
+                      reaching into the sibling chat pane. Glyphs stay put. */}
+                  <Box noSelect marginLeft={-1} paddingLeft={1}>
+                    <Text color="suggestion">{row.first ? GOAL_GLYPH : objectiveIndent}</Text>
+                  </Box>
                   <Text bold wrap="truncate">{row.text}</Text>
                 </Box>
               )
@@ -451,8 +469,10 @@ export function GoalTodoPanel({
               return <Box key={index} height={1} />
             case 'blocked':
               return (
-                <Box key={index} flexDirection="row" height={1}>
-                  <Text dimColor>{BLOCKED_BAR}</Text>
+                <Box key={index} flexDirection="row" height={1} softWrapContinuation={row.softWrapContinuation}>
+                  <Box noSelect marginLeft={-1} paddingLeft={1}>
+                    <Text dimColor>{BLOCKED_BAR}</Text>
+                  </Box>
                   <Text color="error" wrap="truncate">{row.text}</Text>
                 </Box>
               )
