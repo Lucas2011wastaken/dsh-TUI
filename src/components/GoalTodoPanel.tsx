@@ -218,7 +218,6 @@ export function goalPanelViewportRows(height: number | undefined): number {
 /** panel 形态的滚动句柄：adapter 只把键交进来，不复制折行/窗口。 */
 export interface GoalTodoPanelScrollHandle {
   scrollBy(delta: number): void
-  scrollToTop(): void
 }
 
 /**
@@ -246,7 +245,6 @@ export function GoalTodoPanel({
   idleDismissal = false,
   variant = 'default',
   visible = true,
-  maxTodos,
   wrapWidth,
   width,
   height,
@@ -265,8 +263,6 @@ export function GoalTodoPanel({
   /** 侧栏 visible 契约：非 active Panel 时 false——暂停本地计时，
    *  store（channel.goal/todos）照常更新，重新打开直接读最新值。 */
   visible?: boolean
-  /** 覆盖 default 形态的 MAX_TODOS（panel 形态渲染全部 todo，不使用该预算）。 */
-  maxTodos?: number
   /** panel variant：todo 行按此宽度折行——单条最多 2 行，超出部分截断
    *  加省略号；全部条目都进入行模型，靠滚动查看。缺省（default 形态）
    *  不折行，保持单行 truncate 的 chat 页现状。 */
@@ -362,10 +358,7 @@ export function GoalTodoPanel({
     setHeaderHovered(false)
     setScrollTop(current => Math.max(0, Math.min(maxScroll, current + delta)))
   }, [maxScroll])
-  React.useImperativeHandle(scrollRef, () => ({
-    scrollBy,
-    scrollToTop: () => setScrollTop(0),
-  }), [scrollBy])
+  React.useImperativeHandle(scrollRef, () => ({ scrollBy }), [scrollBy])
   // 切换会话或 goal 复位；同 id 的 revision 更新保留滚动位置。
   React.useEffect(() => {
     setScrollTop(0)
@@ -432,7 +425,9 @@ export function GoalTodoPanel({
           switch (row.kind) {
             case 'objective':
               // 折行是渲染前预算好的（wrapTextLines），每行显式 height={1}；
-              // 续行用等宽空格对齐首行正文。
+              // 续行用等宽空格对齐首行正文。前提是终端与 stringWidth 对 🎯 的
+              // 宽度取法一致：终端把它记成 1 格时，首行正文会比续行左移一格
+              // （宽度表差异，面板侧无法同时对齐两种终端）。
               return (
                 <Box key={index} flexDirection="row" height={1}>
                   <Text color="suggestion">{row.first ? GOAL_GLYPH : objectiveIndent}</Text>
@@ -442,7 +437,7 @@ export function GoalTodoPanel({
             case 'status':
               // 状态独占一行，不再和目标争宽（窄面板下 truncate 兜底）。
               return (
-                <Box key={index} flexDirection="row" height={1} width="100%">
+                <Box key={index} flexDirection="row" height={1}>
                   <PhaseBadge
                     phase={goal!.phase}
                     roundsStarted={goal!.roundsStarted}
@@ -488,7 +483,7 @@ export function GoalTodoPanel({
   }
 
   // ── default 形态的行预算（panel 形态渲染全部 todo，不走这段） ──
-  const budget = maxTodos ?? MAX_TODOS
+  const budget = MAX_TODOS
   // 折行形态（宿主传 wrapWidth 时）：每条 todo 占 1~2 行，预算按「行」
   // 折算——放不下的整条让位给「…N more」，不撑破盒高。cap：折出 >2 行时
   // 保留第一行、其余拼回一行截断加省略号（wrapText truncate）。

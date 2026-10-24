@@ -72,8 +72,8 @@ const rowsOf = (
   check('rows: panel content width is width - padding on both sides',
     content28 === 26 && content62 === 60, content28 + '/' + content62)
   check('rows: the objective width leaves room for the glyph plus one spare cell',
-    content28 - goalObjectiveWidth(content28) >= stringWidth('🎯 ') + 1,
-    String(content28 - goalObjectiveWidth(content28)))
+    goalObjectiveWidth(content28) === 22,
+    String(goalObjectiveWidth(content28)))
 
   // 28/62 列：每行都不超过目标折行宽，宽字符/emoji 不丢不重。
   const wideObjective = '目标🎯abc'.repeat(20)
@@ -187,6 +187,7 @@ let currentGoal: {
   roundsStarted: number
   maxGoalRounds: number
   blockedReason?: { message: string }
+  budget?: { tokensUsed: number; tokenBudget: number | null; timeUsedSeconds: number }
 } = { ...BASE_GOAL }
 function setGoal(next: typeof currentGoal): void {
   currentGoal = next
@@ -394,8 +395,9 @@ try {
   }
   const rulesBefore = ruleRows()
   check('wrap: panel rules located (baseline geometry)', rulesBefore.length >= 2, JSON.stringify(rulesBefore))
-  // hostHeight = ROWS-4 = 18 → maxTodos = 14 行。两条 2 行项 + 12 条单行
-  // = 16 行 > 14：预算按行折算时第 15 行起的整条让位给 …N more。
+  // hostHeight = ROWS-4 = 18 → 视口 17 行。两条 2 行项 + 12 条单行 = 16 行
+  // todo，加上目标/状态/折叠头 3 行超出视口：滚动形态下全部进入行模型，
+  // 末条要滚一屏才看得到（旧的 height-4 预算会用 …N more 吞掉）。
   const shorts = Array.from({ length: 12 }, (_, i) => ({ id: 's' + i, content: 'short task ' + i, status: 'pending' }))
   setTodos([
     { id: 'L', content: LONG_WRAP, status: 'pending' },
@@ -504,8 +506,9 @@ try {
   check('goal-wrap: objective stays inside the panel column',
     lines().every(l => !l.includes(GOAL_HEAD) || l.indexOf(GOAL_HEAD) >= exposedChatColumns))
 
-  // 行预算按真实折行数：medium 目标（~5 行）+ 状态 + 折叠头挤压 todo 预算，
-  // 20 条单行 todo 只放得下前 9 条（旧的 height-4=14 行预算会放到第 13 条）。
+  // 视口由真实折行数决定：medium 目标（~5 行）+ 状态 + 折叠头之后只剩
+  // ~10 行给 todo，20 条单行 todo 的末条必须滚动才看得到（旧实现按
+  // height-4 预算用 …N more 吞掉多余条目）。
   const budgetTodos = Array.from({ length: 20 }, (_, i) => ({
     id: 'b' + i, content: 'budget task ' + i, status: 'pending',
   }))
@@ -672,6 +675,37 @@ try {
       check(`cols ${columns}: Down reaches the goal tail`,
         await scrollUntil(bytes => session.stdin.write(bytes), session.lines, GOAL_TAIL),
         JSON.stringify(session.lines().slice(0, 5).map(l => l.trimEnd())))
+    } finally {
+      await session.close()
+    }
+  }
+
+  // --- 9. status row truncation: stop at the 28-col content edge ------------
+  // token budget 让状态行长于 28 列面板的内容宽（26）；截断必须停在内容边缘，
+  // 面板最后一格（右 padding）保持空白。`width="100%"` 会按父盒 padding-box
+  // 解析、正好多占这一格并把省略号裁掉，所以这格是独立判据。
+  const STATUS_PANEL = 28
+  const STATUS_CHAT = 93 - STATUS_PANEL - 1
+  setGoal({
+    ...BASE_GOAL,
+    objective: 'short objective',
+    budget: { tokensUsed: 12345, tokenBudget: 50000, timeUsedSeconds: 125 },
+  })
+  setTodos([])
+  {
+    const session = await mountSession(93, 22, 0.69)
+    try {
+      const ls = session.lines()
+      const panelCols = 93 - exposedChatColumns - 1
+      const statusLine = ls.find(l => l.includes('\u25cf active \u00b7')) ?? ''
+      check('status: 28-col panel geometry holds', panelCols === STATUS_PANEL && exposedChatColumns === STATUS_CHAT,
+        exposedChatColumns + '/' + panelCols)
+      check('status: long badge truncates with an ellipsis at the content edge',
+        statusLine[exposedChatColumns + panelCols - 2] === '\u2026',
+        JSON.stringify(statusLine.slice(exposedChatColumns, exposedChatColumns + panelCols)))
+      check('status: the right padding column stays blank',
+        statusLine[exposedChatColumns + panelCols - 1] === ' ',
+        JSON.stringify(statusLine.slice(exposedChatColumns + panelCols - 3, exposedChatColumns + panelCols)))
     } finally {
       await session.close()
     }
