@@ -261,16 +261,6 @@ export function pluginFootprintPaths(overrides: PluginFootprintOverrides = {}): 
   }
 }
 
-/**
- * Whether one plugin id still has a footprint in this profile: a grants-file
- * key, an effect-ledger record, or a storage namespace. The same three sources
- * the matrix unions — a removal that left something behind is read here rather
- * than by a second reader that could disagree with the report (C-5).
- */
-export function pluginFootprintContains(pluginId: string, overrides: PluginFootprintOverrides = {}): boolean {
-  return pluginFootprints(pluginFootprintPaths(overrides)).includes(pluginId)
-}
-
 /** `/plugin check <path>`: official parse/projection + profile validation + negotiation. */
 function checkManifestLines(pathArg: string, deps: PluginsInfoDeps): string[] {
   const lines: string[] = []
@@ -332,9 +322,10 @@ function checkManifestLines(pathArg: string, deps: PluginsInfoDeps): string[] {
   const decision = negotiate(index, manifest, host.descriptor, granted)
   lines.push(...decisionLines(decision))
   if (decision.decision === 'waiting_authorization') {
-    // Close the loop on the five-state vocabulary: the user sees not just
-    // the state but the exact file + shape that flips it (the interactive
-    // grant flow is future work; this hint is its no-UI prerequisite).
+    // Close the loop on the five-state vocabulary: the user sees not just the
+    // state but the exact file + shape that flips it. `/plugin install` and
+    // `/plugin enable` are the interactive grant path; this hint stays for the
+    // static `check <path>` route, which may run with no live service.
     lines.push(t('plugins-check-grant-hint', {
       id: cell(manifest.id),
       perms: cell(decision.deniedPermissions.join(', ')),

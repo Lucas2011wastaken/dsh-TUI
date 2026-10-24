@@ -1,4 +1,5 @@
 import React from 'react'
+import { stringWidth } from '../ink/stringWidth.js'
 import { t } from '../i18n.js'
 import { Box, Text, useTerminalSize } from '../ui.js'
 import { cleanRenderText } from '../channel/sanitize.js'
@@ -8,10 +9,12 @@ import type { GrantPlan, GrantPlanEntry } from '../dsh-adapter/grant-file.js'
 const GRANT_LIST_MAX_ROWS = 12
 /** Per-cell cap: a permission name and a scope are foreign text like any other. */
 const GRANT_CELLS = 48
-/** What one row spends on ` @ `, status and the pane's own padding. */
-const ROW_OVERHEAD_CELLS = 32
-/** The narrowest a name or scope is worth showing before the row stops being useful. */
-const MIN_CELLS = 8
+/** Both panes render this list inside `Pane`, which pads two cells on each side. */
+const PANE_PADDING_CELLS = 4
+/** What one row spends besides its two cells: `  `, ` @ ` and `  `. */
+const ROW_SEPARATOR_CELLS = 7
+/** Narrower cells than this stop being useful; the row may then lose its tail. */
+const MIN_CELLS = 4
 /** Unknown names named on the folded line before it becomes a list of its own. */
 const UNKNOWN_NAMES_SHOWN = 3
 
@@ -33,11 +36,20 @@ export function PluginGrantList({ plan, mode }: { plan: GrantPlan; mode: 'grant'
   // Nothing to show (a package that declares no permissions): the pane keeps its
   // own layout rather than printing an empty heading.
   if (plan.entries.length === 0 && plan.unknown.length === 0) return null
-  // One row per permission: the status column is fixed text, and the two foreign
-  // cells share what is left. At 50 columns each cell is ~8 cells, so the key
-  // hint below the list stays on screen instead of being pushed out by wraps.
+  // One row per permission. Besides the two foreign cells a row spends `  `,
+  // ` @ `, the gap before the status and the localized status itself; `Pane`
+  // adds two cells of padding on each side that `useTerminalSize()` does not
+  // subtract. Measure the status instead of assuming it: the English labels are
+  // wider than the Chinese ones. `wrap="truncate"` is the backstop for terminals
+  // narrower than `MIN_CELLS`: an over-long row loses its tail instead of
+  // growing a second line and pushing the key hint off the screen.
   const { columns } = useTerminalSize()
-  const cells = Math.max(MIN_CELLS, Math.min(GRANT_CELLS, Math.floor((columns - ROW_OVERHEAD_CELLS) / 2)))
+  // A reduce, not `Math.max(...map)`: the declaration is untrusted input and a
+  // manifest can carry more permissions than the argument limit allows.
+  const statusCells = plan.entries.reduce((widest, entry) => Math.max(widest, stringWidth(statusOf(entry))), 0)
+  const cells = Math.max(MIN_CELLS, Math.min(GRANT_CELLS, Math.floor(
+    (columns - PANE_PADDING_CELLS - ROW_SEPARATOR_CELLS - statusCells) / 2,
+  )))
   const clean = (value: string): string => cleanRenderText(value, cells)
   const entries = [...plan.entries].sort(compareEntries)
   const shown = entries.slice(0, GRANT_LIST_MAX_ROWS)
@@ -46,7 +58,7 @@ export function PluginGrantList({ plan, mode }: { plan: GrantPlan; mode: 'grant'
     <Box marginTop={1} flexDirection="column">
       <Text>{t(mode === 'grant' ? 'plugins-grant-list-title' : 'plugins-grant-list-title-revoke')}</Text>
       {shown.map(entry => (
-        <Text key={`${entry.name}\u0000${entry.scope}`} dimColor={entry.granted}>
+        <Text key={`${entry.name}\u0000${entry.scope}`} dimColor={entry.granted} wrap="truncate">
           {`  ${clean(entry.name)} @ ${clean(entry.scope)}  ${statusOf(entry)}`}
         </Text>
       ))}

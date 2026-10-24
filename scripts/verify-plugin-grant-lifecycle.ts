@@ -79,7 +79,8 @@ const A_MANIFEST = testManifest({
   permissions: [
     { name: 'storage.local.read', scope: SHARED_ID },
     { name: 'session.input.intercept', scope: 'tui/input' },
-    // default allow: already granted by the registry, so no rule is written.
+    // default allow: the registry already grants it; the plan marks it granted,
+    // and ensure still records the declared rule explicitly (no rule is assumed).
     { name: 'commands.invoke', scope: 'com.example.status' },
   ],
 })
@@ -571,6 +572,59 @@ function manageFlow(options: {
   } finally {
     manage.unmount()
     term.dispose()
+  }
+  // The confirmation has to survive the widths the real screen uses. The English
+  // status labels are the widest, and 12 entries is the folded cap: one wrapped
+  // row would double the list's height and push the title and the question off a
+  // 24-row terminal. Both widths below render the same 12 long entries.
+  for (const columns of [80, 50] as const) {
+    const rows = 24
+    const narrow = new XTerm({ cols: columns, rows, scrollback: 0, allowProposedApi: true })
+    class NarrowOut extends Writable {
+      columns = columns
+      rows = rows
+      isTTY = true
+      _write(chunk: unknown, _encoding: BufferEncoding, callback: () => void): void { narrow.write(String(chunk), callback) }
+    }
+    class NarrowIn extends PassThrough {
+      isTTY = true
+      setRawMode() { return this }
+      ref() { return this }
+      unref() { return this }
+    }
+    const crowded: GrantPlan = {
+      id: SHARED_ID,
+      entries: Array.from({ length: 12 }, (_, index) => ({
+        name: 'session.input.intercept',
+        scope: `${SHARED_ID}:command-${index}`,
+        default: 'deny',
+        granted: false,
+      })),
+      unknown: [],
+    }
+    const pane = await ui.render(React.createElement(PluginInstallPane, {
+      busy: false,
+      step: { kind: 'grant', plan: crowded },
+    }), {
+      stdout: new NarrowOut() as never, stdin: new NarrowIn() as never, stderr: new NarrowOut() as never,
+      exitOnCtrlC: false, patchConsole: false,
+    })
+    try {
+      const view = (): string => viewportLines(narrow, rows).join('\n')
+      const statusRows = (): string[] => viewportLines(narrow, rows).filter(line => line.includes('@'))
+      check(`pane: at ${columns} columns the title, the question and the hint share one screen`,
+        await settled(() => view().includes('Install plugin')
+          // The question itself may wrap at 80: what must not disappear is the
+          // title, the question's opening and closing, and the key hint.
+          && view().includes('The package is installed.')
+          && view().includes('now?')
+          && view().includes('grant · esc skip')), view())
+      check(`pane: at ${columns} columns all 12 permissions keep their status on one line`,
+        statusRows().length === 12 && statusRows().every(line => line.includes('not granted')), view())
+    } finally {
+      pane.unmount()
+      narrow.dispose()
+    }
   }
 }
 
