@@ -213,7 +213,13 @@ function installFlow(options: {
   const lines: string[] = []
   const declaration: DeclaredGrants = {
     id: SHARED_ID,
-    permissions: [{ name: 'storage.local.read', scope: SHARED_ID }],
+    permissions: [
+      { name: 'storage.local.read', scope: SHARED_ID },
+      // A name this host's registry does not know: skipped, never written, and
+      // named once in the transcript even though the flow reports it twice
+      // internally (before the step, then again when the answer is written).
+      { name: 'probe.unknown.permission', scope: SHARED_ID },
+    ],
   }
   let reads = 0
   const rig = installService({ file })
@@ -237,6 +243,9 @@ function installFlow(options: {
       === `[{"name":"storage.local.read","scope":"${SHARED_ID}"}]`, read(file))
   check('registry install: the transcript confirms the grant',
     lines.some(line => line.includes('Granted 1 declared permission(s)')), lines.join(' | '))
+  const skipped = lines.filter(line => line.includes('Skipped permissions this host does not know'))
+  check('registry install: an unknown permission is named once, not again when the grant is written',
+    skipped.length === 1 && skipped[0].includes('probe.unknown.permission'), lines.join(' | '))
   rmSync(dir, { recursive: true, force: true })
 }
 
@@ -534,6 +543,9 @@ function manageFlow(options: {
     entries: [
       { name: 'storage.local.read', scope: SHARED_ID, default: 'deny', granted: false },
       { name: 'session.input.intercept', scope: 'tui/input', default: 'deny', granted: true },
+      // The cross case the comparator has to get right: an already-granted
+      // default-deny row still leads an ungranted default-allow one.
+      { name: 'commands.invoke', scope: 'com.example.status', default: 'allow', granted: false },
     ],
     unknown: ['probe.unknown.permission'],
   }
@@ -554,6 +566,10 @@ function manageFlow(options: {
       screen().includes('✓granted') && screen().includes('Unknown to this host and skipped'), screen())
     check('pane: the key hint names both halves of Enter',
       screen().includes('install and grant'), screen())
+    const rowOf = (needle: string): number => viewportLines(term, ROWS).findIndex(line => line.includes(needle))
+    check('pane: a granted default-deny row still leads an ungranted default-allow row',
+      rowOf('session.input.intercept') !== -1 && rowOf('session.input.intercept') < rowOf('commands.invoke'),
+      screen())
   } finally {
     install.unmount()
   }

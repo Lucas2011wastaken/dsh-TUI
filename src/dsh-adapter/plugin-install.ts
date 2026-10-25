@@ -251,6 +251,8 @@ export function createPluginInstallFlow(options: PluginInstallFlowOptions): Plug
   let grantPlan: GrantPlan | undefined
   /** Whether a person answered a confirmation: a grant they did not see is reported apart. */
   let confirmed = false
+  /** Declared permission names this host does not know, already named in the transcript. */
+  const reportedUnknown = new Set<string>()
   const disposers: Array<() => void> = []
 
   /** Whether the session that asked is still bound; false drops every write. */
@@ -260,6 +262,21 @@ export function createPluginInstallFlow(options: PluginInstallFlowOptions): Plug
     options.onLines(lines)
   }
   const tailLines = (): string[] => logTail.map(line => `  ${line}`)
+
+  /**
+   * Name the declared permissions this host does not know, once per flow.
+   *
+   * Two answers can carry the same plan — the post-install step names them
+   * before it asks, then `ensureGrants` runs when the person answers — and a
+   * retry (`approve`/`acceptRisk`) re-runs the write. Reporting through here
+   * keeps one line per name without dropping the names a later plan adds.
+   */
+  function reportUnknown(names: readonly string[]): void {
+    const fresh = names.filter(name => !reportedUnknown.has(name))
+    if (fresh.length === 0) return
+    for (const name of fresh) reportedUnknown.add(name)
+    emit([t('plugins-grant-unknown-skipped', { names: cell(fresh.join(', ')) })])
+  }
 
   /**
    * Write one plan's declared permissions, reporting whatever could not be
@@ -282,9 +299,7 @@ export function createPluginInstallFlow(options: PluginInstallFlowOptions): Plug
       })])
       return undefined
     }
-    if (plan.unknown.length > 0) {
-      emit([t('plugins-grant-unknown-skipped', { names: cell(plan.unknown.join(', ')) })])
-    }
+    reportUnknown(plan.unknown)
     if (write.changed) {
       emit([t(confirmed ? 'plugins-install-granted' : 'plugins-install-granted-silent', {
         count: String(plan.entries.length),
@@ -572,9 +587,7 @@ export function createPluginInstallFlow(options: PluginInstallFlowOptions): Plug
         ? undefined
         : planGrants(options.grants, installed)
       if (post !== undefined) {
-        if (post.unknown.length > 0) {
-          emit([t('plugins-grant-unknown-skipped', { names: cell(post.unknown.join(', ')) })])
-        }
+        reportUnknown(post.unknown)
         if (post.entries.some(entry => !entry.granted)) {
           grantPlan = post
           return { kind: 'grant', plan: post }

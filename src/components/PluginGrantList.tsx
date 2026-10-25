@@ -24,11 +24,12 @@ const UNKNOWN_NAMES_SHOWN = 3
  *
  * Both the install confirmation and the lifecycle confirmation read the same
  * list, so they cannot describe the same declaration differently. Ordering is
- * deliberate: what is not granted yet comes first, and among those the
- * default-deny (the interception-class) permissions lead — the risk a person is
- * least likely to expect is what they see first. Already-granted entries sink
- * to the bottom, which also makes a hand-edited grant from an earlier run
- * visible before `Enter` is pressed.
+ * deliberate: default-deny (the interception-class) permissions lead — the risk
+ * a person is least likely to expect is what they see first — and inside that
+ * block the ones not granted yet come first. Granted entries sink within their
+ * own group, never across it, so a hand-edited grant on a default-deny row
+ * keeps its place in the leading block instead of disappearing under the
+ * default-allow rows.
  *
  * Presentational only; the state lives in the flows.
  */
@@ -82,9 +83,9 @@ function statusOf(entry: GrantPlanEntry): string {
   return `${fallback}  ${granted}`
 }
 
-/** Not-yet-granted first, then default-deny before default-allow. */
+/** Default-deny before default-allow, then not-yet-granted before granted. */
 function compareEntries(left: GrantPlanEntry, right: GrantPlanEntry): number {
-  if (left.granted !== right.granted) return left.granted ? 1 : -1
   if (left.default !== right.default) return left.default === 'deny' ? -1 : 1
+  if (left.granted !== right.granted) return left.granted ? 1 : -1
   return 0
 }
