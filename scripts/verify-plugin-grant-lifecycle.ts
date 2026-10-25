@@ -129,6 +129,8 @@ function installFlow(options: {
   readonly grantsOf?: DeclaredGrants
   readonly installedGrantsOf?: (name: string) => DeclaredGrants | undefined
   readonly lines?: string[]
+  /** Whether a turn is running; the fixture answers "idle" unless a case says so. */
+  readonly busy?: () => boolean
 }): PluginInstallFlow {
   return createPluginInstallFlow({
     manager: options.service,
@@ -137,7 +139,7 @@ function installFlow(options: {
     noticeOf: () => ({ kind: options.notice }) as never,
     specDirectory: () => options.directory,
     binding: () => 0,
-    busy: () => false,
+    busy: options.busy ?? (() => false),
     onLines: batch => { options.lines?.push(...batch) },
     grants: readGrantStore(options.dir),
     grantsDataDir: options.dir,
@@ -246,6 +248,37 @@ function installFlow(options: {
   const skipped = lines.filter(line => line.includes('Skipped permissions this host does not know'))
   check('registry install: an unknown permission is named once, not again when the grant is written',
     skipped.length === 1 && skipped[0].includes('probe.unknown.permission'), lines.join(' | '))
+  rmSync(dir, { recursive: true, force: true })
+}
+
+// The post-install step waits for an idle turn like every other write: the
+// grant is read per decision, so writing it under a running turn would change
+// what that turn may do. The refusal must not consume the step.
+{
+  const { dir, file } = sandbox()
+  const lines: string[] = []
+  let busy = false
+  const rig = installService({ file })
+  const flow = installFlow({
+    dir, file, service: rig.service, spec: `${PACKAGE_A}@1.0.0`, notice: 'unjudged', lines,
+    busy: () => busy,
+    installedGrantsOf: () => ({ id: SHARED_ID, permissions: [{ name: 'storage.local.read', scope: SHARED_ID }] }),
+  })
+  await flow.begin()
+  const step = await flow.confirm()
+  check('grant step: the install finishes and asks to grant', step.kind === 'grant', JSON.stringify(step))
+  busy = true
+  const refused = await flow.grant()
+  check('grant step: a turn that started while the pane waited refuses the write',
+    refused.kind === 'done' && !existsSync(file), JSON.stringify(refused))
+  check('grant step: the refusal is reported with the grant wording',
+    lines.some(line => line.includes('before granting')), lines.join(' | '))
+  busy = false
+  const done = await flow.grant()
+  check('grant step: the same step still grants once the turn is over',
+    done.kind === 'done' && existsSync(file)
+    && JSON.stringify((JSON.parse(read(file)) as { grants: Record<string, unknown> }).grants[SHARED_ID])
+      === `[{"name":"storage.local.read","scope":"${SHARED_ID}"}]`, read(file))
   rmSync(dir, { recursive: true, force: true })
 }
 
@@ -589,57 +622,68 @@ function manageFlow(options: {
     manage.unmount()
     term.dispose()
   }
-  // The confirmation has to survive the widths the real screen uses. The English
-  // status labels are the widest, and 12 entries is the folded cap: one wrapped
-  // row would double the list's height and push the title and the question off a
-  // 24-row terminal. Both widths below render the same 12 long entries.
-  for (const columns of [80, 50] as const) {
-    const rows = 24
-    const narrow = new XTerm({ cols: columns, rows, scrollback: 0, allowProposedApi: true })
-    class NarrowOut extends Writable {
-      columns = columns
-      rows = rows
-      isTTY = true
-      _write(chunk: unknown, _encoding: BufferEncoding, callback: () => void): void { narrow.write(String(chunk), callback) }
-    }
-    class NarrowIn extends PassThrough {
-      isTTY = true
-      setRawMode() { return this }
-      ref() { return this }
-      unref() { return this }
-    }
-    const crowded: GrantPlan = {
-      id: SHARED_ID,
-      entries: Array.from({ length: 12 }, (_, index) => ({
-        name: 'session.input.intercept',
-        scope: `${SHARED_ID}:command-${index}`,
-        default: 'deny',
-        granted: false,
-      })),
-      unknown: [],
-    }
-    const pane = await ui.render(React.createElement(PluginInstallPane, {
-      busy: false,
-      step: { kind: 'grant', plan: crowded },
-    }), {
-      stdout: new NarrowOut() as never, stdin: new NarrowIn() as never, stderr: new NarrowOut() as never,
-      exitOnCtrlC: false, patchConsole: false,
-    })
-    try {
-      const view = (): string => viewportLines(narrow, rows).join('\n')
-      const statusRows = (): string[] => viewportLines(narrow, rows).filter(line => line.includes('@'))
-      check(`pane: at ${columns} columns the title, the question and the hint share one screen`,
-        await settled(() => view().includes('Install plugin')
-          // The question itself may wrap at 80: what must not disappear is the
-          // title, the question's opening and closing, and the key hint.
-          && view().includes('The package is installed.')
-          && view().includes('now?')
-          && view().includes('grant · esc skip')), view())
-      check(`pane: at ${columns} columns all 12 permissions keep their status on one line`,
-        statusRows().length === 12 && statusRows().every(line => line.includes('not granted')), view())
-    } finally {
-      pane.unmount()
-      narrow.dispose()
+  // The confirmation has to survive the terminal sizes the real screen uses.
+  // The English status labels are the widest, and the list folds into the
+  // overlay's height (`rows - 8`, the strip the prompt keeps): one wrapped row
+  // would double its height, and a list that ignores the budget pushes the
+  // title and the question off a short terminal. The 24-row cases show the
+  // fold; the tall one shows the 12-row cap itself.
+  for (const rows of [24, 40] as const) {
+    for (const columns of [80, 50] as const) {
+      const narrow = new XTerm({ cols: columns, rows, scrollback: 0, allowProposedApi: true })
+      class NarrowOut extends Writable {
+        columns = columns
+        rows = rows
+        isTTY = true
+        _write(chunk: unknown, _encoding: BufferEncoding, callback: () => void): void { narrow.write(String(chunk), callback) }
+      }
+      class NarrowIn extends PassThrough {
+        isTTY = true
+        setRawMode() { return this }
+        ref() { return this }
+        unref() { return this }
+      }
+      const crowded: GrantPlan = {
+        id: SHARED_ID,
+        entries: Array.from({ length: 12 }, (_, index) => ({
+          name: 'session.input.intercept',
+          scope: `${SHARED_ID}:command-${index}`,
+          default: 'deny',
+          granted: false,
+        })),
+        unknown: [],
+      }
+      const pane = await ui.render(React.createElement(PluginInstallPane, {
+        busy: false,
+        step: { kind: 'grant', plan: crowded },
+      }), {
+        stdout: new NarrowOut() as never, stdin: new NarrowIn() as never, stderr: new NarrowOut() as never,
+        exitOnCtrlC: false, patchConsole: false,
+      })
+      try {
+        const view = (): string => viewportLines(narrow, rows).join('\n')
+        const statusRows = (): string[] => viewportLines(narrow, rows).filter(line => line.includes('@'))
+        check(`pane: at ${columns}x${rows} the title, the question and the hint share one screen`,
+          await settled(() => view().includes('Install plugin')
+            // The question itself may wrap: what must not disappear is the
+            // title, the question's opening and closing, and the key hint.
+            && view().includes('The package is installed.')
+            && view().includes('now?')
+            && view().includes('grant · esc skip')), view())
+        const visible = statusRows().length
+        check(`pane: at ${columns}x${rows} every visible permission keeps its status on one line`,
+          visible > 0 && statusRows().every(line => line.includes('not granted')), view())
+        if (rows === 24) {
+          check(`pane: at ${columns}x${rows} the list folds what does not fit into one count line`,
+            visible < 12 && view().includes(`and ${12 - visible} more…`), view())
+        } else {
+          check(`pane: at ${columns}x${rows} all 12 permissions are listed`,
+            visible === 12 && !view().includes('more…'), view())
+        }
+      } finally {
+        pane.unmount()
+        narrow.dispose()
+      }
     }
   }
 }

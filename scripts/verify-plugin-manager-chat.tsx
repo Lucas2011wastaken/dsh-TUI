@@ -263,11 +263,11 @@ function makeAgent(id: string, sessionId: string) {
 
 /** One terminal + Chat rig: stdin → React → throttled render → xterm. Both the
  *  forms loop below and the session-fence case drive this same pipeline. */
-function makeHarness(columns: number, fullscreen: boolean) {
-  const term = new XTerm({ cols: columns, rows: ROWS, scrollback: 0, allowProposedApi: true })
+function makeHarness(columns: number, fullscreen: boolean, rows = ROWS) {
+  const term = new XTerm({ cols: columns, rows, scrollback: 0, allowProposedApi: true })
   class Out extends Writable {
     columns = columns
-    rows = ROWS
+    rows = rows
     isTTY = true
     _write(chunk: unknown, _encoding: BufferEncoding, callback: () => void): void { term.write(String(chunk), callback) }
   }
@@ -278,7 +278,7 @@ function makeHarness(columns: number, fullscreen: boolean) {
     unref() { return this }
   }
   const stdin = new In()
-  const screen = (): string => viewportLines(term, ROWS).join('\n')
+  const screen = (): string => viewportLines(term, rows).join('\n')
   const hasText = (text: string): boolean => screen().replaceAll(/\s+/gu, '').includes(text.replaceAll(/\s+/gu, ''))
   const type = async (line: string): Promise<void> => {
     for (const char of line) stdin.write(char)
@@ -2061,11 +2061,15 @@ for (const [fullscreen, columns, service] of [
     readonly requestId?: (index: number) => PluginInstallRequestId
     /** 窄终端与全屏是终端可见改动的必测面（AGENTS.md）：默认 inline 100 列。 */
     readonly columns?: number
+    /** Row budget of the terminal; the real screen clips overlay panes above it. */
+    readonly rows?: number
     readonly fullscreen?: boolean
     /** Where the flow's grant writes land; absent means the flow has no store. */
     readonly grantsDataDir?: string
     /** What the landed package declares, read by the flow's grant step. */
     readonly installedGrantsOf?: (name: string) => { readonly id: string; readonly permissions: readonly { name: string; scope: string }[] } | undefined
+    /** A path target's declaration, readable before the install (the confirm list). */
+    readonly declaredOf?: { readonly id: string; readonly permissions: readonly { name: string; scope: string }[] }
   }) {
     const installs: InstallBundleOptions[] = []
     const installSpecs: string[] = []
@@ -2089,7 +2093,7 @@ for (const [fullscreen, columns, service] of [
       },
       listBundles: () => Promise.resolve(bundles),
     }
-    const { term, stdin, screen, hasText, run, render } = makeHarness(options.columns ?? 100, options.fullscreen ?? false)
+    const { term, stdin, screen, hasText, run, render } = makeHarness(options.columns ?? 100, options.fullscreen ?? false, options.rows)
     const ctx = {
       on: () => () => undefined,
       get: (name: string) => name === 'pluginManager' ? service : undefined,
@@ -2110,6 +2114,7 @@ for (const [fullscreen, columns, service] of [
       model: 'fake-model', provider: '', cwd: process.cwd(), activity: false,
     })
     let flows = 0
+    const declared = options.declaredOf
     // The rig is the host here: it decides the layout AND hands it to the screen,
     // so the two cannot drift apart the way `fullscreen: false` let them (the
     // fullscreen case was rendering an inline Chat under a fullscreen label).
@@ -2131,6 +2136,12 @@ for (const [fullscreen, columns, service] of [
           busy: sink.busy,
           onLines: sink.onLines,
           requestId: options.requestId?.(index) ?? ('probe-pane' as PluginInstallRequestId),
+          // A path target's declaration is readable before the install; the
+          // confirm pane lists it. The registry step above covers the other path.
+          ...declared === undefined ? {} : {
+            specDirectory: () => '/probe/declared-package',
+            declaredGrantsOf: () => declared,
+          },
           ...options.grantsDataDir === undefined ? {} : {
             grants: grantStoreOf(options.grantsDataDir),
             grantsDataDir: options.grantsDataDir,
@@ -2258,6 +2269,63 @@ for (const [fullscreen, columns, service] of [
     } finally {
       await rig.done()
       rmSync(dir, { recursive: true, force: true })
+    }
+  }
+
+  // Height, not width, is what pushes a pane off the screen: Chat anchors this
+  // pane in OverlayAbove, which keeps `rows - 8` rows above the prompt and clips
+  // whole rows from the top. A 12-permission declaration must therefore fold
+  // instead of burying the package identity, the trust notice and the key hint.
+  // The 24-row screen has no room for any permission row; the 40-row one lists
+  // them all. Both are the real Chat, not the pane rendered on its own.
+  {
+    const shortDir = mkdtempSync(join(tmpdir(), 'dsh-chat-grant-short-'))
+    const permissions = Array.from({ length: 12 }, (_, index) => ({
+      name: 'storage.local.read',
+      scope: `com.probe.tall:command-${index}`,
+    }))
+    const short = await mountInstallChat({
+      feed: noFeed,
+      notice: { kind: 'declared' },
+      install: () => Promise.resolve(CHANGE),
+      columns: 50,
+      rows: 24,
+      grantsDataDir: shortDir,
+      declaredOf: { id: 'com.probe.tall', permissions },
+    })
+    try {
+      await short.run('/plugin install /probe/declared-package')
+      check(`${tag} short rows: the confirmation keeps its title and package identity`,
+        await settled(() => short.hasText('Install plugin') && short.hasText('To install:')), short.screen())
+      check(`${tag} short rows: the gate-1 notice and the key hint stay on screen`,
+        short.hasText('Declaration readable') && short.hasText('install and grant'), short.screen())
+      check(`${tag} short rows: a list that cannot fit is omitted rather than pushing the frame away`,
+        !short.hasText('Permissions to grant')
+        && short.screen().split('\n').filter(line => line.includes('not granted')).length === 0, short.screen())
+    } finally {
+      await short.done()
+      rmSync(shortDir, { recursive: true, force: true })
+    }
+    const tallDir = mkdtempSync(join(tmpdir(), 'dsh-chat-grant-tall-'))
+    const tall = await mountInstallChat({
+      feed: noFeed,
+      notice: { kind: 'declared' },
+      install: () => Promise.resolve(CHANGE),
+      columns: 50,
+      rows: 40,
+      grantsDataDir: tallDir,
+      declaredOf: { id: 'com.probe.tall', permissions },
+    })
+    try {
+      await tall.run('/plugin install /probe/declared-package')
+      check(`${tag} tall rows: the same confirmation lists the declared permissions`,
+        await settled(() => tall.hasText('Permissions to grant') && tall.hasText('not granted')), tall.screen())
+      const visible = tall.screen().split('\n').filter(line => line.includes('not granted')).length
+      check(`${tag} tall rows: what does not fit is counted, never silently dropped`,
+        visible > 0 && (visible === 12 || tall.hasText(`and ${12 - visible} more…`)), tall.screen())
+    } finally {
+      await tall.done()
+      rmSync(tallDir, { recursive: true, force: true })
     }
   }
 

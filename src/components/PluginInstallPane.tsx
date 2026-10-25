@@ -6,7 +6,7 @@ import type { PluginInstallStep, VersionExemptions } from '../dsh-adapter/plugin
 import { HintLine } from './design-system/HintLine.js'
 import { LoadingState } from './design-system/LoadingState.js'
 import { Pane } from './design-system/Pane.js'
-import { PluginGrantList } from './PluginGrantList.js'
+import { PluginGrantList, usePaneTextRows } from './PluginGrantList.js'
 
 /** One package the running host refuses: the shape the step carries, named
  *  through the step so this file needs no upstream types of its own. */
@@ -39,6 +39,7 @@ const TARGET_CELLS = 80
  * (Enter confirms / retries, Esc cancels), exactly like the SDK install wizard.
  */
 export function PluginInstallPane({ step, busy }: { step: PluginInstallStep; busy: boolean }): React.ReactNode {
+  const textRows = usePaneTextRows()
   if (busy) {
     return (
       <Pane color="permission">
@@ -60,45 +61,61 @@ export function PluginInstallPane({ step, busy }: { step: PluginInstallStep; bus
         `${artifact.name}${artifact.version === undefined ? '' : `@${artifact.version}`}`,
         TARGET_CELLS,
       )
+    const title = t('plugins-install-pane-title')
+    const configure = t('plugins-install-configure', {
+      spec,
+      kind: artifact.kind,
+      bundle: artifact.bundle === true ? 'bundle' : artifact.bundle === false ? 'not a bundle' : 'unknown',
+    })
+    const trustText = trust.kind === 'third-party' ? t('plugins-install-trust-third-party') : undefined
+    const noticeText = notice.kind === 'declared' ? t('plugins-install-notice-declared')
+      : notice.kind === 'undeclared' ? t('plugins-install-notice-undeclared')
+        : notice.kind === 'invalid' ? t('plugins-install-notice-invalid', { err: notice.error })
+          : notice.kind === 'unjudged' ? t('plugins-install-notice-unjudged')
+            : undefined
+    const hint = t(grants !== undefined && grants.entries.length > 0
+      ? 'plugins-install-key-confirm-grant'
+      : 'plugins-install-key-confirm')
+    // Everything the overlay draws besides the permission rows: Pane's top line
+    // and padding, the title and its gap, the configure line, the facts gap, the
+    // trust/notice copy and the hint. Measured at this width, so the list folds
+    // itself instead of pushing them off a short terminal.
+    const frameRows = 2 + textRows(title) + 1 + textRows(configure) + 1
+      + (trustText === undefined ? 0 : textRows(trustText))
+      + (noticeText === undefined ? 0 : textRows(noticeText)) + textRows(hint)
     return (
       <Pane color="permission">
         <Box flexDirection="column">
           <Box marginBottom={1}>
-            <Text color="remember" bold>{t('plugins-install-pane-title')}</Text>
+            <Text color="remember" bold>{title}</Text>
           </Box>
-          <Text>{t('plugins-install-configure', {
-            spec,
-            kind: artifact.kind,
-            bundle: artifact.bundle === true ? 'bundle' : artifact.bundle === false ? 'not a bundle' : 'unknown',
-          })}</Text>
+          <Text>{configure}</Text>
           <Box marginTop={1} flexDirection="column">
-            {trust.kind === 'third-party' && <Text>{t('plugins-install-trust-third-party')}</Text>}
-            {notice.kind === 'declared' && <Text dimColor>{t('plugins-install-notice-declared')}</Text>}
-            {notice.kind === 'undeclared' && <Text>{t('plugins-install-notice-undeclared')}</Text>}
-            {notice.kind === 'invalid' && <Text>{t('plugins-install-notice-invalid', { err: notice.error })}</Text>}
-            {notice.kind === 'unjudged' && <Text>{t('plugins-install-notice-unjudged')}</Text>}
+            {trustText !== undefined && <Text>{trustText}</Text>}
+            {noticeText !== undefined && <Text dimColor={notice.kind === 'declared'}>{noticeText}</Text>}
           </Box>
-          {grants !== undefined && <PluginGrantList plan={grants} mode="grant" />}
+          {grants !== undefined && <PluginGrantList plan={grants} mode="grant" frameRows={frameRows} />}
         </Box>
-        <Text dimColor italic>
-          <HintLine text={t(grants !== undefined && grants.entries.length > 0
-            ? 'plugins-install-key-confirm-grant'
-            : 'plugins-install-key-confirm')} />
-        </Text>
+        <Text dimColor italic><HintLine text={hint} /></Text>
       </Pane>
     )
   }
   if (step.kind === 'grant') {
+    const title = t('plugins-install-pane-title')
+    const ask = t('plugins-install-grant-ask', { id: clean(step.plan.id) })
+    const hint = t('plugins-install-key-grant')
+    // Pane frame, title and its gap, the question, the hint.
+    const frameRows = 2 + textRows(title) + 1 + textRows(ask) + textRows(hint)
     return (
       <Pane color="permission">
         <Box flexDirection="column">
           <Box marginBottom={1}>
-            <Text color="remember" bold>{t('plugins-install-pane-title')}</Text>
+            <Text color="remember" bold>{title}</Text>
           </Box>
-          <Text>{t('plugins-install-grant-ask', { id: clean(step.plan.id) })}</Text>
-          <PluginGrantList plan={step.plan} mode="grant" />
+          <Text>{ask}</Text>
+          <PluginGrantList plan={step.plan} mode="grant" frameRows={frameRows} />
         </Box>
-        <Text dimColor italic><HintLine text={t('plugins-install-key-grant')} /></Text>
+        <Text dimColor italic><HintLine text={hint} /></Text>
       </Pane>
     )
   }

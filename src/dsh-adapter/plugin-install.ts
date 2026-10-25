@@ -40,7 +40,7 @@ import { statSync } from 'node:fs'
 import { isAbsolute } from 'node:path'
 import { readGrantStore, type GrantStore } from '../adapter/standard/grants.js'
 import { adapterRuntimeFor } from '../adapter/kernel/runtime-context.js'
-import { t } from '../i18n.js'
+import { t, type I18nKey } from '../i18n.js'
 import { installedTuiVersion, resolveDshProfileName } from '../update.js'
 import { COMPOSITION_PACKAGE, declaredGrantsAt, declaredGrantsIn, pluginDeclarationIn, type DeclaredGrants, type PluginInstallNotice } from './plugin-declaration.js'
 import { applyGrantMutation, grantFailureText, grantsFilePath, planGrants, type GrantPlan } from './grant-file.js'
@@ -328,12 +328,14 @@ export function createPluginInstallFlow(options: PluginInstallFlowOptions): Plug
 
   /**
    * A turn is running: nothing is asked and no service is called. Checked at
-   * both ends of the wait — before the inspection, and again before the write —
-   * because a turn can start while the pane is waiting for an answer.
+   * every end of the wait — before the inspection, before the install's grant,
+   * and again before the profile write — because a turn can start while the
+   * pane is waiting for an answer. The reason line is the caller's: the
+   * post-install grant step is not an install and must not say it is.
    */
-  function refuseWhileBusy(): PluginInstallStep | undefined {
+  function refuseWhileBusy(reason: I18nKey = 'plugins-install-busy'): PluginInstallStep | undefined {
     if (!options.busy()) return undefined
-    emit([t('plugins-install-busy')])
+    emit([t(reason)])
     return { kind: 'done' }
   }
 
@@ -684,6 +686,13 @@ export function createPluginInstallFlow(options: PluginInstallFlowOptions): Plug
       if (stopped) return { kind: 'done' }
       const plan = grantPlan
       if (plan === undefined) return { kind: 'done' }
+      // The post-install step can be on screen when a turn starts. Granting is a
+      // write the running turn would immediately see (the decision guard reads
+      // the file per decision), so it waits for the same idle window as the
+      // pre-install grant and the profile write. Nothing is lost: the step is
+      // not consumed, and `/plugin enable` is the repair path.
+      const refused = refuseWhileBusy('plugins-install-grant-busy')
+      if (refused !== undefined) return refused
       ensureGrants(plan)
       return { kind: 'done' }
     },

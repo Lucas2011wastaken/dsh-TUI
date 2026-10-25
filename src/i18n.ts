@@ -1510,6 +1510,10 @@ const dict = {
     zh: '回合正在运行，先结束它（或 /new）再装插件：安装会改动 profile 并触发应用／热重载',
     en: 'A turn is running; finish it (or /new) before installing: an install changes the profile and applies or hot-reloads plugins',
   },
+  'plugins-install-grant-busy': {
+    zh: '回合正在运行，先结束它（或 /new）再授予：授权会在下一次决策立即生效',
+    en: 'A turn is running; finish it (or /new) before granting: the grant takes effect on the next decision',
+  },
   'plugins-install-inspect': { zh: '将要安装：{{spec}}（{{kind}} · {{bundle}}）', en: 'About to install: {{spec}} ({{kind}} · {{bundle}})' },
   'plugins-install-trusted': {
     zh: '嫡系（feed 命中）：{{name}}@{{version}} —— 跳过装包信任确认；仍记 effect ledger，仍在 /plugin 列表可见',
