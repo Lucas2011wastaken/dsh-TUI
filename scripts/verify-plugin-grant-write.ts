@@ -278,7 +278,7 @@ const sleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(r
     settled = true
     return result
   })
-  await sleep(60)
+  await sleep(60) // 固定窗:墙钟 给持锁的写入器一次重试窗口，确认它没有越过锁
   check('a held sibling lock delays the read-modify-write', !settled && !existsSync(file))
   rmSync(lock, { force: true })
   const result = await pending
