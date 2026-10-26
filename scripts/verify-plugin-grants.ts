@@ -285,13 +285,15 @@ check1('decision permission map is immutable',
     live.allows(principal('live'), 'messages.observe.read', 'session:one'))
   check1('scoped grant does not authorize another session',
     !live.allows(principal('live'), 'messages.observe.read', 'session:two'))
-  // The independent half: a hand-edited document with the same rule must be read
-  // exactly the same way. The writer is a convenience, not a new format.
+  // The independent half: a hand-edited document must change the next decision.
+  // It grants a different scope on purpose — asking for the scope the writer had
+  // just granted would pass even if the store kept its earlier answer.
   writeFileSync(join(liveDir, EXTENSION_GRANTS_FILE), JSON.stringify({
-    grants: { live: [scoped('messages.observe.read', 'session:one')] },
+    grants: { live: [scoped('messages.observe.read', 'session:two')] },
   }))
-  check1('a hand-edited document with the same rule is granted',
-    live.allows(principal('live'), 'messages.observe.read', 'session:one'))
+  check1('a hand-edited document changes the next decision',
+    !live.allows(principal('live'), 'messages.observe.read', 'session:one')
+    && live.allows(principal('live'), 'messages.observe.read', 'session:two'))
   const revoked = applyGrantMutation({
     kind: 'revoke',
     id: 'live',
@@ -299,7 +301,8 @@ check1('decision permission map is immutable',
   }, { dataDir: liveDir })
   check1('the grant writer performs the revocation', revoked.ok && revoked.changed, JSON.stringify(revoked))
   check1('revocation affects the next operation without restart',
-    !live.allows(principal('live'), 'messages.observe.read', 'session:one'))
+    !live.allows(principal('live'), 'messages.observe.read', 'session:one')
+    && !live.allows(principal('live'), 'messages.observe.read', 'session:two'))
   await sleep(250)
   check1('revocation notifies grant-owned effects', changeCount > 0)
   stopWatching?.()

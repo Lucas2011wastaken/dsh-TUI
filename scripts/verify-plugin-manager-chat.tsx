@@ -2276,8 +2276,9 @@ for (const [fullscreen, columns, service] of [
   // pane in OverlayAbove, which keeps `rows - 8` rows above the prompt and clips
   // whole rows from the top. A 12-permission declaration must therefore fold
   // instead of burying the package identity, the trust notice and the key hint.
-  // The 24-row screen has no room for any permission row; the 40-row one lists
-  // them all. Both are the real Chat, not the pane rendered on its own.
+  // The 24-row screen has no room for a permission row, so the count moves into
+  // the key hint and (when one body row fits) the list keeps a count line; the
+  // 40-row one lists them all. Both are the real Chat, not the pane on its own.
   {
     const shortDir = mkdtempSync(join(tmpdir(), 'dsh-chat-grant-short-'))
     const permissions = Array.from({ length: 12 }, (_, index) => ({
@@ -2299,12 +2300,33 @@ for (const [fullscreen, columns, service] of [
         await settled(() => short.hasText('Install plugin') && short.hasText('To install:')), short.screen())
       check(`${tag} short rows: the gate-1 notice and the key hint stay on screen`,
         short.hasText('Declaration readable') && short.hasText('install and grant'), short.screen())
-      check(`${tag} short rows: a list that cannot fit is omitted rather than pushing the frame away`,
-        !short.hasText('Permissions to grant')
+      check(`${tag} short rows: the key hint still discloses how many permissions Enter grants`,
+        short.hasText('install and grant 12')
         && short.screen().split('\n').filter(line => line.includes('not granted')).length === 0, short.screen())
     } finally {
       await short.done()
       rmSync(shortDir, { recursive: true, force: true })
+    }
+    const midDir = mkdtempSync(join(tmpdir(), 'dsh-chat-grant-mid-'))
+    const mid = await mountInstallChat({
+      feed: noFeed,
+      notice: { kind: 'declared' },
+      install: () => Promise.resolve(CHANGE),
+      columns: 80,
+      rows: 24,
+      grantsDataDir: midDir,
+      declaredOf: { id: 'com.probe.tall', permissions },
+    })
+    try {
+      await mid.run('/plugin install /probe/declared-package')
+      check(`${tag} one-row list: the list spends its last row on the permission count`,
+        await settled(() => mid.hasText('Permissions to grant')
+          && mid.hasText('12 permission(s) not listed here')), mid.screen())
+      check(`${tag} one-row list: no permission row is drawn at this height`,
+        mid.screen().split('\n').filter(line => line.includes('not granted')).length === 0, mid.screen())
+    } finally {
+      await mid.done()
+      rmSync(midDir, { recursive: true, force: true })
     }
     const tallDir = mkdtempSync(join(tmpdir(), 'dsh-chat-grant-tall-'))
     const tall = await mountInstallChat({

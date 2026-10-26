@@ -126,7 +126,7 @@ export function PluginManagePane({ step, busy }: { step: PluginManageStep; busy:
 function hintTextOf(step: Extract<PluginManageStep, { kind: 'confirm' }>): string {
   const grants = step.grants
   if (step.target.kind === 'bundle' && grants !== undefined && grants.entries.length > 0) {
-    if (step.target.action === 'enable') return t('plugins-manage-key-enable-grant')
+    if (step.target.action === 'enable') return t('plugins-manage-key-enable-grant', { count: String(grants.entries.length) })
     if (step.target.action === 'disable') {
       return t('plugins-manage-key-disable-revoke', { count: String(grants.entries.length) })
     }

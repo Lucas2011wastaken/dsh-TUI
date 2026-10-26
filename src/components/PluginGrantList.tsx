@@ -117,18 +117,21 @@ export function PluginGrantList({ plan, mode, frameRows }: {
   const cap = Math.min(GRANT_LIST_MAX_ROWS, Math.max(0, available))
   const needsFold = entries.length > cap
   const shownCount = needsFold ? Math.min(cap, Math.max(0, available - 1)) : entries.length
-  if (entries.length > 0 && shownCount < 1) return null
   const shown = entries.slice(0, shownCount)
   const hidden = entries.length - shown.length
   return (
     <Box marginTop={LIST_TOP_MARGIN_ROWS} flexDirection="column">
       <Text>{title}</Text>
-      {shown.map(entry => (
-        <Text key={`${entry.name}\u0000${entry.scope}`} dimColor={entry.granted} wrap="truncate">
-          {`  ${clean(entry.name)} @ ${clean(entry.scope)}  ${statusOf(entry)}`}
-        </Text>
-      ))}
-      {hidden > 0 && <Text dimColor>{`  ${t('plugins-grant-more', { count: String(hidden) })}`}</Text>}
+      {shown.length === 0
+        // Not one row fits. Keep a count under the heading (the key hint repeats
+        // it) instead of drawing a heading with nothing beneath it.
+        ? hidden > 0 && <Text dimColor wrap="truncate">{`  ${t('plugins-grant-hidden', { count: String(hidden) })}`}</Text>
+        : shown.map(entry => (
+          <Text key={`${entry.name}\u0000${entry.scope}`} dimColor={entry.granted} wrap="truncate">
+            {`  ${clean(entry.name)} @ ${clean(entry.scope)}  ${statusOf(entry)}`}
+          </Text>
+        ))}
+      {shown.length > 0 && hidden > 0 && <Text dimColor>{`  ${t('plugins-grant-more', { count: String(hidden) })}`}</Text>}
       {unknown !== undefined && <Text dimColor>{unknown}</Text>}
     </Box>
   )

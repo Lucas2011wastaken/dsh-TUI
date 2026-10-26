@@ -73,9 +73,10 @@ export function PluginInstallPane({ step, busy }: { step: PluginInstallStep; bus
         : notice.kind === 'invalid' ? t('plugins-install-notice-invalid', { err: notice.error })
           : notice.kind === 'unjudged' ? t('plugins-install-notice-unjudged')
             : undefined
-    const hint = t(grants !== undefined && grants.entries.length > 0
-      ? 'plugins-install-key-confirm-grant'
-      : 'plugins-install-key-confirm')
+    const grantCount = grants?.entries.length ?? 0
+    const hint = grantCount > 0
+      ? t('plugins-install-key-confirm-grant', { count: String(grantCount) })
+      : t('plugins-install-key-confirm')
     // Everything the overlay draws besides the permission rows: Pane's top line
     // and padding, the title and its gap, the configure line, the facts gap, the
     // trust/notice copy and the hint. Measured at this width, so the list folds

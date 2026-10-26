@@ -1626,6 +1626,10 @@ const dict = {
   'plugins-grant-granted': { zh: '✓已授权', en: '✓granted' },
   'plugins-grant-not-granted': { zh: '·未授权', en: '·not granted' },
   'plugins-grant-more': { zh: '还有 {{count}} 项…', en: 'and {{count}} more…' },
+  'plugins-grant-hidden': {
+    zh: '共 {{count}} 项权限（此处未逐行显示）',
+    en: '{{count}} permission(s) not listed here',
+  },
   'plugins-grant-unknown-line': {
     zh: '宿主不认识、将跳过：{{names}}（共 {{count}} 项）',
     en: 'Unknown to this host and skipped: {{names}} ({{count}} total)',
@@ -1635,7 +1639,7 @@ const dict = {
   'plugins-install-incompatible-title': { zh: '版本不兼容的包：', en: 'Incompatible packages:' },
   'plugins-install-exemptions-title': { zh: '已登记的精确版本豁免：', en: 'Exact-version exemptions recorded:' },
   'plugins-install-key-confirm': { zh: '⏎ 安装 · esc 取消', en: '⏎ install · esc cancel' },
-  'plugins-install-key-confirm-grant': { zh: '⏎ 安装并授权 · esc 取消', en: '⏎ install and grant · esc cancel' },
+  'plugins-install-key-confirm-grant': { zh: '⏎ 安装并授权 {{count}} 项 · esc 取消', en: '⏎ install and grant {{count}} permission(s) · esc cancel' },
   'plugins-install-key-builds': { zh: '⏎ 允许这些脚本并重试 · esc 取消', en: '⏎ allow these scripts and retry · esc cancel' },
   'plugins-install-key-incompatible': { zh: '⏎ 接受风险并重试 · esc 取消', en: '⏎ accept the risk and retry · esc cancel' },
   'plugins-install-key-cancel': { zh: 'esc 取消安装', en: 'esc cancel the install' },
@@ -1728,7 +1732,7 @@ const dict = {
     zh: '已关闭，但授权条目未能撤销（{{reason}}）：{{id}} · {{file}} —— 见 /plugin 的授权矩阵。',
     en: 'Disabled, but the grant entries could not be revoked ({{reason}}): {{id}} · {{file}} — see the /plugin grant matrix.',
   },
-  'plugins-manage-key-enable-grant': { zh: '⏎ 启用并授权 · esc 返回', en: '⏎ enable and grant · esc back' },
+  'plugins-manage-key-enable-grant': { zh: '⏎ 启用并授权 {{count}} 项 · esc 返回', en: '⏎ enable and grant {{count}} permission(s) · esc back' },
   'plugins-manage-key-disable-revoke': {
     zh: '⏎ 关闭并撤销 {{count}} 项授权 · esc 返回',
     en: '⏎ disable and revoke {{count}} grant(s) · esc back',
