@@ -271,7 +271,7 @@ const overview = () => pluginsInfoLines('', { grants, host })
     ungranted.join(' | '))
   // 授予后翻 compatible（intercept 权限在覆盖层 descriptor 里是 host-declared）。
   // 走**应用自己的写入器**，不是手改 fixture：`/plugin` 的生命周期动作就是这条路径。
-  const grantWrite = applyGrantMutation({
+  const grantWrite = await applyGrantMutation({
     kind: 'ensure',
     id: 'com.example.input-guard',
     permissions: [scoped('session.input.intercept', 'tui/input')],

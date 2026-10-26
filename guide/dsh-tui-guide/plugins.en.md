@@ -163,7 +163,10 @@ Also an experimental public surface:
   them silently; a reinstall therefore asks again. A failed grant write never blocks
   an install or enable, it is reported instead. The grant matrix stays hand-editable
   (`~/.dsh-tui/extension-grants.json`; the writer and reader share one strict parser,
-  and a corrupt file is refused rather than repaired). On a terminal too short for a
+  and a corrupt file is refused rather than repaired). A write takes a sibling
+  `extension-grants.json.lock` (the same lock the profile's atomic writes use), so
+  a second TUI instance cannot lose a revoke/forget between the read and the rename.
+  On a terminal too short for a
   permission row, the list folds to a count or the key hint carries the count; the
   package identity and keys stay visible. **Known gaps**: a removal
   deletes no user data — `~/.dsh-tui/backends/<id>/`, storage namespaces and the

@@ -180,8 +180,9 @@ activation-scoped 规则 fail closed；授权文件由 live store 读取，变�
 `ensure`；`/plugin disable` 在关闭后 `revoke`（按权限名删除该 component 的所有 scope，
 含 activation-scoped；`denies` 不动）；`/plugin remove` 在卸载后 `forget`（删除该
 component 的 `grants` 与 `denies` 两个键）。写入器与读取器共用同一套严格解析：损坏 /
-零字节文件拒写而不“修好”，改写后先自检再原子落盘；`ensure` 逐字复制声明的 scope，
-不新增 `activationId`，声明之外的 scope 不放大。
+零字节文件拒写而不“修好”，改写后先自检再原子落盘；读-改-写在同目录
+`extension-grants.json.lock` 下串行（与 profile 原子写同一把锁）；`ensure` 逐字复制
+声明的 scope，不新增 `activationId`，声明之外的 scope 不放大。
 
 `dsh-tui-plugin-host` 行（cordis.patch.yml 已带，位于 extensions 行
 之前）提供 `ctx.tuiPluginHost`：runtime generationId（C-050，每次激活

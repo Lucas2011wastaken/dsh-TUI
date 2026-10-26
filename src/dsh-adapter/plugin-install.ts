@@ -283,9 +283,9 @@ export function createPluginInstallFlow(options: PluginInstallFlowOptions): Plug
    * written. Authorization is an enhancement here, never a precondition: a
    * corrupt grants file gets one line and the install carries on.
    */
-  function ensureGrants(plan: GrantPlan): { changed: boolean; undo: () => boolean } | undefined {
+  async function ensureGrants(plan: GrantPlan): Promise<{ changed: boolean; undo: () => Promise<boolean> } | undefined> {
     const grantStore = options.grants
-    const write = applyGrantMutation(
+    const write = await applyGrantMutation(
       { kind: 'ensure', id: plan.id, permissions: plan.entries },
       {
         dataDir: options.grantsDataDir,
@@ -321,9 +321,10 @@ export function createPluginInstallFlow(options: PluginInstallFlowOptions): Plug
   }
 
   /** A failure after the grant was written: put the file back, or say why not. */
-  function rollbackGrant(write: { readonly changed: boolean; readonly undo: () => boolean } | undefined): void {
+  async function rollbackGrant(write: { readonly changed: boolean; readonly undo: () => Promise<boolean> } | undefined): Promise<void> {
     if (write === undefined || !write.changed) return
-    emit([t(write.undo() ? 'plugins-grant-rolled-back' : 'plugins-grant-rollback-failed')])
+    const restored = await write.undo()
+    emit([t(restored ? 'plugins-grant-rolled-back' : 'plugins-grant-rollback-failed')])
   }
 
   /**
@@ -503,7 +504,7 @@ export function createPluginInstallFlow(options: PluginInstallFlowOptions): Plug
     // are on disk negotiates as `waiting_authorization` — registered, but kept
     // out of the picker until a restart. Writing first closes that window.
     const plan = grantPlan
-    const grantWrite = plan === undefined ? undefined : ensureGrants(plan)
+    const grantWrite = plan === undefined ? undefined : await ensureGrants(plan)
     const installSpec = installSpecOf(read, options.spec)
     let result: ChangeResult
     try {
@@ -516,7 +517,7 @@ export function createPluginInstallFlow(options: PluginInstallFlowOptions): Plug
       result = await activeInstall
     } catch (error) {
       emit([t('plugins-install-failed', { reason: cell(error instanceof Error ? error.message : String(error)) })])
-      rollbackGrant(grantWrite)
+      await rollbackGrant(grantWrite)
       return { kind: 'done' }
     } finally {
       activeInstall = undefined
@@ -535,7 +536,7 @@ export function createPluginInstallFlow(options: PluginInstallFlowOptions): Plug
     // must not report a second, contradictory ending. Nothing landed, so the
     // grant written before the run goes back too.
     if (result.application === 'cancelled') {
-      rollbackGrant(grantWrite)
+      await rollbackGrant(grantWrite)
       return { kind: 'done' }
     }
     const builds = result.pendingBuilds ?? []
@@ -543,7 +544,7 @@ export function createPluginInstallFlow(options: PluginInstallFlowOptions): Plug
       // The retry (`approve`) runs `run()` again and grants again; keeping the
       // grant across a run that never landed would leave it for a package that
       // may never be installed.
-      rollbackGrant(grantWrite)
+      await rollbackGrant(grantWrite)
       emit([t('plugins-install-build-blocked', { count: String(builds.length) })])
       return { kind: 'build-blocked', builds }
     }
@@ -551,7 +552,7 @@ export function createPluginInstallFlow(options: PluginInstallFlowOptions): Plug
       incompatible = result.error?.code === 'incompatible-version' ? result.error.incompatible ?? [] : []
       if (incompatible.length > 0) {
         // `acceptRisk()` retries through `run()`, which grants again.
-        rollbackGrant(grantWrite)
+        await rollbackGrant(grantWrite)
         emit([t('plugins-install-incompatible', {
           packages: incompatible.map(entry => `${cell(entry.name)}@${cell(entry.version)}`).join(', '),
           runtime: cell(incompatible[0]?.runtimeVersion ?? ''),
@@ -568,7 +569,7 @@ export function createPluginInstallFlow(options: PluginInstallFlowOptions): Plug
         t('plugins-install-manual', { profile: cell(options.profileName ?? 'dsh-tui'), spec: cell(installSpec) }),
         t('plugins-install-rescue'),
       ])
-      rollbackGrant(grantWrite)
+      await rollbackGrant(grantWrite)
       return { kind: 'done' }
     }
     const bundle = result.bundle ?? read.name ?? options.spec
@@ -694,7 +695,7 @@ export function createPluginInstallFlow(options: PluginInstallFlowOptions): Plug
       // and the person would have no way left to grant once the turn is over.
       // `/plugin enable` stays the repair path if they close the pane instead.
       if (refuseWhileBusy('plugins-install-grant-busy') !== undefined) return { kind: 'grant', plan }
-      ensureGrants(plan)
+      await ensureGrants(plan)
       return { kind: 'done' }
     },
     async approve(builds) {

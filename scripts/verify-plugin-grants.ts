@@ -272,7 +272,7 @@ check1('decision permission map is immutable',
   // 必须对手改文件与写入器产物完全同一反应——两条路径各留一个 fixture。
   const liveDir = mkdtempSync(join(tmpdir(), 'dsh-grants-live-'))
   cleanup.push(liveDir)
-  const ensured = applyGrantMutation({
+  const ensured = await applyGrantMutation({
     kind: 'ensure',
     id: 'live',
     permissions: [scoped('messages.observe.read', 'session:one')],
@@ -298,7 +298,7 @@ check1('decision permission map is immutable',
   // baseline, so the notification below is attributable to the revocation.
   await sleep(250)
   const beforeRevocation = changeCount
-  const revoked = applyGrantMutation({
+  const revoked = await applyGrantMutation({
     kind: 'revoke',
     id: 'live',
     names: ['messages.observe.read'],

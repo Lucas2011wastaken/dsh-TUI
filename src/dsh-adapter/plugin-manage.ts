@@ -490,9 +490,9 @@ export function createPluginManageFlow(options: PluginManageFlowOptions): Plugin
   }
 
   /** Grant a bundle's declared permissions before its code is loaded (enable). */
-  function ensureDeclared(plan: GrantPlan): { changed: boolean; undo: () => boolean } | undefined {
+  async function ensureDeclared(plan: GrantPlan): Promise<{ changed: boolean; undo: () => Promise<boolean> } | undefined> {
     if (options.grants === undefined) return undefined
-    const write = applyGrantMutation({ kind: 'ensure', id: plan.id, permissions: plan.entries }, grantWriteOptions())
+    const write = await applyGrantMutation({ kind: 'ensure', id: plan.id, permissions: plan.entries }, grantWriteOptions())
     if (!write.ok) {
       emit([t('plugins-grant-write-refused', {
         file: cell(grantsFilePath(options.grantsDataDir)),
@@ -522,11 +522,11 @@ export function createPluginManageFlow(options: PluginManageFlowOptions): Plugin
   }
 
   /** Revoke the declared permission names after the code is unloaded (disable). */
-  function revokeDeclared(declared: DeclaredGrants): void {
+  async function revokeDeclared(declared: DeclaredGrants): Promise<void> {
     if (options.grants === undefined) return
     const names = declaredNames(declared)
     if (names.length === 0) return
-    const write = applyGrantMutation({ kind: 'revoke', id: declared.id, names }, grantWriteOptions())
+    const write = await applyGrantMutation({ kind: 'revoke', id: declared.id, names }, grantWriteOptions())
     if (!write.ok) {
       emit([t('plugins-manage-grant-revoke-failed', {
         reason: grantFailureText(write),
@@ -541,9 +541,9 @@ export function createPluginManageFlow(options: PluginManageFlowOptions): Plugin
   }
 
   /** Delete the component's grant entries after its package left (remove). */
-  function forgetDeclared(declared: DeclaredGrants): void {
+  async function forgetDeclared(declared: DeclaredGrants): Promise<void> {
     if (options.grants === undefined) return
-    const write = applyGrantMutation({ kind: 'forget', id: declared.id }, grantWriteOptions())
+    const write = await applyGrantMutation({ kind: 'forget', id: declared.id }, grantWriteOptions())
     if (!write.ok) {
       // The one path that leaves an inheritance risk behind: a package reusing
       // this component id would inherit these rules. Say so, with the id and
@@ -559,9 +559,10 @@ export function createPluginManageFlow(options: PluginManageFlowOptions): Plugin
   }
 
   /** An enable whose write failed: put the grant back, or say why not. */
-  function rollbackGrant(write: { readonly changed: boolean; readonly undo: () => boolean } | undefined): void {
+  async function rollbackGrant(write: { readonly changed: boolean; readonly undo: () => Promise<boolean> } | undefined): Promise<void> {
     if (write === undefined || !write.changed) return
-    emit([t(write.undo() ? 'plugins-grant-rolled-back' : 'plugins-grant-rollback-failed')])
+    const restored = await write.undo()
+    emit([t(restored ? 'plugins-grant-rolled-back' : 'plugins-grant-rollback-failed')])
   }
 
   /** Write through the service, then turn its result into the next step. */
@@ -584,7 +585,7 @@ export function createPluginManageFlow(options: PluginManageFlowOptions): Plugin
     // Grant before the write that loads the code; revoke and forget after the
     // write that unloads it (grant lifecycle plan §6.2). A failed enable puts
     // the grant back; the other two act only on a successful write.
-    const grantWrite = current.action === 'enable' && plan !== undefined ? ensureDeclared(plan) : undefined
+    const grantWrite = current.action === 'enable' && plan !== undefined ? await ensureDeclared(plan) : undefined
     let result: ChangeResult
     try {
       result = await write(current)
@@ -592,13 +593,13 @@ export function createPluginManageFlow(options: PluginManageFlowOptions): Plugin
       // The service folds its failures in-band; only a lock or a disposal error
       // rejects, and that still has to leave a readable line behind.
       emit([t('plugins-manage-failed', { reason: cell(error instanceof Error ? error.message : String(error)) })])
-      if (current.action === 'enable') rollbackGrant(grantWrite)
+      if (current.action === 'enable') await rollbackGrant(grantWrite)
       return { kind: 'done' }
     }
     // None of these three offers a cancellation; a service that reports one
     // anyway has already been reported by whatever stopped it.
     if (result.application === 'cancelled') {
-      if (current.action === 'enable') rollbackGrant(grantWrite)
+      if (current.action === 'enable') await rollbackGrant(grantWrite)
       return { kind: 'done' }
     }
     if (result.application === 'failed') {
@@ -606,7 +607,7 @@ export function createPluginManageFlow(options: PluginManageFlowOptions): Plugin
       // failure after the selection was saved keeps the grant (the next start
       // enables the bundle with its declaration), while a failed save puts it
       // back. `application` alone cannot tell the two apart.
-      if (current.action === 'enable' && !result.changed) rollbackGrant(grantWrite)
+      if (current.action === 'enable' && !result.changed) await rollbackGrant(grantWrite)
       const incompatible = result.error?.code === 'incompatible-version' ? result.error.incompatible ?? [] : []
       emit([
         t('plugins-manage-failed', { reason: failureReasonOf(result) }),
@@ -628,8 +629,8 @@ export function createPluginManageFlow(options: PluginManageFlowOptions): Plugin
     // declaration was read before the write, which is the only moment it could
     // be read.
     if (declared !== undefined) {
-      if (current.action === 'remove') forgetDeclared(declared)
-      else if (current.action === 'disable') revokeDeclared(declared)
+      if (current.action === 'remove') await forgetDeclared(declared)
+      else if (current.action === 'disable') await revokeDeclared(declared)
     }
     // A disk no-op says nothing about higher-priority overrides or a pending
     // restart. Only an applied no-op is already in the requested state.

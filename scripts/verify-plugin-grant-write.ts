@@ -48,6 +48,7 @@ function seed(dir: string, text: string): void {
 function parsed(text: string): unknown {
   return JSON.parse(text)
 }
+const sleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms))
 
 // ── A. ensure ────────────────────────────────────────────────────────────────
 {
@@ -64,7 +65,7 @@ function parsed(text: string): unknown {
     { name: 'storage.local.read', scope: 'com.example.shared' },
     { name: 'session.input.intercept', scope: 'tui/input' },
   ]
-  const first = applyGrantMutation({ kind: 'ensure', id: 'com.example.shared', permissions }, { dataDir: dir })
+  const first = await applyGrantMutation({ kind: 'ensure', id: 'com.example.shared', permissions }, { dataDir: dir })
   check('ensure succeeds on a readable file', first.ok === true, JSON.stringify(first))
   check('ensure reports a change', first.ok && first.changed)
   const doc = parsed(read(dir)) as { grants: Record<string, unknown>; denies: Record<string, unknown> }
@@ -78,7 +79,7 @@ function parsed(text: string): unknown {
   check('ensure keeps denies untouched',
     JSON.stringify(doc.denies) === '{"com.example.denied":[{"name":"commands.invoke","scope":"other:status"}]}')
 
-  const second = applyGrantMutation({ kind: 'ensure', id: 'com.example.shared', permissions }, { dataDir: dir })
+  const second = await applyGrantMutation({ kind: 'ensure', id: 'com.example.shared', permissions }, { dataDir: dir })
   check('ensure is idempotent: the second run writes nothing', second.ok && second.changed === false, JSON.stringify(second))
   check('ensure is idempotent: no duplicate rules', (parsed(read(dir)) as { grants: Record<string, unknown[]> }).grants['com.example.shared'].length === 2)
   rmSync(dir, { recursive: true, force: true })
@@ -86,7 +87,7 @@ function parsed(text: string): unknown {
 
 {
   const dir = freshDir()
-  const result = applyGrantMutation({
+  const result = await applyGrantMutation({
     kind: 'ensure',
     id: 'com.example.shared',
     permissions: [
@@ -104,7 +105,7 @@ function parsed(text: string): unknown {
 
 {
   const dir = freshDir()
-  const result = applyGrantMutation({ kind: 'ensure', id: 'com.example.shared', permissions: [] }, { dataDir: dir })
+  const result = await applyGrantMutation({ kind: 'ensure', id: 'com.example.shared', permissions: [] }, { dataDir: dir })
   check('ensure with nothing to add creates no file', result.ok && result.changed === false && !existsSync(join(dir, EXTENSION_GRANTS_FILE)))
   rmSync(dir, { recursive: true, force: true })
 }
@@ -125,7 +126,7 @@ function parsed(text: string): unknown {
     },
     denies: { 'com.example.shared': [{ name: 'storage.local.write', scope: 'com.example.shared' }] },
   }, null, 2))
-  const result = applyGrantMutation({
+  const result = await applyGrantMutation({
     kind: 'revoke',
     id: 'com.example.shared',
     names: ['storage.local.read', 'session.input.intercept'],
@@ -148,7 +149,7 @@ function parsed(text: string): unknown {
     grants: { 'com.example.shared': [{ name: 'storage.local.read', scope: 'com.example.shared' }] },
     denies: { 'com.example.shared': [{ name: 'storage.local.write', scope: 'com.example.shared' }] },
   }, null, 2))
-  applyGrantMutation({ kind: 'revoke', id: 'com.example.shared', names: ['storage.local.read'] }, { dataDir: dir })
+  await applyGrantMutation({ kind: 'revoke', id: 'com.example.shared', names: ['storage.local.read'] }, { dataDir: dir })
   const doc = parsed(read(dir)) as { grants?: unknown; denies: unknown }
   check('revoke deletes the emptied grants key and keeps denies',
     doc.grants === undefined && doc.denies !== undefined, JSON.stringify(doc))
@@ -158,7 +159,7 @@ function parsed(text: string): unknown {
 {
   const dir = freshDir()
   seed(dir, '{"grants":{"com.example.shared":[{"name":"commands.invoke","scope":"x"}]}}')
-  const result = applyGrantMutation({ kind: 'revoke', id: 'com.example.shared', names: ['storage.local.read'] }, { dataDir: dir })
+  const result = await applyGrantMutation({ kind: 'revoke', id: 'com.example.shared', names: ['storage.local.read'] }, { dataDir: dir })
   check('revoke is a no-op when no rule carries a listed name', result.ok && result.changed === false)
   check('revoke no-op leaves the bytes alone', read(dir) === '{"grants":{"com.example.shared":[{"name":"commands.invoke","scope":"x"}]}}')
   rmSync(dir, { recursive: true, force: true })
@@ -180,7 +181,7 @@ function parsed(text: string): unknown {
       'com.example.other': ['session.rewind.intercept'],
     },
   }, null, 2))
-  const result = applyGrantMutation({ kind: 'forget', id: 'com.example.shared' }, { dataDir: dir })
+  const result = await applyGrantMutation({ kind: 'forget', id: 'com.example.shared' }, { dataDir: dir })
   check('forget succeeds and reports a change', result.ok && result.changed)
   const doc = parsed(read(dir)) as { grants: Record<string, unknown>; denies: Record<string, unknown> }
   check('forget removes the component from grants (legacy rows included) and denies',
@@ -189,7 +190,7 @@ function parsed(text: string): unknown {
     JSON.stringify(doc.grants['com.example.other']) === '[{"name":"commands.invoke","scope":"other:status"}]'
     && JSON.stringify(doc.denies['com.example.other']) === '["session.rewind.intercept"]')
   check('forget leaves a parseable file', parseGrantStore(read(dir)).corrupt === false)
-  const again = applyGrantMutation({ kind: 'forget', id: 'com.example.shared' }, { dataDir: dir })
+  const again = await applyGrantMutation({ kind: 'forget', id: 'com.example.shared' }, { dataDir: dir })
   check('forget of a missing component is a no-op', again.ok && again.changed === false)
   rmSync(dir, { recursive: true, force: true })
 }
@@ -198,7 +199,7 @@ function parsed(text: string): unknown {
 {
   const dir = freshDir()
   seed(dir, '')
-  const result = applyGrantMutation({ kind: 'forget', id: 'x.y' }, { dataDir: dir })
+  const result = await applyGrantMutation({ kind: 'forget', id: 'x.y' }, { dataDir: dir })
   check('a zero-byte grants file is refused as corrupt, never repaired',
     result.ok === false && result.reason === 'corrupt', JSON.stringify(result))
   check('the refused zero-byte file is left byte-identical', read(dir) === '')
@@ -207,21 +208,21 @@ function parsed(text: string): unknown {
 {
   const dir = freshDir()
   seed(dir, '{"grants":[],"x":1}')
-  const result = applyGrantMutation({ kind: 'forget', id: 'x.y' }, { dataDir: dir })
+  const result = await applyGrantMutation({ kind: 'forget', id: 'x.y' }, { dataDir: dir })
   check('an unknown root key is refused as corrupt', result.ok === false && result.reason === 'corrupt', JSON.stringify(result))
   rmSync(dir, { recursive: true, force: true })
 }
 {
   const dir = freshDir()
   seed(dir, '{"grants":{"x.y":[{"name":"storage.local.read","scope":"x.y","extra":1}]}}')
-  const result = applyGrantMutation({ kind: 'forget', id: 'x.y' }, { dataDir: dir })
+  const result = await applyGrantMutation({ kind: 'forget', id: 'x.y' }, { dataDir: dir })
   check('a rule with an unknown field is refused (the reader would call it corrupt)',
     result.ok === false && result.reason === 'corrupt', JSON.stringify(result))
   rmSync(dir, { recursive: true, force: true })
 }
 {
   const dir = freshDir()
-  const result = applyGrantMutation({
+  const result = await applyGrantMutation({
     kind: 'ensure',
     id: 'com.example.shared',
     permissions: [{ name: 'storage.local.read', scope: 'com.example.shared' }],
@@ -250,32 +251,56 @@ function parsed(text: string): unknown {
 }
 {
   const dir = freshDir()
-  const result = applyGrantMutation({
+  const result = await applyGrantMutation({
     kind: 'ensure',
     id: 'com.example.shared',
     permissions: [{ name: 'storage.local.read', scope: 'com.example.shared' }],
   }, { dataDir: dir })
   check('undo is available after a real write', result.ok && result.changed === true)
   if (result.ok) {
-    check('undo restores the absent-file state', result.undo() === true && !existsSync(join(dir, EXTENSION_GRANTS_FILE)))
+    check('undo restores the absent-file state', (await result.undo()) === true && !existsSync(join(dir, EXTENSION_GRANTS_FILE)))
   }
+  rmSync(dir, { recursive: true, force: true })
+}
+{
+  // The reader stays lock-free; the writer serializes through the sibling lock.
+  // Hold it as a live pid and the read-modify-write must wait instead of race.
+  const dir = freshDir()
+  const file = join(dir, EXTENSION_GRANTS_FILE)
+  const lock = `${file}.lock`
+  writeFileSync(lock, `${process.pid}\n`)
+  let settled = false
+  const pending = applyGrantMutation({
+    kind: 'ensure',
+    id: 'com.example.shared',
+    permissions: [{ name: 'storage.local.read', scope: 'com.example.shared' }],
+  }, { dataDir: dir }).then(result => {
+    settled = true
+    return result
+  })
+  await sleep(60)
+  check('a held sibling lock delays the read-modify-write', !settled && !existsSync(file))
+  rmSync(lock, { force: true })
+  const result = await pending
+  check('the write proceeds once the sibling lock is released',
+    result.ok === true && result.changed === true && existsSync(file), JSON.stringify(result))
   rmSync(dir, { recursive: true, force: true })
 }
 {
   const dir = freshDir()
   seed(dir, '{"grants":{"com.example.other":[{"name":"commands.invoke","scope":"other:status"}]}}')
   const before = read(dir)
-  const result = applyGrantMutation({
+  const result = await applyGrantMutation({
     kind: 'ensure',
     id: 'com.example.shared',
     permissions: [{ name: 'storage.local.read', scope: 'com.example.shared' }],
   }, { dataDir: dir })
-  check('undo restores the previous bytes', result.ok && result.changed === true && result.undo() === true && read(dir) === before)
+  check('undo restores the previous bytes', result.ok && result.changed === true && (await result.undo()) === true && read(dir) === before)
   rmSync(dir, { recursive: true, force: true })
 }
 {
   const dir = freshDir()
-  const result = applyGrantMutation({
+  const result = await applyGrantMutation({
     kind: 'ensure',
     id: 'com.example.shared',
     permissions: [{ name: 'storage.local.read', scope: 'com.example.shared' }],
@@ -283,7 +308,7 @@ function parsed(text: string): unknown {
   if (!result.ok) throw new Error('fixture write failed')
   // A hand edit after the write: the writer must not overwrite it on undo.
   writeFileSync(join(dir, EXTENSION_GRANTS_FILE), '{"grants":{"hand.edited":[{"name":"commands.invoke","scope":"x"}]}}')
-  check('undo refuses to overwrite a file that was edited after the write', result.undo() === false)
+  check('undo refuses to overwrite a file that was edited after the write', (await result.undo()) === false)
   check('the later hand edit survives the refused undo',
     read(dir) === '{"grants":{"hand.edited":[{"name":"commands.invoke","scope":"x"}]}}')
   rmSync(dir, { recursive: true, force: true })
@@ -295,15 +320,15 @@ function parsed(text: string): unknown {
     id: 'com.example.shared',
     permissions: [{ name: 'storage.local.read', scope: 'com.example.shared' }],
   }
-  const first = applyGrantMutation(mutation, { dataDir: dir })
+  const first = await applyGrantMutation(mutation, { dataDir: dir })
   check('the fixture write for the no-op case landed', first.ok && first.changed === true)
-  const result = applyGrantMutation(mutation, { dataDir: dir })
-  check('a no-op write exposes an undo that is a no-op', result.ok && result.changed === false && result.undo() === true)
+  const result = await applyGrantMutation(mutation, { dataDir: dir })
+  check('a no-op write exposes an undo that is a no-op', result.ok && result.changed === false && (await result.undo()) === true)
   rmSync(dir, { recursive: true, force: true })
 }
 {
   const dir = freshDir()
-  const result = applyGrantMutation({ kind: 'ensure', id: '', permissions: [] }, { dataDir: dir })
+  const result = await applyGrantMutation({ kind: 'ensure', id: '', permissions: [] }, { dataDir: dir })
   check('an empty component id is refused: the reader would call the result corrupt',
     result.ok === false && result.reason === 'write-failed', JSON.stringify(result))
   rmSync(dir, { recursive: true, force: true })
@@ -400,7 +425,7 @@ function parsed(text: string): unknown {
       === JSON.stringify({ grants: false, ledger: false, storage: false }))
   // The removal path forgets the component; the matrix must stop naming it as
   // a grants source while the ledger/storage rows stay.
-  applyGrantMutation({ kind: 'forget', id: 'com.example.grants' }, { dataDir: dir })
+  await applyGrantMutation({ kind: 'forget', id: 'com.example.grants' }, { dataDir: dir })
   check('footprints: after forget the grants source drops the id',
     pluginFootprintSourcesOf('com.example.grants', { dataDir: dir }).grants === false
     && pluginFootprintSourcesOf('com.example.denies', { dataDir: dir }).grants === true,
