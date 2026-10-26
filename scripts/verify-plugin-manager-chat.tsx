@@ -2064,6 +2064,8 @@ for (const [fullscreen, columns, service] of [
     /** Row budget of the terminal; the real screen clips overlay panes above it. */
     readonly rows?: number
     readonly fullscreen?: boolean
+    /** Wrap Chat in PageMargin, as the app root does (default `normal` inset). */
+    readonly pageMargin?: boolean
     /** Where the flow's grant writes land; absent means the flow has no store. */
     readonly grantsDataDir?: string
     /** What the landed package declares, read by the flow's grant step. */
@@ -2150,7 +2152,11 @@ for (const [fullscreen, columns, service] of [
         })
       },
     }
-    const instance = await render(React.createElement(Chat, chatProps))
+    const { PageMargin } = await import('../src/components/PageMargin.js')
+    const tree = options.pageMargin === true
+      ? React.createElement(PageMargin, null, React.createElement(Chat, chatProps))
+      : React.createElement(Chat, chatProps)
+    const instance = await render(tree)
     // 固定窗:pacing the key handlers attach after the first frame.
     await sleep(300)
     /** One turn event onto the bound session; `channel.working` follows it. */
@@ -2245,7 +2251,7 @@ for (const [fullscreen, columns, service] of [
         `${rig.installs.length} · ${rig.screen()}`)
       check(`${tag}: the grant step lists the declared permission`,
         rig.hasText('storage.local.read') && rig.hasText('com.probe.granted'), rig.screen())
-      check(`${tag}: the grant step names both keys`, rig.hasText('grant · esc skip'), rig.screen())
+      check(`${tag}: the grant step names both keys and the count`, rig.hasText('grant 1') && rig.hasText('esc skip'), rig.screen())
       check(`${tag}: nothing is written until the answer`, !existsSync(file), rig.screen())
       await rig.enter()
       check(`${tag}: Enter on the grant step writes the rule and closes the pane`,
@@ -2291,18 +2297,18 @@ for (const [fullscreen, columns, service] of [
       install: () => Promise.resolve(CHANGE),
       columns: 50,
       rows: 24,
+      pageMargin: true,
       grantsDataDir: shortDir,
       declaredOf: { id: 'com.probe.tall', permissions },
     })
     try {
       await short.run('/plugin install /probe/declared-package')
-      check(`${tag} short rows: the confirmation keeps its title and package identity`,
-        await settled(() => short.hasText('Install plugin') && short.hasText('To install:')), short.screen())
-      check(`${tag} short rows: the gate-1 notice and the key hint stay on screen`,
-        short.hasText('Declaration readable') && short.hasText('install and grant'), short.screen())
-      check(`${tag} short rows: the key hint still discloses how many permissions Enter grants`,
-        short.hasText('install and grant 12')
-        && short.screen().split('\n').filter(line => line.includes('not granted')).length === 0, short.screen())
+      check(`${tag} short rows: the package identity and the count stay on screen`,
+        await settled(() => short.hasText('To install:') && short.hasText('install and grant 12')), short.screen())
+      check(`${tag} short rows: the gate-1 notice stays on screen`,
+        short.hasText('Declaration readable'), short.screen())
+      check(`${tag} short rows: the list is not drawn at this height`,
+        short.screen().split('\n').filter(line => line.includes('not granted')).length === 0, short.screen())
     } finally {
       await short.done()
       rmSync(shortDir, { recursive: true, force: true })
@@ -2314,19 +2320,41 @@ for (const [fullscreen, columns, service] of [
       install: () => Promise.resolve(CHANGE),
       columns: 80,
       rows: 24,
+      pageMargin: true,
       grantsDataDir: midDir,
       declaredOf: { id: 'com.probe.tall', permissions },
     })
     try {
       await mid.run('/plugin install /probe/declared-package')
-      check(`${tag} one-row list: the list spends its last row on the permission count`,
-        await settled(() => mid.hasText('Permissions to grant')
-          && mid.hasText('12 permission(s) not listed here')), mid.screen())
-      check(`${tag} one-row list: no permission row is drawn at this height`,
+      check(`${tag} 80x24: the title survives, and the hint still carries the count`,
+        await settled(() => mid.hasText('Install plugin') && mid.hasText('install and grant 12')), mid.screen())
+      check(`${tag} 80x24: the list is not drawn here either`,
         mid.screen().split('\n').filter(line => line.includes('not granted')).length === 0, mid.screen())
     } finally {
       await mid.done()
       rmSync(midDir, { recursive: true, force: true })
+    }
+    const wideDir = mkdtempSync(join(tmpdir(), 'dsh-chat-grant-wide-'))
+    const wide = await mountInstallChat({
+      feed: noFeed,
+      notice: { kind: 'declared' },
+      install: () => Promise.resolve(CHANGE),
+      columns: 120,
+      rows: 24,
+      pageMargin: true,
+      grantsDataDir: wideDir,
+      declaredOf: { id: 'com.probe.tall', permissions },
+    })
+    try {
+      await wide.run('/plugin install /probe/declared-package')
+      check(`${tag} 120x24: one row left for the list is spent on the permission count`,
+        await settled(() => wide.hasText('Permissions to grant')
+          && wide.hasText('12 permission(s) not listed here')), wide.screen())
+      check(`${tag} 120x24: no permission row is drawn at this height`,
+        wide.screen().split('\n').filter(line => line.includes('not granted')).length === 0, wide.screen())
+    } finally {
+      await wide.done()
+      rmSync(wideDir, { recursive: true, force: true })
     }
     const tallDir = mkdtempSync(join(tmpdir(), 'dsh-chat-grant-tall-'))
     const tall = await mountInstallChat({
@@ -2335,6 +2363,7 @@ for (const [fullscreen, columns, service] of [
       install: () => Promise.resolve(CHANGE),
       columns: 50,
       rows: 40,
+      pageMargin: true,
       grantsDataDir: tallDir,
       declaredOf: { id: 'com.probe.tall', permissions },
     })

@@ -104,7 +104,7 @@ export function PluginInstallPane({ step, busy }: { step: PluginInstallStep; bus
   if (step.kind === 'grant') {
     const title = t('plugins-install-pane-title')
     const ask = t('plugins-install-grant-ask', { id: clean(step.plan.id) })
-    const hint = t('plugins-install-key-grant')
+    const hint = t('plugins-install-key-grant', { count: String(step.plan.entries.length) })
     // Pane frame, title and its gap, the question, the hint.
     const frameRows = 2 + textRows(title) + 1 + textRows(ask) + textRows(hint)
     return (

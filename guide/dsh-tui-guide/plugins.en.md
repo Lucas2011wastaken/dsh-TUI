@@ -163,7 +163,9 @@ Also an experimental public surface:
   them silently; a reinstall therefore asks again. A failed grant write never blocks
   an install or enable, it is reported instead. The grant matrix stays hand-editable
   (`~/.dsh-tui/extension-grants.json`; the writer and reader share one strict parser,
-  and a corrupt file is refused rather than repaired). **Known gaps**: a removal
+  and a corrupt file is refused rather than repaired). On a terminal too short for a
+  permission row, the list folds to a count or the key hint carries the count; the
+  package identity and keys stay visible. **Known gaps**: a removal
   deletes no user data — `~/.dsh-tui/backends/<id>/`, storage namespaces and the
   effect ledger are **reported once by source** and left for the person to delete;
   when a package's declaration cannot be read, the flow says it could not judge

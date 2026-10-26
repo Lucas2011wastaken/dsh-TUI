@@ -602,7 +602,11 @@ export function createPluginManageFlow(options: PluginManageFlowOptions): Plugin
       return { kind: 'done' }
     }
     if (result.application === 'failed') {
-      if (current.action === 'enable') rollbackGrant(grantWrite)
+      // The profile's own files decide whether the enable landed: a reload
+      // failure after the selection was saved keeps the grant (the next start
+      // enables the bundle with its declaration), while a failed save puts it
+      // back. `application` alone cannot tell the two apart.
+      if (current.action === 'enable' && !result.changed) rollbackGrant(grantWrite)
       const incompatible = result.error?.code === 'incompatible-version' ? result.error.incompatible ?? [] : []
       emit([
         t('plugins-manage-failed', { reason: failureReasonOf(result) }),
@@ -616,6 +620,7 @@ export function createPluginManageFlow(options: PluginManageFlowOptions): Plugin
         }),
         t('plugins-install-rescue'),
       ])
+      if (current.action === 'enable' && result.changed) emit([t('plugins-manage-enable-persisted')])
       return { kind: 'done' }
     }
     // The write landed (or the profile was already in that state): a disable is

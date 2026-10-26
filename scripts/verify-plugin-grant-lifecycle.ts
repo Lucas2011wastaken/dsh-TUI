@@ -396,12 +396,32 @@ function manageFlow(options: {
   seed(file, before)
   const lines: string[] = []
   const order: string[] = []
+  const service = manageService({ file, order, change: () => Promise.resolve({ changed: false, application: 'failed', error: { code: 'probe' } }) })
+  const flow = manageFlow({ action: 'enable', dir, file, service, lines })
+  await flow.begin()
+  await flow.confirm()
+  check('enable: a failed save puts the grant back exactly', read(file) === before, read(file))
+  check('enable: …and says both halves', lines.some(line => line.includes('rolled back')), lines.join(' | '))
+  check('enable: a failed save is not reported as recorded',
+    !lines.some(line => line === t('plugins-manage-enable-persisted')), lines.join(' | '))
+  rmSync(dir, { recursive: true, force: true })
+}
+
+{
+  const { dir, file } = sandbox()
+  const before = JSON.stringify({ grants: { 'com.example.other': [{ name: 'commands.invoke', scope: 'com.example.status' }] } })
+  seed(file, before)
+  const lines: string[] = []
+  const order: string[] = []
   const service = manageService({ file, order, change: () => Promise.resolve({ changed: true, application: 'failed', error: { code: 'probe' } }) })
   const flow = manageFlow({ action: 'enable', dir, file, service, lines })
   await flow.begin()
   await flow.confirm()
-  check('enable: a failed write puts the grant back exactly', read(file) === before, read(file))
-  check('enable: …and says both halves', lines.some(line => line.includes('rolled back')), lines.join(' | '))
+  const doc = JSON.parse(read(file)) as { grants: Record<string, unknown[]> }
+  check('enable: a reload failure after the profile saved keeps the grant',
+    doc.grants[SHARED_ID] !== undefined && read(file) !== before, read(file))
+  check('enable: …and says the enable is recorded for the next start',
+    lines.some(line => line === t('plugins-manage-enable-persisted')), lines.join(' | '))
   rmSync(dir, { recursive: true, force: true })
 }
 
@@ -432,6 +452,147 @@ function manageFlow(options: {
     read(file))
   check('disable: the transcript reports the revocation',
     lines.some(line => line.includes('Revoked 3 permission grant(s)')), lines.join(' | '))
+  rmSync(dir, { recursive: true, force: true })
+}
+
+// ── C2. failure paths the docs promise: the action still runs, the report says why ─
+{
+  // install: a corrupt grants file is an enhancement failure, not a veto.
+  const { dir, file } = sandbox()
+  seed(file, '{broken')
+  const lines: string[] = []
+  const rig = installService({ file })
+  const flow = installFlow({
+    dir, file, service: rig.service, spec: '/probe/package-a', notice: 'declared',
+    directory: '/probe/package-a', grantsOf: A_GRANTS, lines,
+  })
+  await flow.begin()
+  const done = await flow.confirm()
+  check('install failure path: a corrupt grants file does not stop the install',
+    done.kind === 'done' && rig.order.length === 1, JSON.stringify(done))
+  check('install failure path: the refused write names the reason and the file',
+    lines.some(line => line.includes('cannot be parsed') && line.includes(EXTENSION_GRANTS_FILE)), lines.join(' | '))
+  check('install failure path: the corrupt file is left exactly as it was', read(file) === '{broken', read(file))
+  rmSync(dir, { recursive: true, force: true })
+}
+{
+  // enable: the same guarantee, on the other lifecycle action.
+  const { dir, file } = sandbox()
+  seed(file, '{broken')
+  const lines: string[] = []
+  const order: string[] = []
+  const service = manageService({ file, order })
+  const flow = manageFlow({ action: 'enable', dir, file, service, lines })
+  await flow.begin()
+  await flow.confirm()
+  check('enable failure path: a corrupt grants file does not stop the enable',
+    order.length === 1 && order[0].includes('setBundleEnabled'), order.join(','))
+  check('enable failure path: the refused write is reported',
+    lines.some(line => line.includes('cannot be parsed')), lines.join(' | '))
+  check('enable failure path: the corrupt file is left exactly as it was', read(file) === '{broken', read(file))
+  rmSync(dir, { recursive: true, force: true })
+}
+{
+  // install: a deny outranks the rule just written; say so instead of claiming it.
+  const { dir, file } = sandbox()
+  seed(file, JSON.stringify({ denies: { [SHARED_ID]: [{ name: 'storage.local.read', scope: SHARED_ID }] } }, null, 2))
+  const lines: string[] = []
+  const rig = installService({ file })
+  const flow = installFlow({
+    dir, file, service: rig.service, spec: '/probe/package-a', notice: 'declared',
+    directory: '/probe/package-a', grantsOf: A_GRANTS, lines,
+  })
+  await flow.begin()
+  await flow.confirm()
+  check('unapplied: a rule outranked by a deny is reported, not counted as effective',
+    lines.some(line => line.includes('do not take effect') && line.includes('storage.local.read@')), lines.join(' | '))
+  rmSync(dir, { recursive: true, force: true })
+}
+{
+  // install: a hand edit between the grant write and the rollback survives.
+  const { dir, file } = sandbox()
+  const lines: string[] = []
+  const rig = installService({
+    file,
+    change: () => {
+      writeFileSync(file, JSON.stringify({
+        grants: { [SHARED_ID]: [{ name: 'storage.local.read', scope: SHARED_ID }] },
+        editedBy: 'person',
+      }))
+      return Promise.resolve({ changed: true, application: 'failed', error: { code: 'probe' } })
+    },
+  })
+  const flow = installFlow({
+    dir, file, service: rig.service, spec: '/probe/package-a', notice: 'declared',
+    directory: '/probe/package-a', grantsOf: A_GRANTS, lines,
+  })
+  await flow.begin()
+  await flow.confirm()
+  check('rollback failure: the hand edit between write and rollback is kept',
+    (JSON.parse(read(file)) as { editedBy?: string }).editedBy === 'person', read(file))
+  check('rollback failure: the transcript says the rollback failed',
+    lines.some(line => line.includes('could not be rolled back')), lines.join(' | '))
+  rmSync(dir, { recursive: true, force: true })
+}
+{
+  // disable: a corrupt grants file stops the revoke, not the disable.
+  const { dir, file } = sandbox()
+  seed(file, '{broken')
+  const lines: string[] = []
+  const order: string[] = []
+  const service = manageService({ file, order })
+  const flow = manageFlow({ action: 'disable', dir, file, service, lines })
+  const done = await flow.begin()
+  check('disable failure path: a corrupt grants file does not stop the disable',
+    done.kind === 'done' && order.length === 1, order.join(','))
+  check('disable failure path: the failed revoke names the id, the file and the matrix',
+    lines.some(line => line.includes(SHARED_ID) && line.includes(EXTENSION_GRANTS_FILE)
+      && line.includes('could not be revoked')), lines.join(' | '))
+  check('disable failure path: the corrupt file is left exactly as it was', read(file) === '{broken', read(file))
+  rmSync(dir, { recursive: true, force: true })
+}
+{
+  // enable: an unreadable declaration is named, never guessed into a grant.
+  const { dir, file } = sandbox()
+  const lines: string[] = []
+  const order: string[] = []
+  const service = manageService({ file, order })
+  const flow = manageFlow({
+    action: 'enable', dir, file, service, lines,
+    declaration: { kind: 'unreadable' },
+  })
+  await flow.begin()
+  await flow.confirm()
+  check('unhandled: an unreadable declaration is reported for the target',
+    lines.some(line => line.includes('could not be read') && line.includes(PACKAGE_A)), lines.join(' | '))
+  check('unhandled: the enable still runs without a grant', order.length === 1 && !existsSync(file), order.join(','))
+  rmSync(dir, { recursive: true, force: true })
+}
+{
+  // remove: a failed profile write must not forget the component's rules.
+  const { dir, file } = sandbox()
+  seed(file, JSON.stringify({ grants: { [SHARED_ID]: [{ name: 'storage.local.read', scope: SHARED_ID }] } }, null, 2))
+  const before = read(file)
+  const lines: string[] = []
+  const order: string[] = []
+  const service = manageService({ file, order, change: () => Promise.resolve({ changed: false, application: 'failed', error: { code: 'probe' } }) })
+  const flow = manageFlow({ action: 'remove', dir, file, service, lines })
+  await flow.begin()
+  await flow.confirm()
+  check('remove failure path: a failed removal keeps the grant entries untouched', read(file) === before, read(file))
+  rmSync(dir, { recursive: true, force: true })
+}
+{
+  // disable: the same, before the revoke.
+  const { dir, file } = sandbox()
+  seed(file, JSON.stringify({ grants: { [SHARED_ID]: [{ name: 'storage.local.read', scope: SHARED_ID }] } }, null, 2))
+  const before = read(file)
+  const lines: string[] = []
+  const order: string[] = []
+  const service = manageService({ file, order, change: () => Promise.resolve({ changed: false, application: 'failed', error: { code: 'probe' } }) })
+  const flow = manageFlow({ action: 'disable', dir, file, service, lines })
+  await flow.begin()
+  check('disable failure path: a failed write keeps the grant entries untouched', read(file) === before, read(file))
   rmSync(dir, { recursive: true, force: true })
 }
 
@@ -692,7 +853,7 @@ function manageFlow(options: {
             // the question's closing and the key hint.
             && view().includes('com.probe.ask')
             && view().includes('now?')
-            && view().includes('grant · esc skip')), view())
+            && view().includes('grant 12') && view().includes('esc skip')), view())
         const visible = statusRows().length
         check(`pane: at ${columns}x${rows} every visible permission keeps its status on one line`,
           visible > 0 && statusRows().every(line => line.includes('not granted')), view())

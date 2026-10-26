@@ -1634,7 +1634,7 @@ const dict = {
     zh: '宿主不认识、将跳过：{{names}}（共 {{count}} 项）',
     en: 'Unknown to this host and skipped: {{names}} ({{count}} total)',
   },
-  'plugins-install-key-grant': { zh: '⏎ 授予 · esc 跳过（安装保留）', en: '⏎ grant · esc skip (the install stays)' },
+  'plugins-install-key-grant': { zh: '⏎ 授予 {{count}} 项 · esc 跳过（安装保留）', en: '⏎ grant {{count}} · esc skip (install stays)' },
   'plugins-install-builds-title': { zh: '以下构建脚本需要批准（写进 profile 的 allowBuilds）：', en: 'These build scripts need approval (written to the profile allowBuilds):' },
   'plugins-install-incompatible-title': { zh: '版本不兼容的包：', en: 'Incompatible packages:' },
   'plugins-install-exemptions-title': { zh: '已登记的精确版本豁免：', en: 'Exact-version exemptions recorded:' },
@@ -1689,6 +1689,10 @@ const dict = {
   'plugins-manage-enabled': { zh: '已启用 {{target}}：{{state}}', en: 'Enabled {{target}}: {{state}}' },
   'plugins-manage-disabled': { zh: '已关闭 {{target}}：{{state}}', en: 'Disabled {{target}}: {{state}}' },
   'plugins-manage-failed': { zh: '操作失败：{{reason}}', en: 'The action failed: {{reason}}' },
+  'plugins-manage-enable-persisted': {
+    zh: 'profile 已记录这次启用，但运行中的宿主拒绝了重载：授权已保留，重启后生效。',
+    en: 'The profile recorded this enable, but the running host refused the reload: the grant is kept and takes effect after a restart.',
+  },
   'plugins-manage-incompatible': {
     zh: '版本不兼容：{{packages}}——要强行启用，先接受风险：dsh plugin --profile {{profile}} allow-version <包@版本> <当前版本> --accept-risk',
     en: 'Incompatible version: {{packages}} — to force it, accept the risk first: dsh plugin --profile {{profile}} allow-version <package@version> <running version> --accept-risk',
