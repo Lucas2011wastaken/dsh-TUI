@@ -7,9 +7,10 @@
  *
  *   A. 装：确认页的 `GrantPlan`（id 是声明 id，不是包名）、Enter 先写授权再
  *      `installBundle`（fake 服务在写入那一刻同步快照文件）、安装失败回滚、
- *      已有文件逐字节还原、默认允许的权限不写规则；
+ *      已有文件逐字节还原、每条声明都显式写规则（含 default-allow）；
  *   B. registry 装后 `grant` 步骤：声明装上后才可读；`{kind:'grant'}` 返回时
- *      文件仍未写；`grant()` 写入并收尾；first-party 直通路径用“静默授予”文案；
+ *      文件仍未写；`grant()` 写入并收尾；first-party registry spec 装前仍是
+ *      确认路径（声明 unjudged），silent 直通分支当前不可达、测试不覆盖；
  *   C. 启停：enable 在 `setBundleEnabled` 之前写入（fake 服务快照证明），失败
  *      回滚；disable 在 `setBundleEnabled` 之后撤销，`denies` 原样保留；
  *   D. 卸载：声明在写前读取、`forget` 在 `removeBundle` 之后、失败时醒目报告
@@ -487,7 +488,7 @@ function manageFlow(options: {
     && doc.grants?.['com.example.other'] !== undefined
     && doc.denies?.['com.example.other'] !== undefined, read(file))
   check('remove: the transcript says the grant was forgotten',
-    lines.some(line => line.includes(`Removed this component's grant entries (${SHARED_ID})`)), lines.join(' | '))
+    lines.some(line => line === t('plugins-manage-grant-forgotten', { id: SHARED_ID })), lines.join(' | '))
   check('remove: residue is reported by source, and never as a grants-file footprint',
     lines.some(line => line.includes('effect ledger still records'))
     && lines.some(line => line.includes('storage namespace')),
@@ -618,7 +619,7 @@ function manageFlow(options: {
     check('pane: the list marks what is already granted and what the host will skip',
       screen().includes('✓granted') && screen().includes('Unknown to this host and skipped'), screen())
     check('pane: the key hint names both halves of Enter',
-      screen().includes('install and grant'), screen())
+      screen().includes('install and grant 3'), screen())
     const rowOf = (needle: string): number => viewportLines(term, ROWS).findIndex(line => line.includes(needle))
     check('pane: a granted default-deny row still leads an ungranted default-allow row',
       rowOf('session.input.intercept') !== -1 && rowOf('session.input.intercept') < rowOf('commands.invoke'),
@@ -637,7 +638,7 @@ function manageFlow(options: {
   }))
   try {
     check('pane: the enable confirmation lists the permissions it would grant',
-      await settled(() => screen().includes('storage.local.read') && screen().includes('enable and grant')), screen())
+      await settled(() => screen().includes('storage.local.read') && screen().includes('enable and grant 3')), screen())
   } finally {
     manage.unmount()
     term.dispose()

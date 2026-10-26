@@ -294,6 +294,10 @@ check1('decision permission map is immutable',
   check1('a hand-edited document changes the next decision',
     !live.allows(principal('live'), 'messages.observe.read', 'session:one')
     && live.allows(principal('live'), 'messages.observe.read', 'session:two'))
+  // The hand edit is itself a signature change; let its poll land before the
+  // baseline, so the notification below is attributable to the revocation.
+  await sleep(250)
+  const beforeRevocation = changeCount
   const revoked = applyGrantMutation({
     kind: 'revoke',
     id: 'live',
@@ -304,7 +308,7 @@ check1('decision permission map is immutable',
     !live.allows(principal('live'), 'messages.observe.read', 'session:one')
     && !live.allows(principal('live'), 'messages.observe.read', 'session:two'))
   await sleep(250)
-  check1('revocation notifies grant-owned effects', changeCount > 0)
+  check1('revocation notifies grant-owned effects', changeCount > beforeRevocation)
   stopWatching?.()
 
   // A12. Activation-scoped policy must be evaluated against the verified
