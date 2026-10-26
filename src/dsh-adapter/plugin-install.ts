@@ -689,10 +689,11 @@ export function createPluginInstallFlow(options: PluginInstallFlowOptions): Plug
       // The post-install step can be on screen when a turn starts. Granting is a
       // write the running turn would immediately see (the decision guard reads
       // the file per decision), so it waits for the same idle window as the
-      // pre-install grant and the profile write. Nothing is lost: the step is
-      // not consumed, and `/plugin enable` is the repair path.
-      const refused = refuseWhileBusy('plugins-install-grant-busy')
-      if (refused !== undefined) return refused
+      // pre-install grant and the profile write. The refusal answers with the
+      // same step, never `done`: `done` closes the pane (usePluginWriteFlow),
+      // and the person would have no way left to grant once the turn is over.
+      // `/plugin enable` stays the repair path if they close the pane instead.
+      if (refuseWhileBusy('plugins-install-grant-busy') !== undefined) return { kind: 'grant', plan }
       ensureGrants(plan)
       return { kind: 'done' }
     },

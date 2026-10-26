@@ -185,7 +185,7 @@ function installFlow(options: {
     && rig.grantsAtInstall[0].includes('storage.local.read'),
     rig.grantsAtInstall.join(' | '))
   check('install: the transcript says what was granted',
-    lines.some(line => line.includes('Granted 3 declared permission(s)')), lines.join(' | '))
+    lines.some(line => line === t('plugins-install-granted', { count: '3', id: SHARED_ID })), lines.join(' | '))
   rmSync(dir, { recursive: true, force: true })
 }
 
@@ -244,7 +244,7 @@ function installFlow(options: {
     && JSON.stringify((JSON.parse(read(file)) as { grants: Record<string, unknown> }).grants[SHARED_ID])
       === `[{"name":"storage.local.read","scope":"${SHARED_ID}"}]`, read(file))
   check('registry install: the transcript confirms the grant',
-    lines.some(line => line.includes('Granted 1 declared permission(s)')), lines.join(' | '))
+    lines.some(line => line === t('plugins-install-granted', { count: '1', id: SHARED_ID })), lines.join(' | '))
   const skipped = lines.filter(line => line.includes('Skipped permissions this host does not know'))
   check('registry install: an unknown permission is named once, not again when the grant is written',
     skipped.length === 1 && skipped[0].includes('probe.unknown.permission'), lines.join(' | '))
@@ -269,8 +269,8 @@ function installFlow(options: {
   check('grant step: the install finishes and asks to grant', step.kind === 'grant', JSON.stringify(step))
   busy = true
   const refused = await flow.grant()
-  check('grant step: a turn that started while the pane waited refuses the write',
-    refused.kind === 'done' && !existsSync(file), JSON.stringify(refused))
+  check('grant step: a turn that started while the pane waited refuses the write, keeping the step',
+    refused.kind === 'grant' && refused.plan.id === SHARED_ID && !existsSync(file), JSON.stringify(refused))
   check('grant step: the refusal is reported with the grant wording',
     lines.some(line => line.includes('before granting')), lines.join(' | '))
   busy = false
@@ -282,8 +282,10 @@ function installFlow(options: {
   rmSync(dir, { recursive: true, force: true })
 }
 
-// first-party direct route: no confirmation, but the post-install grant step is
-// still where the declared list appears and the quiet wording is used.
+// A first-party registry artifact: the feed vouches for it, but its declaration
+// is unjudged before it lands, so the flow still asks and the post-install grant
+// step carries the list. The ask was answered, so the confirmed wording is what
+// gets reported; the silent direct-route branch is not reached from here.
 {
   const { dir, file } = sandbox()
   const lines: string[] = []
@@ -309,7 +311,7 @@ function installFlow(options: {
     `${rig.order.join(',')} · ${JSON.stringify(step)}`)
   await flow.grant()
   check('first-party install: granting finishes and is reported',
-    lines.some(line => line.includes('Granted 1 declared permission(s)')), lines.join(' | '))
+    lines.some(line => line === t('plugins-install-granted', { count: '1', id: SHARED_ID })), lines.join(' | '))
   rmSync(dir, { recursive: true, force: true })
 }
 
@@ -324,12 +326,17 @@ function manageService(options: {
   readonly file: string
   readonly order: string[]
   readonly change?: () => Promise<ChangeResult>
+  /** Snapshot of the grants file taken inside removeBundle, the instant the write runs. */
+  readonly snapshot?: string[]
 }): PluginManagerView {
   return {
     listBundles: () => Promise.resolve(MANAGE_BUNDLES),
     listPlugins: () => Promise.resolve(MANAGE_PLUGINS),
     removeBundle: name => {
       options.order.push(`removeBundle:${name}`)
+      // Snapshot the file at the instant the profile write runs: the grant must
+      // still be there now, and gone only after this call returns.
+      options.snapshot?.push(existsSync(options.file) ? read(options.file) : '')
       return options.change?.() ?? Promise.resolve({ ...CHANGE, stage: 'remove', target: name })
     },
     setBundleEnabled: (name, enabled) => {
@@ -431,8 +438,14 @@ function manageFlow(options: {
 {
   const { dir, file } = sandbox()
   seed(file, JSON.stringify({
-    grants: { [SHARED_ID]: [{ name: 'storage.local.read', scope: SHARED_ID }] },
-    denies: { [SHARED_ID]: ['messages.observe.read'] },
+    grants: {
+      [SHARED_ID]: [{ name: 'storage.local.read', scope: SHARED_ID }],
+      'com.example.other': [{ name: 'commands.invoke', scope: 'com.example.status' }],
+    },
+    denies: {
+      [SHARED_ID]: ['messages.observe.read'],
+      'com.example.other': ['storage.local.read'],
+    },
   }, null, 2))
   // The ledger and a storage namespace survive the removal; the package's
   // backend directory is a third source, reported by path.
@@ -441,7 +454,8 @@ function manageFlow(options: {
   writeFileSync(join(dir, 'plugin-storage', `${encodeURIComponent(SHARED_ID)}.json`), '{}')
   const lines: string[] = []
   const order: string[] = []
-  const service = manageService({ file, order })
+  const snapshot: string[] = []
+  const service = manageService({ file, order, snapshot })
   const flow = manageFlow({
     action: 'remove',
     dir,
@@ -463,9 +477,15 @@ function manageFlow(options: {
   check('remove: asking writes nothing', order.length === 0 && existsSync(file))
   await flow.confirm()
   check('remove: the bundle write happens first, then the grant entries go',
-    order.length === 1 && order[0] === `removeBundle:${PACKAGE_A}`, order.join(','))
+    order.length === 1 && order[0] === `removeBundle:${PACKAGE_A}`
+    && snapshot.length === 1 && snapshot[0] !== ''
+    && (JSON.parse(snapshot[0]) as { grants?: Record<string, unknown> }).grants?.[SHARED_ID] !== undefined,
+    `${order.join(',')} · ${snapshot.join(' | ')}`)
   const doc = JSON.parse(read(file)) as { grants?: Record<string, unknown>; denies?: Record<string, unknown> }
-  check('remove: both grant sections lose the component', doc.grants === undefined && doc.denies === undefined, read(file))
+  check('remove: only the component\'s grant sections lose their entries',
+    doc.grants?.[SHARED_ID] === undefined && doc.denies?.[SHARED_ID] === undefined
+    && doc.grants?.['com.example.other'] !== undefined
+    && doc.denies?.['com.example.other'] !== undefined, read(file))
   check('remove: the transcript says the grant was forgotten',
     lines.some(line => line.includes(`Removed this component's grant entries (${SHARED_ID})`)), lines.join(' | '))
   check('remove: residue is reported by source, and never as a grants-file footprint',
@@ -644,7 +664,8 @@ function manageFlow(options: {
         unref() { return this }
       }
       const crowded: GrantPlan = {
-        id: SHARED_ID,
+        // An id the rows do not repeat: the question has to name it by itself.
+        id: 'com.probe.ask',
         entries: Array.from({ length: 12 }, (_, index) => ({
           name: 'session.input.intercept',
           scope: `${SHARED_ID}:command-${index}`,
@@ -666,8 +687,9 @@ function manageFlow(options: {
         check(`pane: at ${columns}x${rows} the title, the question and the hint share one screen`,
           await settled(() => view().includes('Install plugin')
             // The question itself may wrap: what must not disappear is the
-            // title, the question's opening and closing, and the key hint.
-            && view().includes('The package is installed.')
+            // title, the component id it names (unique to the question here),
+            // the question's closing and the key hint.
+            && view().includes('com.probe.ask')
             && view().includes('now?')
             && view().includes('grant · esc skip')), view())
         const visible = statusRows().length

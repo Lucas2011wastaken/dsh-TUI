@@ -267,9 +267,9 @@ check1('decision permission map is immutable',
   check1('non-ENOENT read failure denies deny-default',
     !unreadable.allows(principal('anyone'), 'storage.local.read', 'anyone'))
 
-  // A11. 文件存储每次重读，并在变化时主动通知持有订阅的服务。这一半由**应用
-  // 自己的写入器**产生（`/plugin` 的 install/enable/disable 走的就是它），
-  // 而不是手写 fixture：读取器对写入器的结果必须与对手改文件完全同一反应。
+  // A11. 文件存储每次重读，并在变化时主动通知持有订阅的服务。写入侧走**应用
+  // 自己的写入器**（`/plugin` 的 install/enable/disable 走的就是它），读取侧
+  // 必须对手改文件与写入器产物完全同一反应——两条路径各留一个 fixture。
   const liveDir = mkdtempSync(join(tmpdir(), 'dsh-grants-live-'))
   cleanup.push(liveDir)
   const ensured = applyGrantMutation({
@@ -285,6 +285,13 @@ check1('decision permission map is immutable',
     live.allows(principal('live'), 'messages.observe.read', 'session:one'))
   check1('scoped grant does not authorize another session',
     !live.allows(principal('live'), 'messages.observe.read', 'session:two'))
+  // The independent half: a hand-edited document with the same rule must be read
+  // exactly the same way. The writer is a convenience, not a new format.
+  writeFileSync(join(liveDir, EXTENSION_GRANTS_FILE), JSON.stringify({
+    grants: { live: [scoped('messages.observe.read', 'session:one')] },
+  }))
+  check1('a hand-edited document with the same rule is granted',
+    live.allows(principal('live'), 'messages.observe.read', 'session:one'))
   const revoked = applyGrantMutation({
     kind: 'revoke',
     id: 'live',

@@ -1610,8 +1610,8 @@ const dict = {
     en: 'The grant was written but could not be rolled back: the file changed meanwhile; check the /plugin grant matrix.',
   },
   'plugins-install-grant-ask': {
-    zh: '该包已装上。下面这些权限写在包内声明里：现在授予吗？',
-    en: 'The package is installed. These are the permissions it declares: grant them now?',
+    zh: '该包（{{id}}）已装上。下面这些权限写在包内声明里：现在授予吗？（授权是行为约束，不是安全隔离）',
+    en: 'The package ({{id}}) is installed. These are the permissions it declares: grant them now? (Grants are behavioural constraints, not a security boundary.)',
   },
   'plugins-grant-list-title': {
     zh: '要授予的权限（按包内声明，逐字使用其 scope）',
@@ -1720,8 +1720,8 @@ const dict = {
     en: '⚠ This component\'s grant entries could not be removed ({{reason}}): {{id}} · {{file}} — a package reusing the same id may inherit them; clear them by hand from the /plugin grant matrix.',
   },
   'plugins-manage-grant-unhandled': {
-    zh: '读不到 {{target}} 的包内声明，无法确定它的组件 id：授权条目未处理（不猜）。',
-    en: 'The declaration inside {{target}} could not be read, so its component id is unknown: grant entries were left alone (nothing is guessed).',
+    zh: '读不到 {{target}} 的包内声明，或它不是本 profile 能接受的声明：无法确定组件 id，授权条目未处理（不猜）。',
+    en: 'The declaration inside {{target}} could not be read, or is not one this profile accepts: its component id was not used, and grant entries were left alone (nothing is guessed).',
   },
   'plugins-manage-grant-revoked': { zh: '已撤销 {{count}} 项授权（{{id}}）', en: 'Revoked {{count}} permission grant(s) ({{id}})' },
   'plugins-manage-grant-revoke-failed': {
@@ -1749,8 +1749,8 @@ const dict = {
     en: 'This is destructive: it changes the profile\'s package.json and lockfile (rolled back if the service fails) and drops its {{rows}} rows / {{overrides}} overrides. Your own data is not deleted (any residue is reported separately).',
   },
   'plugins-manage-trust-facts': {
-    zh: '无法验证已装代码的安装来源：启用后它就在本进程内运行、不自动更新、没有沙箱。它声明的权限见 /plugin 的授权矩阵。',
-    en: 'The installed code\'s source cannot be verified: once enabled it runs inside this process, with no auto-update and no sandbox. Its declared permissions are in the /plugin grant matrix.',
+    zh: '无法验证已装代码的安装来源：启用后它就在本进程内运行、不自动更新、没有沙箱。本页列出的权限就是要授予的内容（没有清单时见 /plugin 的授权矩阵）；授权是行为约束，不是安全隔离。',
+    en: 'The installed code\'s source cannot be verified: once enabled it runs inside this process, with no auto-update and no sandbox. The permissions this pane lists are what Enter grants (when none are listed, see the /plugin grant matrix); grants are behavioural constraints, not a security boundary.',
   },
   'plugins-manage-host-row-facts': {
     zh: '这一行属于宿主层（dsh-base）：关掉它会卸载本应用注入的服务，本应用可能重启或退出。',

@@ -22,7 +22,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, 
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pluginFootprintPaths, pluginFootprintSourcesOf, pluginFootprints } from '../src/dsh-adapter/plugins-info.js'
-import { EXTENSION_GRANTS_FILE, parseGrantStore, rewriteGrantDocument } from '../src/adapter/standard/grants.js'
+import { EXTENSION_GRANTS_FILE, parseGrantStore } from '../src/adapter/standard/grants.js'
 import { applyGrantMutation, planGrants } from '../src/dsh-adapter/grant-file.js'
 import { declaredGrantsIn, declaredGrantsOf } from '../src/dsh-adapter/plugin-declaration.js'
 import { testManifest } from './lib/plugin-test-utils.js'
@@ -230,13 +230,22 @@ function parsed(text: string): unknown {
   check('the new document round-trips through the reader', parseGrantStore(read(dir)).corrupt === false)
   check('the atomic write leaves no temporary behind',
     readdirSync(dir).filter(name => name !== EXTENSION_GRANTS_FILE).length === 0, readdirSync(dir).join(', '))
-  const expected = rewriteGrantDocument('{}', {
-    kind: 'ensure',
-    id: 'com.example.shared',
-    permissions: [{ name: 'storage.local.read', scope: 'com.example.shared' }],
-  })
-  check('the written document is exactly the ensure result',
-    'text' in expected && read(dir) === expected.text)
+  // Hardcoded on purpose: this is the document format the reader must accept,
+  // not a second call into the writer (which would only prove delegation).
+  const expected = [
+    '{',
+    '  "grants": {',
+    '    "com.example.shared": [',
+    '      {',
+    '        "name": "storage.local.read",',
+    '        "scope": "com.example.shared"',
+    '      }',
+    '    ]',
+    '  }',
+    '}',
+    '',
+  ].join('\n')
+  check('the written document is exactly the ensure result', read(dir) === expected, JSON.stringify(read(dir)))
   rmSync(dir, { recursive: true, force: true })
 }
 {
