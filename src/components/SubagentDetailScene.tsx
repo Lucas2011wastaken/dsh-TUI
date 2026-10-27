@@ -426,6 +426,10 @@ export function SubagentDetailScene({
       onBack()
       return true
     }
+    // 分栏在渲染时 keymap 的 `paste` 组合（可重映射，macOS 上是 Cmd+V）先
+    // 投递给活动面板：字母快捷键只在无修饰键时生效，否则 Ctrl+V 会误触
+    // 下面的 v（打开主屏视图）。
+    if (key.ctrl === true || key.meta === true || key.super === true) return false
     if (key.leftArrow === true) {
       turnPage(-1)
       return true

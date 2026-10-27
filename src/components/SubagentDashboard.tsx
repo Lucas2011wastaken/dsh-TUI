@@ -225,6 +225,10 @@ export function SubagentDashboard({
   // Panel keys handle roster navigation; unhandled keys remain available to the host.
   const panelKeyHandler = (input: string, key: SidePanelKeyFlags): boolean => {
     if (key.escape === true || (key.ctrl === true && input === 'c')) return false
+    // 分栏在渲染时 keymap 的 `paste` 组合（可重映射，macOS 上是 Cmd+V）先
+    // 投递给活动面板：字母快捷键只在无修饰键时生效，否则 Ctrl+V 会误触
+    // 下面的 v（打开主屏视图）。
+    if (key.ctrl === true || key.meta === true || key.super === true) return false
 
     if (key.upArrow === true) {
       moveFocus(-1)

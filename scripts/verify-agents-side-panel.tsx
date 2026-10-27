@@ -16,6 +16,9 @@
  *    (mountPolicy:'enabled' state retention);
  *  - 'x' interrupts the running subagent from the detail; a real SGR click on
  *    a dashboard card opens that card's detail;
+ *  - Ctrl+V/Alt+V/Cmd+V (the remappable `paste` combos the host now hands to
+ *    the focused panel first) must not trigger the panel-only 'v' view shortcut
+ *    in either the dashboard or the detail, while plain `v` still does;
  *  - a roster gap (the routed subagent is gone) falls back to the dashboard
  *    instead of rendering a stale detail.
  * Run: node --import tsx/esm scripts/verify-agents-side-panel.tsx
@@ -23,7 +26,7 @@
 process.env.FORCE_COLOR = '3'
 process.env.DSH_TUI_LANG = 'en'
 
-const [{ PassThrough, Writable }, React, { Terminal: XTerm }, ui, { SidePanelColumn }, { useSidePanel }, prefs, { panelStore }, termTest] = await Promise.all([
+const [{ PassThrough, Writable }, React, { Terminal: XTerm }, ui, { SidePanelColumn }, { useSidePanel }, prefs, { panelStore }, { agentViewStore }, termTest] = await Promise.all([
   import('node:stream'),
   import('react'),
   import('@xterm/headless'),
@@ -32,6 +35,7 @@ const [{ PassThrough, Writable }, React, { Terminal: XTerm }, ui, { SidePanelCol
   import('../src/components/sidePanel/useSidePanel.js'),
   import('../src/tuiDisplayPrefs.js'),
   import('../src/components/sidePanel/PanelStore.js'),
+  import('../src/components/sidePanel/agentViewStore.js'),
   import('./lib/term-test.mjs'),
 ])
 const { render, ThemeProvider, AlternateScreen, Box, Text, useInput } = ui
@@ -260,10 +264,19 @@ try {
     panelStore.get('agents')?.badge?.level === 'info', JSON.stringify(panelStore.get('agents')?.badge ?? null))
 
   // --- 4. Enter opens the focused card's detail ---------------------------
+  // 粘贴键先投递给活动面板（与 btw 同一条宿主路由）：面板只看字符的 `v`
+  // 快捷键必须排除修饰键，否则 Ctrl+V/Alt+V/Cmd+V 会请求主屏视图而不是
+  // 无操作。Cmd+V 在 kitty 协议下是 CSI-u `\x1b[118;9u`（key.super）。
+  // 随后 Enter 的落定证明这些键已被处理，不引入固定等待。
+  await writeKey('\x16')
+  await writeKey('\x1bv')
+  await writeKey('\x1b[118;9u')
   await writeKey('\r')
   await settled(() => has('1/3') && has('Subagent: AAA1'))
   check('keys: Enter opens the focused card detail (usePanelInput dispatch)', has('1/3') && has('Subagent: AAA1'),
     (lines().find(l => l.includes('/3')) ?? '').trim())
+  check('keys: Ctrl+V/Alt+V/Cmd+V in the dashboard do not open the main view',
+    agentViewStore.get() === null, JSON.stringify(agentViewStore.get()))
   check('detail: the dashboard list is replaced by the paged scene', !has('AAA2'))
 
   // --- 5. ←/→ page the detail --------------------------------------------
@@ -338,9 +351,18 @@ try {
   await writeKey('\r')
   await settled(() => has('AAA1') && has('1/3'))
   check('keys: Enter after upArrow returns to the first card', has('AAA1') && has('1/3'))
+  await writeKey('\x16')
+  await writeKey('\x1b[118;9u')
   await writeKey('x')
   await settled(() => interrupted.length > 0)
   check('keys: x interrupts the running subagent from the detail', interrupted.join(',') === 'agent-run-1', interrupted.join(','))
+  check('keys: Ctrl+V/Cmd+V in the detail do not open the main view',
+    agentViewStore.get() === null, JSON.stringify(agentViewStore.get()))
+  // 守卫只排除修饰键：无修饰键的 v 仍然打开主屏视图（不能把快捷键一起关掉）。
+  await writeKey('v')
+  await settled(() => agentViewStore.get()?.source === 'agent-detail')
+  check('keys: plain v in the detail still opens the main view (guard is modifier-only)',
+    agentViewStore.get()?.source === 'agent-detail', JSON.stringify(agentViewStore.get()))
 
   // --- 10. a real SGR click on a card opens its detail --------------------
   await writeKey('\x1b')
@@ -359,6 +381,14 @@ try {
   await settled(() => has('No subagents in the current session'))
   check('route: a missing subagent falls back to the dashboard (empty state)',
     has('No subagents in the current session') && !has('/3'))
+
+  // --- 12. the guard is modifier-only: plain v still opens the view -------
+  setSubagents([A1])
+  await settled(() => has('AAA1'))
+  await writeKey('v')
+  await settled(() => agentViewStore.get()?.source === 'agents-dashboard')
+  check('keys: plain v on the dashboard still opens the main view (guard is modifier-only)',
+    agentViewStore.get()?.source === 'agents-dashboard', JSON.stringify(agentViewStore.get()))
 } finally {
   // 失败时把最后一帧打给 stderr：CI 日志里能直接看到断言看到的那一屏。
   if (failed > 0) dumpScreen()
