@@ -316,10 +316,10 @@ try {
   // 这样 up 断言的成立不依赖 down 用例是否通过。
   const topRowAgain = findRow('open in main view')
   await writeKey('\x1b[B')
-  await settled(() => findRow('open in main view') !== topRowAgain)
+  const setupMoved = await settled(() => findRow('open in main view') !== topRowAgain)
   await writeKey('\x1b[1;9A')
   const movedBack = await settled(() => findRow('open in main view') === topRowAgain)
-  check('keys: Cmd+upArrow still moves the roster focus back (guard keeps modifier keys)', movedBack)
+  check('keys: Cmd+upArrow still moves the roster focus back (guard keeps modifier keys)', setupMoved && movedBack)
   await writeKey('\r')
   await settled(() => has('1/3') && has('Subagent: AAA1'))
   check('keys: Enter opens the focused card detail (usePanelInput dispatch)', has('1/3') && has('Subagent: AAA1'),
