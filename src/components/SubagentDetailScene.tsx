@@ -17,6 +17,7 @@ import { t } from '../i18n.js'
 import { Divider } from './design-system/Divider.js'
 import { ExitButton, isPanelPlainReturn } from './SubagentDashboard.js'
 import { isPlainReturnInput } from '../utils/modifiers.js'
+import { actionMatches } from '../utils/keymap.js'
 import { toolNameColor } from './messages/AssistantToolUseMessage.js'
 import { Markdown } from './Markdown.js'
 import { getCliHighlightPromise } from '../terminal-utils/cliHighlight.js'
@@ -427,9 +428,12 @@ export function SubagentDetailScene({
       return true
     }
     // 分栏在渲染时 keymap 的 `paste` 组合（可重映射，macOS 上是 Cmd+V）先
-    // 投递给活动面板：字母快捷键只在无修饰键时生效，否则 Ctrl+V 会误触
-    // 下面的 v（打开主屏视图）。
-    if (key.ctrl === true || key.meta === true || key.super === true) return false
+    // 投递给活动面板：粘贴组合本身（含重映射到方向键等命名键）不触发表面动作。
+    if (actionMatches('paste', input, key, true)) return false
+    // 带修饰的字母同样不触发字母快捷键（Cmd+V 不能命中下面的 v）。方向键/Enter
+    // 保持面板自己的语义（Cmd+←/→ 翻页、Cmd+Enter 折叠/返回；isPanelPlainReturn
+    // 不转发 super），不能被粘贴守卫一并吃掉。
+    if ((key.ctrl === true || key.meta === true || key.super === true) && /^[a-z]$/u.test(input.toLowerCase())) return false
     if (key.leftArrow === true) {
       turnPage(-1)
       return true

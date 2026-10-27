@@ -18,7 +18,9 @@
  *    a dashboard card opens that card's detail;
  *  - Ctrl+V/Alt+V/Cmd+V (the remappable `paste` combos the host now hands to
  *    the focused panel first) must not trigger the panel-only 'v' view shortcut
- *    in either the dashboard or the detail, while plain `v` still does;
+ *    in either the dashboard or the detail, while plain `v` still does, and
+ *    modifier+arrow keys keep their paging / roster-focus meaning (the guard
+ *    rejects effective paste combos and modified letters only);
  *  - a roster gap (the routed subagent is gone) falls back to the dashboard
  *    instead of rendering a stale detail.
  * Run: node --import tsx/esm scripts/verify-agents-side-panel.tsx
@@ -26,7 +28,7 @@
 process.env.FORCE_COLOR = '3'
 process.env.DSH_TUI_LANG = 'en'
 
-const [{ PassThrough, Writable }, React, { Terminal: XTerm }, ui, { SidePanelColumn }, { useSidePanel }, prefs, { panelStore }, { agentViewStore }, termTest] = await Promise.all([
+const [{ PassThrough, Writable }, React, { Terminal: XTerm }, ui, { SidePanelColumn }, { useSidePanel }, prefs, { panelStore }, { agentViewStore }, { setKeymapOverrides, resetKeymapOverrides }, termTest] = await Promise.all([
   import('node:stream'),
   import('react'),
   import('@xterm/headless'),
@@ -36,6 +38,7 @@ const [{ PassThrough, Writable }, React, { Terminal: XTerm }, ui, { SidePanelCol
   import('../src/tuiDisplayPrefs.js'),
   import('../src/components/sidePanel/PanelStore.js'),
   import('../src/components/sidePanel/agentViewStore.js'),
+  import('../src/utils/keymap.js'),
   import('./lib/term-test.mjs'),
 ])
 const { render, ThemeProvider, AlternateScreen, Box, Text, useInput } = ui
@@ -267,16 +270,60 @@ try {
   // 粘贴键先投递给活动面板（与 btw 同一条宿主路由）：面板只看字符的 `v`
   // 快捷键必须排除修饰键，否则 Ctrl+V/Alt+V/Cmd+V 会请求主屏视图而不是
   // 无操作。Cmd+V 在 kitty 协议下是 CSI-u `\x1b[118;9u`（key.super）。
-  // 随后 Enter 的落定证明这些键已被处理，不引入固定等待。
+  // 三条 V 之后立即断言，不等后续按键——这三条路径必须由它们自己钉住。
   await writeKey('\x16')
   await writeKey('\x1bv')
   await writeKey('\x1b[118;9u')
+  check('keys: Ctrl+V/Alt+V/Cmd+V in the dashboard do not open the main view',
+    agentViewStore.get() === null, JSON.stringify(agentViewStore.get()))
+  // 守卫只拦字母/粘贴组合：Cmd+Enter 仍按 Enter 选中当前卡（isPanelPlainReturn
+  // 不转发 super）。单键判定，不依赖两次按键之间的 React 提交。
+  await writeKey('\x1b[13;9u')
+  await settled(() => has('Subagent: AAA1'))
+  check('keys: Cmd+Enter still opens the focused card (guard keeps modifier keys)',
+    has('Subagent: AAA1'), (lines().find(l => l.includes('Subagent:')) ?? '').trim())
+  await writeKey('\x1b')
+  await settled(() => has('AAA1') && !has('/3'))
+  // paste 重映射到命名键（ctrl+down）时，守卫也必须把它当粘贴组合拦下。
+  // 焦点卡的「open in main view」行是唯一随焦点渲染的文本：守卫缺失时
+  // ctrl+↓ 会把它移到下一张卡。守卫生效时没有正向状态可等，先给上限等待，
+  // 再用 Enter 的落点确认焦点确实没动。
+  const actionRow = findRow('open in main view')
+  setKeymapOverrides({ paste: ['ctrl+down'] })
+  await writeKey('\x1b[1;5B')
+  const pasteMoved = await settled(() => findRow('open in main view') !== actionRow)
+  resetKeymapOverrides()
+  await writeKey('\r')
+  await settled(() => has('Subagent: AAA1'))
+  check('keys: a remapped paste combo (ctrl+down) does not move the roster focus',
+    pasteMoved === false && has('Subagent: AAA1') && !has('Subagent: AAA2'),
+    (lines().find(l => l.includes('Subagent:')) ?? '').trim())
+  await writeKey('\x1b')
+  await settled(() => has('AAA1') && !has('/3'))
+  // 修饰键+方向键仍移焦点：焦点卡的 action 行随焦点换位；等它真的换位
+  // （React 已提交）再按 Enter，不依赖下一次按键读到的闭包。
+  const topRow = findRow('open in main view')
+  await writeKey('\x1b[1;9B')
+  const movedDown = await settled(() => findRow('open in main view') !== topRow)
+  check('keys: Cmd+downArrow still moves the roster focus (guard keeps modifier keys)', movedDown)
+  await writeKey('\r')
+  await settled(() => has('Subagent: AAA2'))
+  check('keys: Cmd+downArrow then Enter opens the second card', has('Subagent: AAA2'),
+    (lines().find(l => l.includes('Subagent:')) ?? '').trim())
+  await writeKey('\x1b')
+  await settled(() => has('AAA1') && !has('/3'))
+  // Cmd+↑ 用普通 ↓（既有行为）先把焦点移离 0，再要求 Cmd+↑ 把它移回；
+  // 这样 up 断言的成立不依赖 down 用例是否通过。
+  const topRowAgain = findRow('open in main view')
+  await writeKey('\x1b[B')
+  await settled(() => findRow('open in main view') !== topRowAgain)
+  await writeKey('\x1b[1;9A')
+  const movedBack = await settled(() => findRow('open in main view') === topRowAgain)
+  check('keys: Cmd+upArrow still moves the roster focus back (guard keeps modifier keys)', movedBack)
   await writeKey('\r')
   await settled(() => has('1/3') && has('Subagent: AAA1'))
   check('keys: Enter opens the focused card detail (usePanelInput dispatch)', has('1/3') && has('Subagent: AAA1'),
     (lines().find(l => l.includes('/3')) ?? '').trim())
-  check('keys: Ctrl+V/Alt+V/Cmd+V in the dashboard do not open the main view',
-    agentViewStore.get() === null, JSON.stringify(agentViewStore.get()))
   check('detail: the dashboard list is replaced by the paged scene', !has('AAA2'))
 
   // --- 5. ←/→ page the detail --------------------------------------------
@@ -291,6 +338,18 @@ try {
   await writeKey('\x1b[D')
   await settled(() => has('3/3'))
   check('keys: leftArrow pages the detail backward (wraps to 3/3)', has('3/3'))
+  // 同上：修饰键+方向键仍归面板翻页（Cmd+←/→ 不能被粘贴守卫一并吞掉）。
+  // CSI 1;9C / 1;9D 是 kitty 的 super 位方向键编码（形状同 xterm
+  // modifyCursorKeys）；连按两次证明不是碰巧停在原地。
+  await writeKey('\x1b[1;9C')
+  await settled(() => has('1/3'))
+  check('keys: Cmd+rightArrow still pages the detail (guard keeps modifier keys)', has('1/3'))
+  await writeKey('\x1b[1;9C')
+  await settled(() => has('2/3'))
+  check('keys: Cmd+rightArrow still pages the detail forward again', has('2/3'))
+  await writeKey('\x1b[1;9D')
+  await settled(() => has('1/3'))
+  check('keys: Cmd+leftArrow still pages the detail backward', has('1/3'))
 
   // --- 6. Esc in the detail: back to the dashboard, focus STAYS in the panel
   await writeKey('\x1b')
