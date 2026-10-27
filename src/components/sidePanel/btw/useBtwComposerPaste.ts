@@ -56,6 +56,11 @@ export function useBtwComposerPaste(opts: {
   const { sessionId, caretRef, setCaret, setNotice, readClipboardOverride } = opts
   // 读取在途：重复 Ctrl+V 不排队（一次粘贴只落一次字）。
   const busyRef = React.useRef(false)
+  // 读取在途时会话可能切换（面板跨会话常驻）：落点必须仍是按键时的会话，
+  // 否则文本写进旧草稿、光标却设到新 surface 上。沿用主输入框的租约语义：
+  // 上下文变了就丢弃这次读取，绝不覆盖更新的草稿。
+  const sessionRef = React.useRef(sessionId)
+  sessionRef.current = sessionId
   // 组件可能先卸载（面板切走/场景关闭），异步续体不得再写 store。
   const mountedRef = React.useRef(true)
   React.useEffect(() => () => { mountedRef.current = false }, [])
@@ -66,6 +71,7 @@ export function useBtwComposerPaste(opts: {
     void (readClipboardOverride ?? clipboardReader)()
       .then(content => {
         if (!mountedRef.current) return
+        if (sessionRef.current !== sessionId) return
         if (content === null) {
           setNotice({ text: t('input-clipboard-empty'), failure: false })
           return

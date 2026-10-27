@@ -479,7 +479,7 @@ Keys are in §2.1:
 
 `/btw <问题>`: one no-tool, single-turn answer reusing the current context,
 **not written to history, no token counted**.
-Panel `↑/↓` scroll · `c` copy · `Esc` close.
+Panel `↑/↓` scroll · `c` copy · `Esc` close; in the sidebar panel's follow-up input, `Ctrl+V`/`Alt+V` pastes at the caret.
 
 ### 4.5 Trace scene (Ctrl+T / /trace)
 
